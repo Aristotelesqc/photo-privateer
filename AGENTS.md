@@ -155,3 +155,10 @@ class SearchProvider(abc.ABC):
 - **Backend Tests**: Run `pytest tests/backend` to verify indexing, database migrations, rescan idempotency, domain rules, cost estimations, and full API workflows.
 - **Frontend Build**: Run `npm run build` in `frontend/` to generate `frontend/dist`.
 - **System Launch**: Execute `python start.py` or double-click `START_PHOTO_PRIVATEER.bat` to launch and test in a real browser.
+
+---
+
+## 11. Git Identity & Remote Publishing Invariant
+
+1. **Pre-Commit Account Alignment**: Before creating an initial commit or pushing to a remote host (e.g., GitHub), always verify that `git config user.name` and `git config user.email` match the target repository owner and active GitHub CLI session (`gh auth status`).
+2. **Contributor Graph Protection**: Never allow unconfigured machine credentials or local defaults to generate commits on newly initialized user repositories, preventing attribution pollution in GitHub's contributor statistics.
