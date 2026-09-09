@@ -1,0 +1,238 @@
+# Photo Privateer
+
+> **Local Reverse Image Search Discovery for Photographers**
+
+Photo Privateer is a self-contained, desktop-oriented local web application designed for professional photographers who want to periodically monitor the public web for unauthorized reuse of their photographs without relying on recurring SaaS subscription fees, remote databases, or cloud accounts.
+
+---
+
+## Table of Contents
+
+1. [Product Overview](#product-overview)
+2. [Architecture](#architecture)
+3. [Prerequisites](#prerequisites)
+4. [First-Time Setup](#first-time-setup)
+5. [Launching Photo Privateer](#launching-photo-privateer)
+6. [Development Mode](#development-mode)
+7. [Deterministic Mock / Demo Mode](#deterministic-mock--demo-mode)
+8. [Connecting Google Cloud Vision](#connecting-google-cloud-vision)
+9. [Credential Handling & Privacy](#credential-handling--privacy)
+10. [Local API Usage & Cost Estimation](#local-api-usage--cost-estimation)
+11. [Data Storage & Backup](#data-storage--backup)
+12. [Running Automated Tests](#running-automated-tests)
+13. [Explicit Non-Goals](#explicit-non-goals)
+14. [Troubleshooting](#troubleshooting)
+
+---
+
+## 1. Product Overview
+
+Photo Privateer indexes your local photograph folders without moving, renaming, or modifying any of your original files. You select any number of photographs, click **Scan**, and Photo Privateer queries reverse-image-search providers (Google Cloud Vision Web Detection or offline Mock Provider).
+
+Key Features:
+- **Zero modification of source files**: Photos are read strictly in read-only binary mode.
+- **Historical permanence**: Rescanning updates timestamps and flags new discoveries without overwriting prior human classifications or notes.
+- **Review Queue**: Classify matches as `UNREVIEWED`, `APPROVED`, `UNAUTHORIZED` (Infringing), or `IRRELEVANT` with an unobtrusive reset workflow.
+- **Side-by-Side Detail Inspection**: Inspect the original photo and discovered web match side-by-side at high resolution without losing your place in the review queue.
+- **Domain Rules**: Automatically whitelist portfolio sites or blacklist scrapers across subdomains.
+- **Transparent Local Accounting**: Local tracker counts Google Vision units, projects pending scan costs, and enforces a conservative free-tier safety guard.
+- **No Background Daemons**: Scanning occurs solely when explicitly requested by you.
+
+---
+
+## 2. Architecture
+
+```text
+React 18 + TypeScript + Tailwind UI
+               ↓ REST / JSON
+Local FastAPI Application (http://127.0.0.1:8765)
+               ↓
+Photo Privateer Core Engine
+   ├── LibraryIndexer       (Read-only directory scanner, SHA-256)
+   ├── ThumbnailCache       (Cached WebP thumbnails in ~/.photo_privateer/thumbnails)
+   ├── ImageService         (Path traversal protection & containment check)
+   ├── DomainRulesEngine    (Domain extraction and auto-classification)
+   ├── UsageTracker         (Monthly usage aggregator & cost projection)
+   └── ScanEngine           (Batch dispatch, match normalization, persistence)
+               ↓
+Persistence & Search Providers
+   ├── SQLite Database      (~/.photo_privateer/photo_privateer.sqlite with WAL mode)
+   ├── MockSearchProvider   (Deterministic offline edge cases)
+   └── GoogleVisionProvider (Official google-cloud-vision client)
+```
+
+The application is served as a single local process: FastAPI binds strictly to `127.0.0.1` and serves both the REST API and the compiled React SPA from `frontend/dist`.
+
+---
+
+## 3. Prerequisites
+
+- **Operating System**: Windows 10/11 (or macOS / Linux).
+- **Python**: Version 3.9 or higher (Python 3.11+ recommended).
+- **Node.js**: Version 18+ (only needed for first-time frontend build or frontend development; not needed during normal launch after the frontend is compiled).
+
+---
+
+## 4. First-Time Setup
+
+Run the PowerShell bootstrap script in the repository root:
+
+```powershell
+.\setup.ps1
+```
+
+Or execute manually:
+
+```powershell
+# 1. Install Python backend dependencies
+pip install -r requirements.txt
+
+# 2. Build production frontend
+cd frontend
+npm install
+npm run build
+cd ..
+
+# 3. Initialize SQLite schema
+python -c "from backend.database import init_db; init_db()"
+```
+
+---
+
+## 5. Launching Photo Privateer
+
+### Method 1: Double-Click Launcher (Windows)
+Double-click `START_PHOTO_PRIVATEER.bat` in File Explorer.
+
+### Method 2: Python Command
+From the repository root:
+```powershell
+python start.py
+```
+
+This will:
+1. Verify the Python environment and build distribution.
+2. Start the local FastAPI server at `http://127.0.0.1:8765`.
+3. Automatically open Photo Privateer in your default web browser.
+
+---
+
+## 6. Development Mode
+
+To modify the frontend with instant Vite Hot Module Replacement (HMR):
+
+1. Start the backend API:
+   ```powershell
+   python -m uvicorn backend.main:app --host 127.0.0.1 --port 8765 --reload
+   ```
+
+2. Start the Vite dev server in a separate terminal:
+   ```powershell
+   cd frontend
+   npm run dev
+   ```
+   Open `http://localhost:5173`. Vite proxies all `/api/*` requests to port `8765`.
+
+---
+
+## 7. Deterministic Mock / Demo Mode
+
+Photo Privateer ships with a deterministic **Mock Provider** enabled by default. This allows you to explore the entire UI, test workflows, index local photos, and run scans completely offline without a Google Cloud account.
+
+Mock behaviors are deterministic based on image hashes and filenames:
+- **Clean/Empty**: Images containing `clean` or `empty` in the filename produce 0 matches.
+- **Multiple URLs**: Images containing `multi` simulate multiple match URLs on a single domain (`curated-exhibits.art`).
+- **Simulated Provider Failure**: Images containing `fail` or `error` simulate an upstream API error, demonstrating that a single image failure does not abort the batch.
+- **Standard Discovery**: Produces a legitimate client publication, a partial crop on a design blog, and an unauthorized wallpaper scraper.
+
+The UI displays an amber **Mock Mode (Offline)** badge in the header whenever mock mode is selected.
+
+---
+
+## 8. Connecting Google Cloud Vision
+
+To perform real reverse image searches on the live web:
+
+1. Log into the [Google Cloud Console](https://console.cloud.google.com/).
+2. Create a project (e.g. `photo-privateer-personal`).
+3. Enable the **Cloud Vision API**:
+   - Go to **APIs & Services > Library**.
+   - Search for **Cloud Vision API** and click **Enable**.
+4. Create a Service Account Key:
+   - Go to **IAM & Admin > Service Accounts**.
+   - Click **Create Service Account** (e.g. `photo-privateer-runner`).
+   - Grant the role **Cloud Vision User** or **Viewer**.
+   - Under the created service account, go to the **Keys** tab > **Add Key > Create new key > JSON**.
+   - Save the downloaded `.json` file to a private, non-public directory on your machine (e.g. `C:\Users\YourUser\.secrets\gcp-vision-key.json`).
+5. Open Photo Privateer's **Settings** tab:
+   - Select **Google Cloud Vision** as the active provider.
+   - Enter the absolute path to your downloaded `.json` file.
+   - Click **Save Settings**. Photo Privateer validates that the key file is structurally valid without transmitting it over any network.
+
+---
+
+## 9. Credential Handling & Privacy
+
+- **Never Committed**: `.gitignore` strictly ignores `*credential*.json`, `*secret*.json`, `.env`, and private key formats.
+- **Backend-Owned**: Google credentials are read exclusively by the local Python process. The frontend JavaScript client never receives private keys.
+- **No Path Traversal**: Photos and thumbnails are served through controlled application endpoints that verify file paths reside within registered library folders.
+- **SSRF Mitigation**: Remote candidate preview thumbnails are rendered directly by the browser using `referrerpolicy="no-referrer"` with graceful fallback states.
+
+---
+
+## 10. Local API Usage & Cost Estimation
+
+Google Cloud Vision pricing for **Web Detection** (as published in official GCP pricing documentation, August 2026):
+- **First 1,000 units per calendar month**: **Free ($0.00)**.
+- **Units beyond 1,000**: **$3.50 per 1,000 units** ($0.0035 per image).
+
+Photo Privateer tracks every executed API call in SQLite and provides an **API Usage & Cost** dashboard:
+- **Free-Tier Safety Guard**: Enabled by default. Scans that would exceed your configured free monthly allowance (1,000 units) are blocked unless you check an explicit authorization box.
+- **Local Estimate Disclaimer**: Displayed prominently across the application. Local tracking may differ from official Google billing statements due to project-wide activity, currency conversion, taxes, or promotional credits.
+
+---
+
+## 11. Data Storage & Backup
+
+All application state is stored locally in SQLite:
+- **Database file**: `~/.photo_privateer/photo_privateer.sqlite` (or overridden by the `PHOTO_PRIVATEER_DATA_DIR` environment variable; legacy `photoscrub.db` files are automatically migrated).
+- **Cached thumbnails**: `~/.photo_privateer/thumbnails/*.webp`.
+
+### How to Back Up Your History:
+1. Close Photo Privateer (or stop the terminal process).
+2. Copy `~/.photo_privateer/photo_privateer.sqlite` to your backup drive or cloud archive.
+3. Because SQLite uses Write-Ahead Logging (`WAL`), ensure Photo Privateer is not actively scanning while copying.
+
+---
+
+## 12. Running Automated Tests
+
+Run the full backend test suite:
+```powershell
+pytest -v tests/backend
+```
+
+Run frontend typechecking and production build:
+```powershell
+cd frontend
+npm run build
+```
+
+---
+
+## 13. Explicit Non-Goals
+
+- **No Continuous Background Daemons**: Photo Privateer will never run scheduled crawlers, hourly crons, or background watchers without your explicit instruction.
+- **No Remote Application Server**: All computation, indexing, and storage happens on `127.0.0.1`.
+- **No Accounts or Telemetry**: No tracking, phone-home metrics, or SaaS accounts.
+
+---
+
+## 14. Troubleshooting
+
+| Issue | Resolution |
+| :--- | :--- |
+| **Port 8765 already in use** | Set `PHOTO_PRIVATEER_PORT=8766` in your environment or launch command: `$env:PHOTO_PRIVATEER_PORT=8766; python start.py`. |
+| **Thumbnail generation fails** | Ensure your image is a supported format (JPEG, PNG, WebP, TIFF). Pillow transposes EXIF orientation automatically. |
+| **Google Vision returns `PermissionDenied`** | Verify that the Cloud Vision API is enabled in your GCP project and that the service account has the **Cloud Vision User** role. |
+| **Frontend displays white screen** | Run `npm run build` inside `frontend/` to ensure `frontend/dist/index.html` exists. |
