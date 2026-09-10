@@ -42,7 +42,7 @@ Photo Privateer is a local desktop web application for professional photographer
 ## 3. Technology Stack
 
 - **Backend**: Python 3.11+, FastAPI, Uvicorn, SQLite3 (WAL mode), Pydantic v2, Pillow.
-- **Frontend**: React 18, TypeScript, Vite, Tailwind CSS, Lucide React icons.
+- **Frontend**: React 18, TypeScript, Vite, Tailwind CSS v4 (@tailwindcss/vite, CSS-first architecture, Lightning CSS), Lucide React icons.
 - **Integration**: Google Cloud Vision client library (`google-cloud-vision`) with Application Default Credentials (ADC) and zero-cost credential testing.
 - **Testing**: pytest & pytest-asyncio for Python; Vitest for frontend unit tests; Playwright for end-to-end browser validation.
 - **Runtime Topology**: Single process local server. FastAPI serves both the JSON REST API (`/api/*`) and the compiled Vite static assets (`/` and `frontend/dist`).
@@ -67,14 +67,14 @@ photo-privateer/
 │   ├── models.py                  # Pydantic schemas and dataclasses
 │   ├── migrations/                # Versioned schema migrations
 │   │   ├── runner.py              # Idempotent migration runner & applied tracker
-│   │   └── versions/              # 001_initial_schema through 005_library_fk_safety
+│   │   └── versions/              # 001_initial_schema through 006_project_classification
 │   ├── repositories/              # Data access layer (libraries, images, matches, rules, usage, settings)
 │   ├── services/                  # Indexer, thumbnail cache, image service, rules, scan engine
 │   ├── providers/                 # Base provider interface, Mock provider, Google Vision provider
 │   └── api/                       # Modular FastAPI routers (/api/libraries, /api/photos, /api/scans, etc.)
 ├── frontend/
-│   ├── package.json               # Node dependencies
-│   ├── vite.config.ts             # Vite build configuration and dev proxy
+│   ├── package.json               # Node dependencies (@tailwindcss/vite, tailwindcss v4)
+│   ├── vite.config.ts             # Vite build configuration with @tailwindcss/vite plugin
 │   ├── vitest.config.ts           # Vitest unit test configuration
 │   ├── playwright.config.ts       # Playwright E2E configuration with auto webServer management
 │   ├── e2e/                       # Playwright browser end-to-end test suite
@@ -83,9 +83,16 @@ photo-privateer/
 │   │   ├── App.tsx                # Navigation and top-level state
 │   │   ├── types/index.ts         # TypeScript interfaces
 │   │   ├── api/client.ts          # Typed API client
-│   │   ├── components/            # Header, Thumbnail, Modal dialogs (ScanProgressModal, etc.)
-│   │   ├── views/                 # LibraryView, ReviewView, UsageView, SettingsView
-│   │   └── __tests__/             # Frontend component unit tests (Vitest)
+│   │   ├── styles/                # Modular Tailwind 4 CSS layers (theme.css, utilities.css, base.css)
+│   │   ├── components/
+│   │   │   ├── blocks/            # Reusable atomic UI blocks (ProjectBadge, StatusPill, FilterSelect)
+│   │   │   └── ...                # Header, Thumbnail, Modal dialogs (ScanProgressModal, etc.)
+│   │   ├── engines/               # Domain-driven feature engines
+│   │   │   ├── library/           # LibraryFilterBar, PhotoCard, ProjectAssignModal
+│   │   │   ├── review/            # ReviewFilterBar, MatchCard, MatchInspectModal
+│   │   │   └── settings/          # MonitoredFolderCard, AddFolderSection
+│   │   ├── views/                 # Lean declarative view coordinators (LibraryView, ReviewView, SettingsView, UsageView)
+│   │   └── __tests__/             # Frontend unit tests for blocks, engines, and modals (Vitest)
 ├── tests/
 │   └── backend/                   # Unit, integration, and resilience test suite (pytest)
 └── .agents/
@@ -131,6 +138,7 @@ Persistence Layer
 6. **Library Archival Integrity**: Archiving sets `is_archived = 1` and excludes the library from scanning without deleting photo records or match reviews.
 7. **Disk Presence Tracking**: If a library or folder is temporarily unmounted or missing on disk, `is_present_on_disk = 0` reflects reality without losing indexed data. Reconnection cleanly restores `is_present_on_disk = 1`.
 8. **Session Resilience**: Interrupted or crashed scans automatically recover to `INTERRUPTED` on startup.
+9. **Project Assignment Preservation**: Manual project assignments made by the user in the UI are permanently respected. Re-indexing existing images uses SQLite `COALESCE(images.project, excluded.project)` to preserve manual overrides, while subfolder auto-detection assigns immediate parent folders on newly discovered images.
 
 ---
 
@@ -163,6 +171,16 @@ class SearchProvider(abc.ABC):
 - **Professional Photography Aesthetic**: Elegant dark/neutral theme (`carbon-950` to `carbon-800`), restrained typography, generous spacing, image-first presentation.
 - **Efficient Match Review**: Discoveries are presented with side-by-side original and found thumbnails, quick classification buttons, direct link to live web pages, inline notes, and a high-resolution inspection modal.
 - **Intentional States**: Explicit empty states, loading skeletons, progress modals, and error boundaries for all views.
+
+### 9.1 Engines and Blocks Architecture
+- **Lean View Coordinators**: Top-level views (`LibraryView`, `ReviewView`, `SettingsView`, `UsageView`) must remain lean coordinators focused on top-level state and API orchestration, delegating presentation and composite controls to `src/engines/`.
+- **Atomic Blocks Purity**: Reusable UI atoms reside in `src/components/blocks/` (`ProjectBadge`, `StatusPill`, `FilterSelect`) with strict TypeScript typing and zero parent state leakage.
+- **Zero `any` Standard**: Avoid loose `any` types in error handling and state; use explicit narrowing (`err instanceof Error ? err.message : String(err)`).
+
+### 9.2 Tailwind CSS v4 Theme Completeness Invariant
+- **Exhaustive Color Stops**: In Tailwind v4, custom palettes declared in `@theme` (such as `carbon` and `accent`) do not automatically inherit undeclared numeric stops. All required shade stops (e.g. `accent-100` through `accent-950`) must be explicitly declared in `src/styles/theme.css` to prevent silent CSS rule omission.
+- **Custom Utility Directives**: Extended interactive utilities (`scale-98`, `backdrop-blur-xs`, `shadow-xs`, `tabular-nums`) must be maintained via native `@utility` blocks in `src/styles/utilities.css`.
+
 
 ---
 
