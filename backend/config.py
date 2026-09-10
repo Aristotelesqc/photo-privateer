@@ -6,7 +6,7 @@ import shutil
 from pathlib import Path
 
 # Application Version
-APP_VERSION = "1.0.1"
+APP_VERSION = "1.0.2"
 
 # Base Paths
 WORKSPACE_ROOT = Path(__file__).resolve().parent.parent
