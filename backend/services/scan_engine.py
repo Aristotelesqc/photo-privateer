@@ -76,23 +76,7 @@ class ScanEngine:
         # 2. Enforce active non-archived libraries
         active_libs = {lib.id: lib for lib in self.library_repo.list_libraries(include_archived=False) if lib.enabled}
 
-
-        # 3. Enforce free tier allowance guard first before disk I/O
-        settings = self.settings_repo.get_app_settings()
-        provider_id = provider_override or settings.active_provider
-
-        if provider_id == "google_vision" and not force_override_guard:
-            current_period = get_current_billing_period()
-            current_units = self.usage_repo.get_period_units(current_period, provider="google_vision")
-            projected = current_units + len(image_ids)
-            if projected > settings.free_tier_monthly_units and settings.block_on_free_tier_exceeded:
-                raise ValueError(
-                    f"Scan blocked by free tier allowance guard: projected usage ({projected}) "
-                    f"exceeds monthly allowance ({settings.free_tier_monthly_units}). "
-                    f"Authorize force override to proceed."
-                )
-
-        # 4. Validate images and filter to those present on disk
+        # 3. Validate images and filter to those present on disk
         images = self.image_repo.get_by_ids(image_ids)
         image_map = {img.id: img for img in images}
 
@@ -123,7 +107,23 @@ class ScanEngine:
                 f"Check that files have not been moved or unmounted."
             )
 
+        # 4. Enforce free tier allowance guard on the actual usable scannable image count
+        settings = self.settings_repo.get_app_settings()
+        provider_id = provider_override or settings.active_provider
+
+        if provider_id == "google_vision" and not force_override_guard:
+            current_period = get_current_billing_period()
+            current_units = self.usage_repo.get_period_units(current_period, provider="google_vision")
+            projected = current_units + len(usable_images)
+            if projected > settings.free_tier_monthly_units and settings.block_on_free_tier_exceeded:
+                raise ValueError(
+                    f"Scan blocked by free tier allowance guard: projected usage ({projected}) "
+                    f"exceeds monthly allowance ({settings.free_tier_monthly_units}). "
+                    f"Authorize force override to proceed."
+                )
+
         return usable_images, missing_ids
+
 
     def start_background_scan(
         self,
@@ -317,14 +317,16 @@ class ScanEngine:
                         failed_units = 1
 
                 unit_cost = 0.0
-                if provider_id == "google_vision" and req_status in ("SUCCESS", "REMOTE_ERROR") and units_consumed > 0:
+                if provider_id == "google_vision" and req_status in ("SUCCESS", "REMOTE_ERROR") and attempted_units > 0:
                     current_units = usage_repo.get_period_units(current_period, provider="google_vision")
-                    if current_units >= free_tier_allowance:
-                        unit_cost = unit_price_usd
+                    billable_before = max(0, current_units - free_tier_allowance)
+                    billable_after = max(0, current_units + attempted_units - free_tier_allowance)
+                    incremental_billable = billable_after - billable_before
+                    unit_cost = round(incremental_billable * unit_price_usd, 4)
 
-                # 4. Immediate short SQLite write transaction: commit usage, discoveries, and progress
+                # 4. Immediate short SQLite write transaction:
+                # Phase A: Durably record provider call accounting in its own immediate transaction
                 try:
-                    # Persist provider call accounting
                     usage_repo.record_call(
                         provider=provider_id,
                         billing_period=current_period,
@@ -337,9 +339,14 @@ class ScanEngine:
                         estimated_cost=unit_cost,
                         error_message=provider_result.error_message,
                     )
+                    conn.commit()
+                except Exception as acc_exc:
+                    logger.error(f"Error persisting call accounting for image {img.id}: {acc_exc}", exc_info=True)
+                    conn.rollback()
 
+                # Phase B: Persist discoveries, item outcome, and session progress
+                try:
                     if provider_result.success:
-                        successful += 1
                         matches_count = 0
                         for item in provider_result.items:
                             matching_rule = rule_repo.find_rule_for_domain(item.domain)
@@ -369,6 +376,7 @@ class ScanEngine:
                             status="SUCCESS",
                             matches_found=matches_count,
                         )
+                        successful += 1
                     else:
                         failed += 1
                         usage_repo.record_scan_item(
@@ -390,13 +398,34 @@ class ScanEngine:
                 except Exception as db_exc:
                     logger.error(f"Error persisting scan progress for image {img.id}: {db_exc}", exc_info=True)
                     conn.rollback()
+                    failed += 1
+                    processed += 1
+                    try:
+                        usage_repo.record_scan_item(
+                            session_id=session_id,
+                            image_id=img.id,
+                            status="ERROR",
+                            error_message=f"Database persistence error: {str(db_exc)}",
+                            matches_found=0,
+                        )
+                        usage_repo.update_scan_session_progress(
+                            session_id=session_id,
+                            processed=processed,
+                            successful=successful,
+                            failed=failed,
+                        )
+                        conn.commit()
+                    except Exception:
+                        pass
 
-            # 5. Final session status update
+            # 5. Final session status update (re-check cancellation for in-flight final image)
+            cancelled = cancelled or usage_repo.is_cancel_requested(session_id)
             final_status = (
                 "CANCELLED"
                 if cancelled
                 else ("COMPLETED" if (successful > 0 or len(ordered_image_ids) == 0) else "FAILED")
             )
+
             usage_repo.update_scan_session_progress(
                 session_id=session_id,
                 processed=processed,

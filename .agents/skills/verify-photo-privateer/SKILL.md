@@ -10,11 +10,12 @@ This skill runs an end-to-end verification audit of the Photo Privateer applicat
 ## Verification Workflow
 
 ### 1. Backend Automated Tests
-Run pytest across all unit, integration, and resilience tests:
+Ensure dev dependencies are installed from `requirements-dev.txt` (Python 3.14 canonical, 3.11+ supported), then run pytest across all unit, integration, and resilience tests:
 ```powershell
+pip install -r requirements-dev.txt
 pytest -v tests/backend
 ```
-Ensure 100% of tests pass with 0 failures and 0 regressions (indexing, hashing immutability, versioned SQLite migrations, rescan history preservation, domain rules, cost estimation, cooperative scan cancellation, crash recovery, rename reconciliation, hermetic test isolation, server-side protection of archived libraries, transactional purge, and zero-cost authentication).
+Ensure 100% of tests pass with 0 failures and 0 regressions (indexing, hashing immutability, versioned SQLite migrations with post-migration foreign key checks, migration 004 review preservation, rescan history preservation, domain rules, cost estimation with boundary crossing, cooperative scan cancellation, crash recovery, rename reconciliation, hermetic test isolation, server-side protection of archived libraries, transactional purge, scan worker persistence isolation, and zero-cost authentication).
 
 ### 2. Frontend Unit Tests (Vitest)
 Run Vitest component unit tests:

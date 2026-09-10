@@ -69,6 +69,7 @@ class LibraryIndexer:
         added_or_updated = 0
         unchanged = 0
         observed_paths: set[str] = set()
+        unchanged_ids: list[int] = []
 
         for file_path in self._discover_files(root, lib.recursive):
             scanned += 1
@@ -92,6 +93,10 @@ class LibraryIndexer:
             existing = self.image_repo.get_by_path(norm_path)
             if existing and abs(existing.file_modified_at - mtime) < 0.001 and existing.file_size == file_size:
                 unchanged += 1
+                unchanged_ids.append(existing.id)
+                if len(unchanged_ids) >= 500:
+                    self.image_repo.touch_observed_images(unchanged_ids)
+                    unchanged_ids.clear()
                 # Auto-assign detected project if photo currently has no project
                 if getattr(lib, "subfolders_as_projects", True) and not existing.project and detected_project:
                     self.image_repo.update_project_auto(existing.id, detected_project)
@@ -189,8 +194,13 @@ class LibraryIndexer:
             )
             added_or_updated += 1
 
+        if unchanged_ids:
+            self.image_repo.touch_observed_images(unchanged_ids)
+            unchanged_ids.clear()
+
         # Mark indexed files not observed on disk as missing (never delete history!)
         missing_count = self.image_repo.mark_missing_images_in_library(library_id, observed_paths)
+
 
         # Update library last indexed timestamp
         self.library_repo.update_last_indexed(library_id)

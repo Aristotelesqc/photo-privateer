@@ -96,6 +96,27 @@ class ImageRepository:
             return len(missing_ids)
         return 0
 
+    def touch_observed_images(self, image_ids: list[int]) -> int:
+        """Batch updates last_seen_on_disk and ensures is_present_on_disk = 1 for observed files without rehashing."""
+        if not image_ids:
+            return 0
+        from backend.utils import chunked
+        now = datetime.now(timezone.utc).isoformat()
+        cur = self.conn.cursor()
+        total = 0
+        for chunk in chunked(image_ids, 500):
+            placeholders = ",".join("?" for _ in chunk)
+            cur.execute(f"""
+                UPDATE images
+                SET last_seen_on_disk = ?,
+                    is_present_on_disk = 1
+                WHERE id IN ({placeholders})
+            """, (now, *chunk))
+            total += cur.rowcount
+        self.conn.commit()
+        return total
+
+
     def list_images(
         self,
         library_id: Optional[int] = None,

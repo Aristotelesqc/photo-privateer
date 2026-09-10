@@ -10,16 +10,16 @@ jobs:
   backend-tests:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - name: Set up Python 3.11
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - name: Set up Python 3.14
+        uses: actions/setup-python@v7
         with:
-          python-version: '3.11'
+          python-version: '3.14'
           cache: 'pip'
       - name: Install backend dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          pip install -r requirements-dev.txt
       - name: Run backend test suite
         env:
           PHOTO_PRIVATEER_TEST_MODE: '1'
@@ -29,11 +29,11 @@ jobs:
   frontend-unit-and-build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - name: Set up Node.js 20
-        uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - name: Set up Node.js 24
+        uses: actions/setup-node@v7
         with:
-          node-version: 20
+          node-version: '24'
           cache: 'npm'
           cache-dependency-path: frontend/package-lock.json
       - name: Install frontend dependencies
@@ -49,20 +49,20 @@ jobs:
   e2e-playwright:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - name: Set up Python 3.11
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - name: Set up Python 3.14
+        uses: actions/setup-python@v7
         with:
-          python-version: '3.11'
+          python-version: '3.14'
           cache: 'pip'
       - name: Install backend dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
-      - name: Set up Node.js 20
-        uses: actions/setup-node@v4
+          pip install -r requirements-dev.txt
+      - name: Set up Node.js 24
+        uses: actions/setup-node@v7
         with:
-          node-version: 20
+          node-version: '24'
           cache: 'npm'
           cache-dependency-path: frontend/package-lock.json
       - name: Install frontend dependencies
@@ -77,3 +77,37 @@ jobs:
           PHOTO_PRIVATEER_TEST_MODE: '1'
           PHOTO_PRIVATEER_HOST: '127.0.0.1'
         run: npm run test:e2e
+
+  windows-smoke:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Set up Python 3.14
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.14'
+          cache: 'pip'
+      - name: Set up Node.js 24
+        uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+          cd frontend
+          npm ci
+      - name: Build frontend
+        run: |
+          cd frontend
+          npm run build
+      - name: Database initialization & migration smoke
+        env:
+          PHOTO_PRIVATEER_TEST_MODE: '1'
+        run: |
+          python -c "from backend.database import init_db; applied = init_db(); print(f'Migrations applied: {applied}')"
+      - name: Server launcher CLI smoke
+        run: |
+          python start.py --help

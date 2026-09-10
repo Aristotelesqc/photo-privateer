@@ -56,10 +56,23 @@ def test_usage_summary_and_cost_calculation(repos):
     assert proj3.free_tier_exceeded is True
     assert proj3.blocked_by_guard is False
 
-def test_scan_engine_guard_blocking(repos):
+from pathlib import Path
+
+
+def test_scan_engine_guard_blocking(repos, sample_images_dir: Path):
     scan_engine = repos["scan_engine"]
     usage_repo = repos["usage_repo"]
     settings_repo = repos["settings_repo"]
+    lib_repo = repos["lib_repo"]
+    indexer = repos["indexer"]
+    img_repo = repos["img_repo"]
+
+    # Index sample photos so usable images exist on disk
+    lib = lib_repo.create(path=str(sample_images_dir), name="UsageGuardLib")
+    indexer.index_library(lib.id)
+    images, _ = img_repo.list_images(library_id=lib.id)
+    assert len(images) >= 2
+    target_ids = [images[0].id, images[1].id]
 
     # Set free tier allowance low to 5 units for testing
     settings_repo.update_settings({
@@ -81,10 +94,10 @@ def test_scan_engine_guard_blocking(repos):
         estimated_cost=0.0,
     )
 
-    # Attempting to scan 2 photos without override should be blocked
+    # Attempting to scan 2 photos without override should be blocked by free tier guard
     with pytest.raises(ValueError, match="Scan blocked by free tier allowance guard"):
         scan_engine.execute_scan(
-            image_ids=[1, 2],
+            image_ids=target_ids,
             provider_override="google_vision",
             force_override_guard=False,
         )

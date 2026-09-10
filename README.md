@@ -47,7 +47,7 @@ Key Features:
 ## 2. Architecture
 
 ```text
-React 18 + TypeScript + Tailwind UI
+React 19 + TypeScript 7 + Vite 8 + Tailwind CSS v4 UI
                ↓ REST / JSON
 Local FastAPI Application (http://127.0.0.1:8765)
                ↓
@@ -73,8 +73,8 @@ The application is served as a single local process: FastAPI binds strictly to `
 ## 3. Prerequisites
 
 - **Operating System**: Windows 10/11 (or macOS / Linux).
-- **Python**: Version 3.11 or higher.
-- **Node.js**: Version 18+ (only needed for first-time frontend build, test execution, or frontend development; not needed during normal launch after the frontend is compiled).
+- **Python**: Version 3.14 (canonical maintenance baseline).
+- **Node.js**: Version 24 LTS (only needed for first-time frontend build, test execution, or frontend development; not needed during normal launch after the frontend is compiled).
 
 ---
 
@@ -89,18 +89,23 @@ Run the PowerShell bootstrap script in the repository root:
 Or execute manually:
 
 ```powershell
-# 1. Install Python backend dependencies
-pip install -r requirements.txt
+# 1. Create and activate virtual environment
+python -m venv .venv
+.venv\Scripts\Activate.ps1
 
-# 2. Build production frontend
+# 2. Install Python dependencies
+pip install -r requirements-dev.txt
+
+# 3. Build production frontend (Node 24 LTS)
 cd frontend
-npm install
+npm ci
 npm run build
 cd ..
 
-# 3. Initialize SQLite schema
+# 4. Initialize SQLite schema
 python -c "from backend.database import init_db; init_db()"
 ```
+
 
 ---
 
@@ -158,21 +163,37 @@ The UI displays an amber **Mock Mode (Offline)** badge in the header whenever mo
 
 To perform real reverse image searches on the live web:
 
-1. Log into the [Google Cloud Console](https://console.cloud.google.com/).
-2. Create a project (e.g. `photo-privateer-personal`).
-3. Enable the **Cloud Vision API**:
-   - Go to **APIs & Services > Library**.
-   - Search for **Cloud Vision API** and click **Enable**.
-4. Create a Service Account Key:
-   - Go to **IAM & Admin > Service Accounts**.
-   - Click **Create Service Account** (e.g. `photo-privateer-runner`).
-   - Grant the role **Cloud Vision User** or **Viewer**.
-   - Under the created service account, go to the **Keys** tab > **Add Key > Create new key > JSON**.
-   - Save the downloaded `.json` file to a private, non-public directory on your machine (e.g. `C:\Users\YourUser\.secrets\gcp-vision-key.json`).
-5. Open Photo Privateer's **Settings** tab:
+### Primary Method: Application Default Credentials (ADC) — Recommended for Local Use
+For local personal desktop use, Google Cloud's official and recommended client-library authentication is Application Default Credentials (ADC):
+1. Install the [Google Cloud CLI (`gcloud`)](https://cloud.google.com/sdk/docs/install).
+2. Initialize and configure your Google Cloud project:
+   ```bash
+   gcloud init
+   ```
+3. Acquire local user Application Default Credentials:
+   ```bash
+   gcloud auth application-default login
+   ```
+4. Set your active project as the quota project for client libraries:
+   ```bash
+   gcloud auth application-default set-quota-project YOUR_PROJECT_ID
+   ```
+5. Ensure the **Cloud Vision API** is enabled in your project ([GCP Console](https://console.cloud.google.com/apis/library/vision.googleapis.com) or `gcloud services enable vision.googleapis.com`).
+
+Photo Privateer automatically detects local ADC credentials on Windows (`%APPDATA%\gcloud\application_default_credentials.json`) and Linux/macOS (`~/.config/gcloud/application_default_credentials.json`). No file path configuration is necessary in Settings—leave the credentials path empty and click **Test Authentication**.
+
+### Alternative Method: Service Account JSON Key
+If you prefer to isolate access with a dedicated Service Account:
+1. In the [Google Cloud Console](https://console.cloud.google.com/), navigate to **IAM & Admin > Service Accounts** and create a service account (e.g. `photo-privateer-runner`).
+2. Grant the service account the **Service Usage Consumer** role (`roles/serviceusage.serviceUsageConsumer`) in your project.
+   *(Note: Photo Privateer uploads raw image bytes directly to Google Cloud Vision Web Detection; no Google Cloud Storage buckets or `roles/storage.objectViewer` permissions are required).*
+3. Under the created service account, go to **Keys > Add Key > Create new key > JSON**.
+4. Save the downloaded `.json` file to a private, non-public directory on your machine (e.g. `C:\Users\YourUser\.secrets\gcp-vision-key.json`).
+5. In Photo Privateer's **Settings** tab:
    - Select **Google Cloud Vision** as the active provider.
    - Enter the absolute path to your downloaded `.json` file.
-   - Click **Save Settings**. Photo Privateer validates that the key file is structurally valid without transmitting it over any network.
+   - Click **Save Settings** and **Test Authentication**.
+
 
 ---
 
@@ -257,5 +278,6 @@ npm run test:e2e
 | :--- | :--- |
 | **Port 8765 already in use** | Set `PHOTO_PRIVATEER_PORT=8766` in your environment or launch command: `$env:PHOTO_PRIVATEER_PORT=8766; python start.py`. |
 | **Thumbnail generation fails** | Ensure your image is a supported format (JPEG, PNG, WebP, TIFF). Pillow transposes EXIF orientation automatically. |
-| **Google Vision returns `PermissionDenied`** | Verify that the Cloud Vision API is enabled in your GCP project and that the service account has the **Cloud Vision User** role. |
+| **Google Vision returns `PermissionDenied`** | Verify that the Cloud Vision API is enabled in your GCP project (`gcloud services enable vision.googleapis.com`) and that ADC has a valid quota project set (`gcloud auth application-default set-quota-project PROJECT_ID`) or the service account has the **Service Usage Consumer** role. |
+
 | **Frontend displays white screen** | Run `npm run build` inside `frontend/` to ensure `frontend/dist/index.html` exists. |

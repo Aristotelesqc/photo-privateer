@@ -13,9 +13,9 @@ from pathlib import Path
 WORKSPACE_ROOT = Path(__file__).resolve().parent
 
 def check_environment():
-    # 1. Verify Python version (strictly Python 3.11+)
+    # 1. Verify Python version (strictly Python 3.11+, canonical 3.14+)
     if sys.version_info < (3, 11):
-        print(f"ERROR: Photo Privateer requires Python 3.11 or higher. Running: {sys.version}")
+        print(f"ERROR: Photo Privateer requires Python 3.11 or higher (Python 3.14 recommended). Running: {sys.version}")
         sys.exit(1)
 
     # 2. Verify backend dependencies
@@ -44,6 +44,16 @@ def check_environment():
         except Exception as e:
             print(f"Could not build frontend automatically: {e}")
             print("Please run 'npm install && npm run build' inside frontend/.")
+
+def is_port_available(host: str, port: int) -> bool:
+    """Verify socket port is available before uvicorn bind."""
+    import socket
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        try:
+            s.bind((host, port))
+            return True
+        except OSError:
+            return False
 
 def wait_for_server_and_open_browser(url: str, timeout: float = 15.0):
     """Polls the local server endpoint until it is accepting connections, then opens the browser."""
@@ -85,6 +95,10 @@ def main():
         print(f"ERROR: {e}")
         sys.exit(1)
     bind_port = args.port or PORT
+    if not is_port_available(bind_host, bind_port):
+        print(f"ERROR: Port {bind_port} on {bind_host} is already in use.")
+        print("Please stop any running Photo Privateer instance or specify an alternate port via --port.")
+        sys.exit(1)
 
     url = f"http://{bind_host}:{bind_port}/"
     print("=" * 60)

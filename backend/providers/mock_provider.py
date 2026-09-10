@@ -25,6 +25,11 @@ class MockSearchProvider(SearchProvider):
         path = Path(image_path)
         name_lower = path.name.lower()
 
+        # Simulated slow search for deterministic cancellation testing
+        if "slow" in name_lower:
+            import time
+            time.sleep(1.0)
+
         # Simulated provider failure test case
         if "fail" in name_lower or "error" in name_lower:
             return ProviderResult(
@@ -33,6 +38,7 @@ class MockSearchProvider(SearchProvider):
                 units_consumed=1,
                 error_message="Simulated mock provider failure: upstream connection timeout",
             )
+
 
         # Deterministic seed from image bytes or filename
         try:

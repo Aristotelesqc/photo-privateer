@@ -41,11 +41,12 @@ Photo Privateer is a local desktop web application for professional photographer
 
 ## 3. Technology Stack
 
-- **Backend**: Python 3.11+, FastAPI, Uvicorn, SQLite3 (WAL mode), Pydantic v2, Pillow.
-- **Frontend**: React 18, TypeScript, Vite, Tailwind CSS v4 (@tailwindcss/vite, CSS-first architecture, Lightning CSS), Lucide React icons.
+- **Backend**: Python 3.14, FastAPI, Uvicorn, SQLite3 (WAL mode), Pydantic v2, Pillow.
+- **Frontend**: React 19, TypeScript 7, Vite 8, Tailwind CSS v4 (@tailwindcss/vite, CSS-first architecture, Lightning CSS), Lucide React icons.
 - **Integration**: Google Cloud Vision client library (`google-cloud-vision`) with Application Default Credentials (ADC) and zero-cost credential testing.
-- **Testing**: pytest & pytest-asyncio for Python; Vitest for frontend unit tests; Playwright for end-to-end browser validation.
+- **Testing**: pytest for Python; Vitest for frontend unit tests; Playwright for end-to-end browser validation.
 - **Runtime Topology**: Single process local server. FastAPI serves both the JSON REST API (`/api/*`) and the compiled Vite static assets (`/` and `frontend/dist`).
+
 
 ---
 
@@ -201,3 +202,12 @@ Verification follows a strict 4-tier testing hierarchy:
 
 1. **Pre-Commit Account Alignment**: Before creating an initial commit or pushing to a remote host (e.g., GitHub), always verify that `git config user.name` and `git config user.email` match the target repository owner and active GitHub CLI session (`gh auth status`).
 2. **Contributor Graph Protection**: Never allow unconfigured machine credentials or local defaults to generate commits on newly initialized user repositories, preventing attribution pollution in GitHub's contributor statistics.
+
+---
+
+## 12. Dependency & Runtime Modernization Policy
+
+1. **Canonical Runtimes**: The supported canonical runtime baseline is **Python 3.14** and **Node.js 24 LTS** (build/test/dev). Node is not required at runtime after production frontend assets are compiled.
+2. **Current Stable Baseline**: Prefer the current stable release line for direct runtimes, frameworks, libraries, build tools, and test tooling. Do not retain an older major solely for conservatism or historical compatibility. A deliberate stable-version holdback requires a concrete demonstrated incompatibility, upstream regression, unsupported runtime, or failing project test and must be documented. Pre-release, beta, RC, canary, and nightly versions are excluded by default.
+3. **Exact Direct Declarations**: Direct dependencies are declared as explicit verified versions in `requirements.txt` / `requirements-dev.txt` and `frontend/package.json` to guarantee local and CI reproducibility.
+

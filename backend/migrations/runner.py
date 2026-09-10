@@ -159,15 +159,73 @@ def migration_004_matches_asset_only_and_uniqueness(conn: sqlite3.Connection) ->
     if "acknowledged_at" not in cols:
         conn.execute("ALTER TABLE matches ADD COLUMN acknowledged_at TEXT")
 
-    # Deterministically deduplicate any historical duplicates before creating the unique index
-    conn.execute("""
-        DELETE FROM matches
-        WHERE id NOT IN (
-            SELECT MIN(id)
-            FROM matches
-            GROUP BY image_id, source_kind, COALESCE(page_url, ''), COALESCE(candidate_image_url, '')
-        )
+    # Safely deduplicate historical duplicates, preserving human review state and full timestamp spans
+    cur.execute("""
+        SELECT image_id, source_kind, COALESCE(page_url, '') AS p_url, COALESCE(candidate_image_url, '') AS c_url, COUNT(*) AS cnt
+        FROM matches
+        GROUP BY image_id, source_kind, COALESCE(page_url, ''), COALESCE(candidate_image_url, '')
+        HAVING cnt > 1
     """)
+    duplicate_groups = cur.fetchall()
+
+    for group in duplicate_groups:
+        cur.execute("""
+            SELECT * FROM matches
+            WHERE image_id = ? AND source_kind = ?
+              AND COALESCE(page_url, '') = ? AND COALESCE(candidate_image_url, '') = ?
+            ORDER BY
+                (classification != 'UNREVIEWED') DESC,
+                (notes IS NOT NULL AND TRIM(notes) != '') DESC,
+                (is_new = 0) DESC,
+                id DESC
+        """, (group["image_id"], group["source_kind"], group["p_url"], group["c_url"]))
+        rows = cur.fetchall()
+
+        keeper = rows[0]
+        other_ids = [r["id"] for r in rows[1:]]
+
+        earliest_first = min(r["first_seen_at"] for r in rows if r["first_seen_at"])
+        latest_last = max(r["last_seen_at"] for r in rows if r["last_seen_at"])
+
+        best_class = keeper["classification"]
+        best_classified_at = keeper["classified_at"]
+        if best_class == "UNREVIEWED":
+            for r in rows:
+                if r["classification"] != "UNREVIEWED":
+                    best_class = r["classification"]
+                    best_classified_at = r["classified_at"]
+                    break
+
+        best_notes = keeper["notes"]
+        if not best_notes or not best_notes.strip():
+            for r in rows:
+                if r["notes"] and r["notes"].strip():
+                    best_notes = r["notes"]
+                    break
+
+        is_new = 0 if any(r["is_new"] == 0 for r in rows) else keeper["is_new"]
+        ack_at = keeper["acknowledged_at"]
+        if not ack_at:
+            for r in rows:
+                if r["acknowledged_at"]:
+                    ack_at = r["acknowledged_at"]
+                    break
+
+        cur.execute("""
+            UPDATE matches
+            SET first_seen_at = ?,
+                last_seen_at = ?,
+                classification = ?,
+                classified_at = ?,
+                notes = ?,
+                is_new = ?,
+                acknowledged_at = ?
+            WHERE id = ?
+        """, (earliest_first, latest_last, best_class, best_classified_at, best_notes, is_new, ack_at, keeper["id"]))
+
+        placeholders = ",".join("?" for _ in other_ids)
+        cur.execute(f"DELETE FROM matches WHERE id IN ({placeholders})", tuple(other_ids))
+
 
     # Create deterministic unique index that handles NULL candidate_image_url and NULL page_url safely
     conn.execute("""
@@ -319,8 +377,17 @@ def run_migrations(conn: sqlite3.Connection) -> list[int]:
                     "INSERT INTO schema_migrations (version, name, applied_at) VALUES (?, ?, ?)",
                     (migration.version, migration.name, now),
                 )
-                conn.commit()
                 conn.execute("PRAGMA foreign_keys = ON;")
+                fk_cur = conn.cursor()
+                fk_cur.execute("PRAGMA foreign_key_check;")
+                violations = fk_cur.fetchall()
+                if violations:
+                    summary = [f"table={r[0]}, rowid={r[1]}, parent={r[2]}, fkid={r[3]}" for r in violations]
+                    raise sqlite3.IntegrityError(
+                        f"Foreign key integrity violation after migration {migration.version:03d}_{migration.name}: "
+                        f"{'; '.join(summary)}"
+                    )
+                conn.commit()
                 applied_now.append(migration.version)
                 logger.info(f"Migration {migration.version:03d}_{migration.name} applied successfully.")
             except Exception as e:
@@ -328,6 +395,7 @@ def run_migrations(conn: sqlite3.Connection) -> list[int]:
                 conn.execute("PRAGMA foreign_keys = ON;")
                 logger.error(f"Migration {migration.version:03d}_{migration.name} failed: {e}")
                 raise
+
 
     return applied_now
 

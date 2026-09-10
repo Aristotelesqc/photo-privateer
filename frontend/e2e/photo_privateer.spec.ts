@@ -9,8 +9,8 @@ test.describe.serial('Photo Privateer End-to-End Test Suite', () => {
 
   test.beforeAll(async () => {
     testLibraryName = `E2E Test ${Date.now()}`;
-    // Create a temporary fixture folder with mock images
-    testPhotoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pp_e2e_photos_'));
+    // Create a temporary fixture folder with mock images (resolving symlinks)
+    testPhotoDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pp_e2e_photos_')));
 
     // Create a minimal valid 1x1 JPEG
     const minimalJpeg = Buffer.from([
@@ -29,10 +29,27 @@ test.describe.serial('Photo Privateer End-to-End Test Suite', () => {
       0x00, 0xbf, 0x00, 0xff, 0xd9,
     ]);
 
-    fs.writeFileSync(path.join(testPhotoDir, 'mountain_landscape.jpg'), minimalJpeg);
-    fs.writeFileSync(path.join(testPhotoDir, 'multi_domain_photo.jpg'), minimalJpeg);
-    fs.writeFileSync(path.join(testPhotoDir, 'coastal_sunset.jpg'), minimalJpeg);
+    function createUniqueJpeg(tag: string): Buffer {
+      const comment = Buffer.from(tag, 'utf-8');
+      const comMarker = Buffer.from([
+        0xff, 0xfe,
+        ((comment.length + 2) >> 8) & 0xff,
+        (comment.length + 2) & 0xff,
+        ...comment,
+      ]);
+      return Buffer.concat([
+        minimalJpeg.subarray(0, 2),
+        comMarker,
+        minimalJpeg.subarray(2),
+      ]);
+    }
+
+    fs.writeFileSync(path.join(testPhotoDir, 'mountain_landscape.jpg'), createUniqueJpeg('mountain_photo'));
+    fs.writeFileSync(path.join(testPhotoDir, 'multi_domain_photo.jpg'), createUniqueJpeg('multi_domain_photo'));
+    fs.writeFileSync(path.join(testPhotoDir, 'coastal_sunset.jpg'), createUniqueJpeg('coastal_sunset_photo'));
+    fs.writeFileSync(path.join(testPhotoDir, 'slow_landscape.jpg'), createUniqueJpeg('slow_cancellation_photo'));
   });
+
 
   test.afterAll(async () => {
     try {
@@ -75,7 +92,8 @@ test.describe.serial('Photo Privateer End-to-End Test Suite', () => {
     await page.click('button:has-text("Add & Index")');
 
     // Confirm folder is listed in monitored folders
-    await expect(page.locator(`text=${testPhotoDir}`)).toBeVisible({ timeout: 10000 });
+    await expect(page.getByText(testPhotoDir, { exact: true })).toBeVisible({ timeout: 10000 });
+
 
     // Navigate to Library View
     await page.locator('[data-testid="nav-library"]').click();
@@ -129,25 +147,25 @@ test.describe.serial('Photo Privateer End-to-End Test Suite', () => {
 
     // Look for discovered match cards
     const matchCard = page.locator('div:has-text("Decision")').first();
-    await expect(matchCard).toBeVisible({ timeout: 10000 });
+    // Locate the match card containing remote candidate image preview (FULL match)
+    const fullMatchCard = page.locator('div.border', { has: page.locator('text=FULL Match') }).first();
+    await expect(fullMatchCard).toBeVisible({ timeout: 10000 });
 
-    // Verify privacy opt-in button is rendered instead of auto-loading remote image
-    const loadPreviewBtn = page.locator('button:has-text("Load preview")').first();
-    if (await loadPreviewBtn.isVisible()) {
-      await loadPreviewBtn.click();
-    }
+    const loadPreviewBtn = fullMatchCard.locator('button:has-text("Load preview")');
+    await expect(loadPreviewBtn).toBeVisible({ timeout: 5000 });
+    await loadPreviewBtn.click();
 
-    // Open Inspect Modal on first match
-    const inspectBtn = page.locator('button:has-text("Inspect")').first();
+    // Open Inspect Modal on this match with remote candidate image
+    const inspectBtn = fullMatchCard.locator('button:has-text("Inspect")');
+    await expect(inspectBtn).toBeVisible({ timeout: 5000 });
     await inspectBtn.click();
 
     await expect(page.locator('text=Original Photograph')).toBeVisible({ timeout: 5000 });
 
     // In inspection modal, test privacy opt-in load
     const loadDiscoveredBtn = page.locator('button:has-text("Load Discovered Image")');
-    if (await loadDiscoveredBtn.isVisible()) {
-      await loadDiscoveredBtn.click();
-    }
+    await expect(loadDiscoveredBtn).toBeVisible({ timeout: 5000 });
+    await loadDiscoveredBtn.click();
 
     // Close inspection modal
     await page.locator('button:has-text("Back to Review Queue")').click();
@@ -163,8 +181,8 @@ test.describe.serial('Photo Privateer End-to-End Test Suite', () => {
 
     // Verify Search Provider & Authentication section
     await expect(page.locator('text=Search Provider & Authentication')).toBeVisible({ timeout: 10000 });
-    await expect(page.getByText('Mock / Demo Provider', { exact: true })).toBeVisible();
-    await expect(page.getByText('Google Cloud Vision', { exact: true })).toBeVisible();
+    await expect(page.getByText('Mock / Demo Provider').first()).toBeVisible();
+    await expect(page.getByText('Google Cloud Vision').first()).toBeVisible();
 
     // Test zero-cost authentication button
     const testAuthBtn = page.locator('button:has-text("Test Authentication")');
@@ -179,18 +197,17 @@ test.describe.serial('Photo Privateer End-to-End Test Suite', () => {
     // Non-destructive library archiving
     const libCard = page.locator('[data-testid="library-item"]').filter({ hasText: testLibraryName }).first();
     const stopMonitoringBtn = libCard.locator('[data-testid="btn-stop-monitoring"]');
-    if (await stopMonitoringBtn.isVisible()) {
-      await stopMonitoringBtn.click();
+    await expect(stopMonitoringBtn).toBeVisible({ timeout: 5000 });
+    await stopMonitoringBtn.click();
 
-      // Should now show archived badge
-      await expect(libCard.locator('[data-testid="badge-archived"]')).toBeVisible({ timeout: 10000 });
-      const resumeBtn = libCard.locator('[data-testid="btn-resume-monitoring"]');
-      await expect(resumeBtn).toBeVisible({ timeout: 5000 });
+    // Should now show archived badge
+    await expect(libCard.locator('[data-testid="badge-archived"]')).toBeVisible({ timeout: 10000 });
+    const resumeBtn = libCard.locator('[data-testid="btn-resume-monitoring"]');
+    await expect(resumeBtn).toBeVisible({ timeout: 5000 });
 
-      // Unarchive to leave library ready for subsequent operations
-      await resumeBtn.click();
-      await expect(libCard.locator('[data-testid="btn-stop-monitoring"]')).toBeVisible({ timeout: 10000 });
-    }
+    // Unarchive to leave library ready for subsequent operations
+    await resumeBtn.click();
+    await expect(libCard.locator('[data-testid="btn-stop-monitoring"]')).toBeVisible({ timeout: 10000 });
   });
 
   test('Scenario 5: Cooperative scan cancellation workflow', async ({ page }) => {
@@ -198,30 +215,31 @@ test.describe.serial('Photo Privateer End-to-End Test Suite', () => {
     await page.locator('[data-testid="nav-library"]').click();
     await selectTestLibrary(page);
 
-    // Ensure photos are visible and select one
-    const photoTitle = page.locator('p[title="mountain_landscape.jpg"]').first();
+    // Select the slow photo to guarantee deterministic cancellation window
+    const photoTitle = page.locator('p[title="slow_landscape.jpg"]').first();
     await expect(photoTitle).toBeVisible({ timeout: 10000 });
     await photoTitle.click();
 
     const scanBtn = page.locator('button:has-text("Scan Selected")');
-    if (await scanBtn.isEnabled()) {
-      await scanBtn.click();
-      await page.click('button:has-text("Start Scan")');
+    await expect(scanBtn).toBeEnabled({ timeout: 5000 });
+    await scanBtn.click();
+    await page.click('button:has-text("Start Scan")');
 
-      // Verify ScanProgressModal opens
-      await expect(page.locator('text=Scanning Batch...')).toBeVisible({ timeout: 5000 });
+    // Verify ScanProgressModal opens
+    await expect(page.locator('text=Scanning Batch...')).toBeVisible({ timeout: 5000 });
 
-      // Click Cancel Scan
-      const cancelBtn = page.locator('button:has-text("Cancel Scan")');
-      if (await cancelBtn.isVisible()) {
-        await cancelBtn.click();
-        // Verify it enters cancelling / cancelled state or batch completed
-        await expect(
-          page.locator('text=Cancelling Scan...').or(page.locator('text=Scan Cancelled')).or(page.locator('text=Batch Completed'))
-        ).toBeVisible({ timeout: 10000 });
-      }
-    }
+    // Click Cancel Scan
+    const cancelBtn = page.locator('button:has-text("Cancel Scan")');
+    await expect(cancelBtn).toBeVisible({ timeout: 5000 });
+    await cancelBtn.click();
+
+    // Verify it enters cancelling / cancelled state
+    await expect(
+      page.locator('text=Cancelling Scan...').or(page.locator('text=Scan Cancelled'))
+    ).toBeVisible({ timeout: 10000 });
+    await expect(page.locator('text=Scan Cancelled')).toBeVisible({ timeout: 15000 });
   });
+
 
   test('Scenario 6: Project batch assignment and filtering', async ({ page }) => {
     await page.goto('/');
