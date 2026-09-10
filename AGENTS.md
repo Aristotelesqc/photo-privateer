@@ -90,7 +90,8 @@ photo-privateer/
 │   └── backend/                   # Unit, integration, and resilience test suite (pytest)
 └── .agents/
     └── skills/
-        └── verify-photo-privateer/# Reusable quality audit skill
+        ├── verify-photo-privateer/# Reusable quality audit skill
+        └── bump-version/          # Automated version bump and release workflow skill
 ```
 
 ---

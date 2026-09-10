@@ -10,7 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 
-from backend.config import FRONTEND_DIST_DIR, HOST, PORT
+from backend.config import FRONTEND_DIST_DIR, HOST, PORT, APP_VERSION
 from backend.database import init_db
 from backend.api import (
     libraries,
@@ -53,7 +53,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Photo Privateer",
     description="Local reverse-image-search discovery and monitoring tool for photographers.",
-    version="1.0.0",
+    version=APP_VERSION,
     lifespan=lifespan,
 )
 

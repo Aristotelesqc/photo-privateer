@@ -1,6 +1,7 @@
 import React from 'react';
 import { Camera, Layers, CheckSquare, BarChart3, Settings, Sparkles } from 'lucide-react';
 import { AppSettings, UsageSummary } from '../types';
+import { APP_VERSION } from '../version';
 
 interface HeaderProps {
   activeTab: 'library' | 'review' | 'usage' | 'settings';
@@ -31,7 +32,7 @@ export const Header: React.FC<HeaderProps> = ({
             <div className="flex items-baseline gap-2">
               <span className="font-semibold text-sm tracking-tight text-carbon-100">Photo Privateer</span>
               <span className="text-[10px] font-mono uppercase text-carbon-400">
-                v1.0
+                v{APP_VERSION}
               </span>
             </div>
           </div>
