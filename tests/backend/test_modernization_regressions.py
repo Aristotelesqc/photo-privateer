@@ -11,7 +11,9 @@ Covers:
 from __future__ import annotations
 
 import sqlite3
+import threading
 import time
+import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -506,3 +508,243 @@ def test_duplicate_image_ids_deduplicated(client, repos, sample_images_dir: Path
     assert start_res.status_code == 200
     start_data = start_res.json()
     assert start_data["total_images"] == 2
+
+
+def test_scan_worker_zombie_session_auto_recovery(repos, sample_images_dir: Path):
+    """Verifies that a dead/crashed scan session marked RUNNING without an active worker
+    thread is automatically detected and transitioned to FAILED, preventing zombie deadlocks.
+    """
+    lib_repo = repos["lib_repo"]
+    img_repo = repos["img_repo"]
+    indexer = repos["indexer"]
+    usage_repo = repos["usage_repo"]
+    scan_engine = repos["scan_engine"]
+
+    lib = lib_repo.create(path=str(sample_images_dir), name="ZombieRecoveryLib")
+    indexer.index_library(lib.id)
+    images, _ = img_repo.list_images(library_id=lib.id)
+    assert len(images) >= 1
+
+    # Simulate an abandoned / crashed scan session that was left RUNNING
+    zombie = usage_repo.create_scan_session(
+        provider="mock",
+        total_images=5,
+    )
+    # Ensure no worker thread is alive for this session
+    assert not any(t.name == f"scan-worker-{zombie.id}" and t.is_alive() for t in threading.enumerate())
+
+    # Attempt to validate a new scan request: scan engine should detect zombie, mark it FAILED, and allow the request
+    usable, missing = scan_engine.validate_scan_request(
+        image_ids=[images[0].id],
+        provider_override="mock",
+    )
+    assert len(usable) == 1
+
+    # Invariant: the zombie session was recovered to FAILED
+    recovered = usage_repo.get_scan_session(zombie.id)
+    assert recovered is not None
+    assert recovered.status == "FAILED"
+    assert "Auto-recovered from crashed worker thread" in (recovered.notes or "")
+
+
+def test_google_auth_offline_in_test_mode(repos, monkeypatch):
+    """Verifies that test_google_auth returns mock_test_mode in PHOTO_PRIVATEER_TEST_MODE
+    without making external OAuth2 token refresh network calls.
+    """
+    settings_repo = repos["settings_repo"]
+    monkeypatch.setenv("PHOTO_PRIVATEER_TEST_MODE", "1")
+    monkeypatch.setattr(settings_repo, "_check_adc", lambda: (True, "test-mock-project"))
+
+    res = settings_repo.test_google_auth()
+    assert res["valid"] is True
+    assert res["auth_mode"] == "mock_test_mode"
+    assert "Offline test mode active" in res["message"]
+
+
+def test_library_purge_cleans_empty_scan_sessions_and_thumbnails(repos, temp_dir: Path):
+    """Verifies that library purge deletes thumbnails on disk and cleans empty scan sessions."""
+    from backend.config import get_thumbnails_dir
+
+    lib_repo = repos["lib_repo"]
+    img_repo = repos["img_repo"]
+    usage_repo = repos["usage_repo"]
+
+    # Create dummy image in a dedicated folder
+    lib_folder = temp_dir / "purge_lib_test"
+    lib_folder.mkdir()
+    img_file = lib_folder / "photo.jpg"
+    img = Image.new("RGB", (100, 100), color=(128, 64, 32))
+    img.save(img_file, format="JPEG")
+
+    lib = lib_repo.create(path=str(lib_folder), name="PurgeTestLib")
+    repos["indexer"].index_library(lib.id)
+    images, _ = img_repo.list_images(library_id=lib.id)
+    assert len(images) == 1
+    image = images[0]
+
+    # Generate a thumbnail file on disk for this image
+    thumb_dir = get_thumbnails_dir()
+    thumb_path = thumb_dir / f"{image.sha256}.webp"
+    thumb_path.write_bytes(b"dummy_webp_data")
+    assert thumb_path.exists()
+
+    # Create a scan session and a scan item referencing this image
+    session = usage_repo.create_scan_session(
+        provider="mock",
+        total_images=1,
+    )
+    usage_repo.record_scan_item(
+        session_id=session.id,
+        image_id=image.id,
+        status="SUCCESS",
+    )
+
+    # Purge the library
+    lib_repo.purge(lib.id)
+
+    # Invariant 1: Image deleted
+    assert img_repo.get_by_id(image.id) is None
+
+    # Invariant 2: Thumbnail file unlinked from disk
+    assert not thumb_path.exists()
+
+    # Invariant 3: Empty scan session pruned
+    assert usage_repo.get_scan_session(session.id) is None
+
+
+def test_unarchive_rejects_overlapping_active_library(repos, sample_images_dir: Path):
+    """Verifies that unarchiving a library fails if an active library with an overlapping root exists."""
+    lib_repo = repos["lib_repo"]
+
+    # Create active Library B pointing to sample_images_dir
+    lib_b = lib_repo.create(path=str(sample_images_dir), name="LibB")
+    assert lib_repo.get_by_id(lib_b.id).is_archived == 0
+
+    # Insert an archived Library A pointing to a child subfolder directly into database
+    subfolder = sample_images_dir / "subfolder"
+    subfolder.mkdir(exist_ok=True)
+    cur = lib_repo.conn.cursor()
+    cur.execute(
+        "INSERT INTO libraries (path, name, is_archived, enabled, created_at) VALUES (?, 'LibA', 1, 0, datetime('now'))",
+        (str(subfolder),),
+    )
+    lib_a_id = cur.lastrowid
+    lib_repo.conn.commit()
+
+    # Attempting to unarchive Library A must raise ValueError due to overlapping directory with active Library B
+    with pytest.raises(ValueError, match="overlaps with active library"):
+        lib_repo.unarchive(lib_a_id)
+
+
+def test_migration_007_preserves_legacy_manual_projects(temp_dir: Path):
+    """Verifies that migration 007 migrates non-empty legacy project values to project_source = 'manual'."""
+    from backend.migrations.runner import run_migrations, MIGRATIONS
+
+    db_file = temp_dir / "migration_007_test.sqlite"
+
+    # Run migrations up to 006
+    conn = sqlite3.connect(str(db_file))
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys = OFF;")
+    conn.execute("CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at TEXT NOT NULL);")
+
+    for v, desc, fn in MIGRATIONS[:6]:
+        fn(conn)
+        conn.execute("INSERT INTO schema_migrations (version, name, applied_at) VALUES (?, ?, datetime('now'));", (v, desc))
+    conn.commit()
+
+    # Insert test library and image with a legacy project
+    conn.execute(
+        "INSERT INTO libraries (id, path, name, created_at) "
+        "VALUES (1, 'C:/photos', 'TestLib', datetime('now'));"
+    )
+    conn.execute(
+        "INSERT INTO images (id, library_id, file_path, filename, file_size, file_modified_at, sha256, indexed_at, last_seen_on_disk, project) "
+        "VALUES (1, 1, 'C:/photos/portrait.jpg', 'portrait.jpg', 1024, 0.0, 'hash123', datetime('now'), datetime('now'), 'Summer Wedding');"
+    )
+    conn.commit()
+
+    # Now run all migrations through runner
+    run_migrations(conn)
+
+    # Check that image 1 now has project_source = 'manual'
+    cur = conn.cursor()
+    cur.execute("SELECT project, project_source FROM images WHERE id = 1")
+    row = cur.fetchone()
+    assert row["project"] == "Summer Wedding"
+    assert row["project_source"] == "manual"
+    conn.close()
+
+
+def test_unambiguous_sha_rename_with_multiple_missing_candidates(repos, temp_dir: Path):
+    """Verifies that when two images share the same SHA256 and both go missing,
+    a newly added file with that SHA256 is treated as a new image rather than arbitrarily binding history.
+    """
+    lib_repo = repos["lib_repo"]
+    img_repo = repos["img_repo"]
+    indexer = repos["indexer"]
+
+    folder = temp_dir / "sha_ambiguity_test"
+    folder.mkdir()
+    # Create file A
+    f_a = folder / "a.jpg"
+    img_data = Image.new("RGB", (50, 50), color=(10, 20, 30))
+    img_data.save(f_a, format="JPEG")
+
+    # Create file B with identical content
+    f_b = folder / "b.jpg"
+    shutil.copyfile(f_a, f_b)
+
+    lib = lib_repo.create(path=str(folder), name="ShaAmbiguityLib")
+    indexer.index_library(lib.id)
+
+    images, _ = img_repo.list_images(library_id=lib.id)
+    assert len(images) == 2
+    sha = images[0].sha256
+    assert images[1].sha256 == sha
+
+    # Delete both file A and file B
+    f_a.unlink()
+    f_b.unlink()
+
+    # Index again to mark them missing on disk
+    indexer.index_library(lib.id)
+    missing, _ = img_repo.list_images(library_id=lib.id, filter_status="missing")
+    assert len(missing) == 2
+
+    # Now create file C with the same content
+    f_c = folder / "c.jpg"
+    img_data.save(f_c, format="JPEG")
+
+    # Index again
+    indexer.index_library(lib.id)
+
+    # Invariant: Because len(missing_candidates) == 2 > 1, file C is created as a NEW image (total 3 records)
+    all_images, _ = img_repo.list_images(library_id=lib.id)
+    assert len(all_images) == 3
+
+
+def test_csrf_origin_protection_blocks_cross_origin_mutations(client, repos, sample_images_dir: Path):
+    """Verifies that enforce_local_origin_protection middleware rejects cross-origin and cross-site requests."""
+    lib = repos["lib_repo"].create(path=str(sample_images_dir), name="CsrfTestLib")
+    repos["indexer"].index_library(lib.id)
+    images, _ = repos["img_repo"].list_images(library_id=lib.id)
+    img_id = images[0].id
+
+    # 1. POST from evil.com is blocked
+    res1 = client.post("/api/scans/prepare", json={"image_ids": [img_id]}, headers={"Origin": "http://evil.com"})
+    assert res1.status_code == 403
+    assert "Forbidden origin" in res1.json()["detail"]
+
+    # 2. POST with Sec-Fetch-Site: cross-site is blocked
+    res2 = client.post("/api/scans/prepare", json={"image_ids": [img_id]}, headers={"Sec-Fetch-Site": "cross-site"})
+    assert res2.status_code == 403
+    assert "Cross-site requests to Photo Privateer API are forbidden" in res2.json()["detail"]
+
+    # 3. POST with loopback origin is permitted
+    res3 = client.post("/api/scans/prepare", json={"image_ids": [img_id]}, headers={"Origin": "http://127.0.0.1:8765"})
+    assert res3.status_code == 200
+
+    # 4. Safe read GET with cross-origin is permitted
+    res4 = client.get("/api/photos", headers={"Origin": "http://evil.com"})
+    assert res4.status_code == 200

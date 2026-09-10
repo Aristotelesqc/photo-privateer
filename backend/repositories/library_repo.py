@@ -89,8 +89,8 @@ class LibraryRepository:
         import os
         norm_path = str(Path(path).resolve())
 
-        # Forbid overlapping library roots with existing active libraries
-        for existing in self.list_libraries(include_archived=False):
+        # Forbid overlapping library roots with existing libraries (including archived)
+        for existing in self.list_libraries(include_archived=True):
             existing_root = str(Path(existing.path).resolve())
             try:
                 common = os.path.commonpath([existing_root, norm_path])
@@ -156,36 +156,84 @@ class LibraryRepository:
         return cur.rowcount > 0
 
     def unarchive(self, library_id: int) -> bool:
-        """Restores an archived library to active monitoring."""
+        """Restores an archived library to active monitoring with overlap checking against active libraries."""
+        lib = self.get_by_id(library_id)
+        if not lib:
+            return False
+        import os
+        norm_path = str(Path(lib.path).resolve())
+        for existing in self.list_libraries(include_archived=False):
+            if existing.id == library_id:
+                continue
+            existing_root = str(Path(existing.path).resolve())
+            try:
+                common = os.path.commonpath([existing_root, norm_path])
+                if common in (existing_root, norm_path):
+                    raise ValueError(
+                        f"Cannot unarchive library: '{norm_path}' overlaps with active library '{existing.name}' ({existing_root}). "
+                        f"Overlapping library roots are forbidden."
+                    )
+            except ValueError as err:
+                if "overlaps with" in str(err):
+                    raise
+                pass
+
         cur = self.conn.cursor()
         cur.execute("UPDATE libraries SET is_archived = 0, enabled = 1 WHERE id = ?", (library_id,))
+        self.conn.commit()
         return cur.rowcount > 0
 
     def purge(self, library_id: int) -> bool:
         """Transactionally purges a library and its catalog metadata from SQLite.
+        Cleans up empty scan sessions and evicts cached thumbnails from disk.
         ORIGINAL SOURCE FILES ON DISK ARE NEVER MODIFIED, RENAMED, OR DELETED.
         """
         from backend.utils import chunked
+        from backend.config import get_thumbnails_dir
         cur = self.conn.cursor()
-        # Find all images belonging to this library
-        cur.execute("SELECT id FROM images WHERE library_id = ?", (library_id,))
-        image_ids = [r[0] for r in cur.fetchall()]
+        try:
+            # Find all images and their content hashes belonging to this library
+            cur.execute("SELECT id, sha256 FROM images WHERE library_id = ?", (library_id,))
+            image_rows = cur.fetchall()
+            image_ids = [r["id"] if isinstance(r, sqlite3.Row) else r[0] for r in image_rows]
+            sha_hashes = [r["sha256"] if isinstance(r, sqlite3.Row) else r[1] for r in image_rows]
 
-        if image_ids:
-            for chunk in chunked(image_ids, 500):
-                placeholders = ",".join("?" for _ in chunk)
-                # Nullify provider_calls image reference so history is preserved without FK collision
-                cur.execute(f"UPDATE provider_calls SET image_id = NULL WHERE image_id IN ({placeholders})", tuple(chunk))
-                # Delete matches associated with these images
-                cur.execute(f"DELETE FROM matches WHERE image_id IN ({placeholders})", tuple(chunk))
-                # Delete scan_items
-                cur.execute(f"DELETE FROM scan_items WHERE image_id IN ({placeholders})", tuple(chunk))
-                # Delete images
-                cur.execute(f"DELETE FROM images WHERE id IN ({placeholders})", tuple(chunk))
+            if image_ids:
+                for chunk in chunked(image_ids, 500):
+                    placeholders = ",".join("?" for _ in chunk)
+                    # Nullify provider_calls image reference so history is preserved without FK collision
+                    cur.execute(f"UPDATE provider_calls SET image_id = NULL WHERE image_id IN ({placeholders})", tuple(chunk))
+                    # Delete matches associated with these images
+                    cur.execute(f"DELETE FROM matches WHERE image_id IN ({placeholders})", tuple(chunk))
+                    # Delete scan_items
+                    cur.execute(f"DELETE FROM scan_items WHERE image_id IN ({placeholders})", tuple(chunk))
+                    # Delete images
+                    cur.execute(f"DELETE FROM images WHERE id IN ({placeholders})", tuple(chunk))
 
-        cur.execute("DELETE FROM libraries WHERE id = ?", (library_id,))
-        self.conn.commit()
-        return cur.rowcount > 0
+            cur.execute("DELETE FROM libraries WHERE id = ?", (library_id,))
+            lib_deleted = cur.rowcount > 0
+
+            # Clean up empty scan sessions whose items were all purged
+            cur.execute("""
+                DELETE FROM scan_sessions
+                WHERE id NOT IN (SELECT DISTINCT scan_session_id FROM scan_items WHERE scan_session_id IS NOT NULL)
+            """)
+            self.conn.commit()
+
+            # Evict associated cached thumbnails from disk
+            thumb_dir = get_thumbnails_dir()
+            for sha in sha_hashes:
+                thumb_file = thumb_dir / f"{sha}.webp"
+                try:
+                    if thumb_file.exists():
+                        thumb_file.unlink()
+                except Exception:
+                    pass
+
+            return lib_deleted
+        except Exception:
+            self.conn.rollback()
+            raise
 
     def delete(self, library_id: int, purge_permanently: bool = False) -> bool:
         """Removes folder from monitoring. Defaults to non-destructive archive unless purge_permanently is explicitly True."""

@@ -30,9 +30,13 @@ This skill defines and standardizes the mandatory development and publication wo
 
 ### Step 1: Inspect Baseline & Create Worktree
 
-From the primary repository, inspect the baseline `origin/main` commit and create a sibling worktree on a dedicated branch:
+From the primary repository, ensure remote tracking is fully updated, verify a clean working tree, inspect the baseline `origin/main` commit, and create a sibling worktree on a dedicated branch:
 
 ```powershell
+# Ensure working tree is clean and fetch latest main
+git status
+git fetch origin main
+
 # Inspect baseline commit
 git rev-parse HEAD
 git rev-parse origin/main
@@ -43,10 +47,13 @@ git worktree add ../photo-privateer-worktrees/<branch-name> -b <branch-name> ori
 
 ### Step 2: Initialize Worktree Environment
 
-Navigate to the worktree and ensure dependencies are installed:
+Navigate to the worktree and ensure both Python and Node environments and dependencies are synchronized:
 
 ```powershell
 Set-Location ../photo-privateer-worktrees/<branch-name>
+
+# Ensure Python dependencies are up to date in the active environment
+python -m pip install -r requirements.txt -r requirements-dev.txt
 
 # Ensure frontend dependencies are installed
 Push-Location frontend
@@ -80,15 +87,19 @@ Pop-Location
 
 ### Step 4: Verify Git Identity & Commit
 
-Ensure git identity aligns with the repository owner:
+Ensure git identity aligns with the repository owner and inspect all staged changes for whitespace or unintended modifications before committing:
 
 ```powershell
 git config user.name
 git config user.email
 
-# Stage changes and commit atomically
-git status
+# Inspect unstaged and staged changes
+git diff
 git add .
+git diff --cached --check
+
+# Create atomic commit
+git status
 git commit -m "<type>(<scope>): <clear description of changes>"
 ```
 

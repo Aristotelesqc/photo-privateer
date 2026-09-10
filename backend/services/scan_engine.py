@@ -62,13 +62,34 @@ class ScanEngine:
         and verifies that selected images exist and are present on disk.
         Returns: (usable_images, missing_image_ids)
         """
-        # 1. Enforce single active scan invariant
+        # 1. Enforce single active scan invariant with worker thread liveness check
         active = self.usage_repo.get_active_running_session()
         if active:
-            raise ScanConflictError(
-                f"Another scan session (#{active.id}) is currently running ({active.processed_images}/{active.total_images} photos). "
-                f"Photo Privateer enforces a single active scan at a time to prevent quota races."
-            )
+            worker_name = f"scan-worker-{active.id}"
+            is_alive = any(t.name == worker_name and t.is_alive() for t in threading.enumerate())
+            if not is_alive:
+                logger.warning(
+                    f"Dangling RUNNING scan session #{active.id} detected without active worker thread. Auto-recovering to FAILED."
+                )
+                try:
+                    self.usage_repo.update_scan_session_progress(
+                        session_id=active.id,
+                        processed=active.processed_images,
+                        successful=active.successful_images,
+                        failed=active.failed_images,
+                        status="FAILED",
+                        notes="Auto-recovered from crashed worker thread.",
+                    )
+                    self.usage_repo.conn.commit()
+                    active = None
+                except Exception as exc:
+                    logger.error(f"Failed to auto-recover dangling session #{active.id}: {exc}")
+
+            if active:
+                raise ScanConflictError(
+                    f"Another scan session (#{active.id}) is currently running ({active.processed_images}/{active.total_images} photos). "
+                    f"Photo Privateer enforces a single active scan at a time to prevent quota races."
+                )
 
         if not image_ids:
             raise ValueError("No image IDs provided for scan.")
@@ -263,9 +284,9 @@ class ScanEngine:
                     continue
 
                 try:
-                    real_file = Path(img.file_path).resolve()
-                    real_root = Path(lib.path).resolve()
-                    if os.path.commonpath([str(real_file), str(real_root)]) != str(real_root):
+                    norm_file = os.path.normcase(os.path.abspath(img.file_path))
+                    norm_root = os.path.normcase(os.path.abspath(lib.path))
+                    if os.path.commonpath([norm_file, norm_root]) != norm_root:
                         raise ValueError(f"Path traversal detected: {img.file_path} resolves outside library root {lib.path}")
                 except Exception as p_err:
 

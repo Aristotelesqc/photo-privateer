@@ -92,6 +92,12 @@ def test_concurrent_scan_conflict_409(client, repos, sample_images_dir: Path):
     )
     assert running_session.status == "RUNNING"
 
+    # Simulate an active scan worker thread
+    import threading
+    worker = threading.Thread(target=time.sleep, args=(2,), name=f"scan-worker-{running_session.id}")
+    worker.daemon = True
+    worker.start()
+
     # Attempt to start another scan session via API
     res = client.post("/api/scans/start", json={
         "image_ids": img_ids,

@@ -113,4 +113,33 @@ describe('ScanConfirmModal Component', () => {
     expect(screen.getByText(/4 available \(2 missing\)/i)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Start Scan \(4\)/i })).toBeInTheDocument();
   });
+
+  it('disables start button when usable count is zero', () => {
+    const zeroUsableProjection: ScanPrepareResponse = {
+      selected_count: 3,
+      usable_count: 0,
+      missing_count: 3,
+      provider: 'mock',
+      current_month: '2026-09',
+      units_used_this_month: 0,
+      projected_units_total: 0,
+      free_tier_allowance: 1000,
+      remaining_free_units: 1000,
+      estimated_incremental_cost_usd: 0.0,
+      free_tier_exceeded: false,
+      blocked_by_guard: false,
+      disclaimer: 'Mock estimate',
+    };
+
+    render(
+      <ScanConfirmModal
+        projection={zeroUsableProjection}
+        onConfirm={vi.fn()}
+        onClose={vi.fn()}
+      />
+    );
+
+    const startBtn = screen.getByRole('button', { name: /Start Scan \(0\)/i });
+    expect(startBtn).toBeDisabled();
+  });
 });

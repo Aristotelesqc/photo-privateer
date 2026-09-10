@@ -304,6 +304,8 @@ def migration_007_project_source_and_atomic_running_scan(conn: sqlite3.Connectio
     image_cols = {row[1] for row in cur.fetchall()}
     if "project_source" not in image_cols:
         conn.execute("ALTER TABLE images ADD COLUMN project_source TEXT NOT NULL DEFAULT 'auto';")
+        # Ensure any pre-existing images with manual project assignments retain 'manual' provenance
+        conn.execute("UPDATE images SET project_source = 'manual' WHERE project IS NOT NULL AND TRIM(project) != '';")
 
     # Clean orphaned running sessions before indexing
     conn.execute("UPDATE scan_sessions SET status = 'INTERRUPTED' WHERE status = 'RUNNING';")
@@ -377,8 +379,16 @@ def run_migrations(conn: sqlite3.Connection) -> list[int]:
                     "INSERT INTO schema_migrations (version, name, applied_at) VALUES (?, ?, ?)",
                     (migration.version, migration.name, now),
                 )
+                conn.commit()
+
+                # Re-enable foreign keys after transaction commit and verify pragma state
                 conn.execute("PRAGMA foreign_keys = ON;")
                 fk_cur = conn.cursor()
+                fk_cur.execute("PRAGMA foreign_keys;")
+                fk_state = fk_cur.fetchone()[0]
+                if fk_state != 1:
+                    raise sqlite3.IntegrityError(f"Failed to re-enable PRAGMA foreign_keys after migration {migration.version:03d}")
+
                 fk_cur.execute("PRAGMA foreign_key_check;")
                 violations = fk_cur.fetchall()
                 if violations:
@@ -387,7 +397,6 @@ def run_migrations(conn: sqlite3.Connection) -> list[int]:
                         f"Foreign key integrity violation after migration {migration.version:03d}_{migration.name}: "
                         f"{'; '.join(summary)}"
                     )
-                conn.commit()
                 applied_now.append(migration.version)
                 logger.info(f"Migration {migration.version:03d}_{migration.name} applied successfully.")
             except Exception as e:

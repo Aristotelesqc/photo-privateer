@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -79,6 +80,40 @@ def update_package_lock_json(new_version: str) -> None:
     lock_path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
 
 
+def assert_not_on_main() -> None:
+    """Verifies that the current working tree is not on the protected main branch."""
+    try:
+        branch = subprocess.check_output(
+            ["git", "branch", "--show-current"],
+            cwd=str(WORKSPACE_ROOT),
+            text=True,
+        ).strip()
+        if branch in {"main", "master"}:
+            print(f"Error: Version bump cannot be executed directly on protected branch '{branch}'.", file=sys.stderr)
+            print("Per repository governance (AGENTS.md §0 and §13), development and version bumps must occur in an isolated worktree/branch.", file=sys.stderr)
+            sys.exit(1)
+    except Exception as e:
+        print(f"Warning: Could not verify git branch: {e}", file=sys.stderr)
+
+
+def assert_clean_working_tree(allow_dirty: bool = False) -> None:
+    """Verifies that the working tree has no uncommitted tracked changes before bumping."""
+    if allow_dirty:
+        return
+    try:
+        status = subprocess.check_output(
+            ["git", "status", "--porcelain"],
+            cwd=str(WORKSPACE_ROOT),
+            text=True,
+        ).strip()
+        if status:
+            print("Error: Working tree has uncommitted modifications. Please commit or stash changes before bumping version, or pass --allow-dirty.", file=sys.stderr)
+            print(status, file=sys.stderr)
+            sys.exit(1)
+    except Exception as e:
+        print(f"Warning: Could not verify working tree status: {e}", file=sys.stderr)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="Bump version across Photo Privateer backend and frontend."
@@ -88,8 +123,16 @@ def main() -> int:
     group.add_argument("--patch", action="store_true", help="Bump patch version (e.g. 1.0.0 -> 1.0.1)")
     group.add_argument("--minor", action="store_true", help="Bump minor version (e.g. 1.0.0 -> 1.1.0)")
     group.add_argument("--major", action="store_true", help="Bump major version (e.g. 1.0.0 -> 2.0.0)")
+    parser.add_argument("--allow-dirty", action="store_true", help="Allow version bump even with uncommitted changes")
+    parser.add_argument("--skip-branch-check", action="store_true", help="Skip branch check")
 
     args = parser.parse_args()
+
+    if not args.skip_branch_check:
+        assert_not_on_main()
+    if not args.allow_dirty:
+        assert_clean_working_tree(allow_dirty=args.allow_dirty)
+
     current = get_current_version()
 
     if args.patch:
