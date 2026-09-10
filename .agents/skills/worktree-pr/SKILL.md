@@ -37,8 +37,8 @@ From the primary repository, inspect the baseline `origin/main` commit and creat
 git rev-parse HEAD
 git rev-parse origin/main
 
-# Create sibling worktree (e.g., ../photo-privateer-feature-worktree)
-git worktree add ../photo-privateer-<feature>-worktree -b <branch-name> origin/main
+# Create sibling worktree under ../photo-privateer-worktrees/<branch-name>
+git worktree add ../photo-privateer-worktrees/<branch-name> -b <branch-name> origin/main
 ```
 
 ### Step 2: Initialize Worktree Environment
@@ -46,7 +46,7 @@ git worktree add ../photo-privateer-<feature>-worktree -b <branch-name> origin/m
 Navigate to the worktree and ensure dependencies are installed:
 
 ```powershell
-Set-Location ../photo-privateer-<feature>-worktree
+Set-Location ../photo-privateer-worktrees/<branch-name>
 
 # Ensure frontend dependencies are installed
 Push-Location frontend
@@ -115,7 +115,7 @@ git checkout main
 git pull origin main
 
 # Remove the worktree
-git worktree remove ../photo-privateer-<feature>-worktree
+git worktree remove ../photo-privateer-worktrees/<branch-name>
 
 # Delete the local feature branch
 git branch -d <branch-name>

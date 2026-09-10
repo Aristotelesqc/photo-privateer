@@ -217,7 +217,7 @@ Verification follows a strict 4-tier testing hierarchy:
 ## 13. Isolated Worktree & Pull Request Workflow Invariant
 
 1. **Protected Main**: `main` is strictly protected against direct pushes and direct commits.
-2. **Worktree Isolation**: All development work must be executed in a dedicated worktree on a dedicated branch (e.g., `git worktree add ../photo-privateer-<name> -b <name> origin/main`).
+2. **Worktree Isolation**: All development work must be executed in a dedicated worktree under `../photo-privateer-worktrees/<branch-name>` on a dedicated branch (e.g., `git worktree add ../photo-privateer-worktrees/<branch-name> -b <branch-name> origin/main`).
 3. **Pull Request Delivery**: Changes are submitted via `gh pr create --base main --head <branch>` and left OPEN for independent review. Never merge automatically.
 
 
