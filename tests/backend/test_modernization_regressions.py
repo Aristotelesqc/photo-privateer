@@ -531,6 +531,9 @@ def test_scan_worker_zombie_session_auto_recovery(repos, sample_images_dir: Path
         total_images=5,
     )
     # Ensure no worker thread is alive for this session
+    for t in threading.enumerate():
+        if t.name == f"scan-worker-{zombie.id}" and t.is_alive():
+            t.join(timeout=2.0)
     assert not any(t.name == f"scan-worker-{zombie.id}" and t.is_alive() for t in threading.enumerate())
 
     # Attempt to validate a new scan request: scan engine should detect zombie, mark it FAILED, and allow the request

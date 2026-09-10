@@ -92,7 +92,9 @@ test.describe.serial('Photo Privateer End-to-End Test Suite', () => {
     await page.click('button:has-text("Add & Index")');
 
     // Confirm folder is listed in monitored folders
-    await expect(page.getByText(testPhotoDir, { exact: true })).toBeVisible({ timeout: 10000 });
+    await expect(
+      page.locator('[data-testid="library-item"]').filter({ hasText: testLibraryName })
+    ).toBeVisible({ timeout: 10000 });
 
 
     // Navigate to Library View
