@@ -1,8 +1,5 @@
 import React, { useState } from 'react';
 import {
-  FolderPlus,
-  Trash2,
-  RefreshCw,
   FolderCheck,
   ShieldCheck,
   Sparkles,
@@ -11,7 +8,6 @@ import {
   AlertCircle,
   Save,
   CheckCircle2,
-  FolderOpen,
   HelpCircle,
   ChevronDown,
   ChevronUp,
@@ -27,10 +23,10 @@ import {
   indexLibrary,
   detectLibraryProjects,
   updateSettings,
-  validateFolder,
-  browseFolder,
   testGoogleAuth,
 } from '../api/client';
+import { MonitoredFolderCard } from '../engines/settings/MonitoredFolderCard';
+import { AddFolderSection } from '../engines/settings/AddFolderSection';
 
 interface SettingsViewProps {
   libraries: Library[];
@@ -43,18 +39,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   settings,
   onRefreshData,
 }) => {
-  // Add folder state
-  const [newFolderPath, setNewFolderPath] = useState('');
-  const [newFolderName, setNewFolderName] = useState('');
-  const [isRecursive, setIsRecursive] = useState(true);
-  const [subfoldersAsProjects, setSubfoldersAsProjects] = useState(true);
-  const [validatingPath, setValidatingPath] = useState(false);
-  const [validationResult, setValidationResult] = useState<{
-    valid: boolean;
-    error: string | null;
-  } | null>(null);
-  const [addingFolder, setAddingFolder] = useState(false);
-
   // Indexing in progress per library
   const [indexingLibId, setIndexingLibId] = useState<number | null>(null);
   const [detectingProjectsLibId, setDetectingProjectsLibId] = useState<number | null>(null);
@@ -70,7 +54,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const [unitPrice, setUnitPrice] = useState(settings?.unit_price_usd ?? 0.0035);
   const [savingSettings, setSavingSettings] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
-  const [browsingFolder, setBrowsingFolder] = useState(false);
   const [testingAuth, setTestingAuth] = useState(false);
   const [testAuthResult, setTestAuthResult] = useState<{
     success: boolean;
@@ -92,64 +75,15 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     }
   }, [settings]);
 
-  const handleBrowseFolder = async () => {
-    setBrowsingFolder(true);
-    try {
-      const res = await browseFolder();
-      if (res.path) {
-        setNewFolderPath(res.path);
-        setValidationResult(null);
-        const v = await validateFolder(res.path);
-        setValidationResult({ valid: v.valid, error: v.error });
-        if (v.valid) {
-          setNewFolderPath(v.resolved_path);
-        }
-      }
-    } catch (err) {
-      console.error('Folder browser error', err);
-    } finally {
-      setBrowsingFolder(false);
-    }
-  };
-
-  const handleValidateFolder = async () => {
-    if (!newFolderPath.trim()) return;
-    setValidatingPath(true);
-    setValidationResult(null);
-    try {
-      const res = await validateFolder(newFolderPath.trim());
-      setValidationResult({ valid: res.valid, error: res.error });
-      if (res.valid) {
-        setNewFolderPath(res.resolved_path);
-      }
-    } catch (err: any) {
-      setValidationResult({ valid: false, error: err.message });
-    } finally {
-      setValidatingPath(false);
-    }
-  };
-
-  const handleAddLibrary = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newFolderPath.trim()) return;
-    setAddingFolder(true);
-    try {
-      const lib = await createLibrary(
-        newFolderPath.trim(),
-        newFolderName.trim() || undefined,
-        isRecursive,
-        subfoldersAsProjects
-      );
-      setNewFolderPath('');
-      setNewFolderName('');
-      setValidationResult(null);
-      onRefreshData();
-      handleIndexLibrary(lib.id);
-    } catch (err: any) {
-      alert(`Failed adding library: ${err.message}`);
-    } finally {
-      setAddingFolder(false);
-    }
+  const handleAddLibrary = async (
+    path: string,
+    name?: string,
+    recursive?: boolean,
+    subfoldersAsProjects?: boolean
+  ) => {
+    const lib = await createLibrary(path, name, recursive, subfoldersAsProjects);
+    onRefreshData();
+    handleIndexLibrary(lib.id);
   };
 
   const handleIndexLibrary = async (libId: number) => {
@@ -162,8 +96,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
         [libId]: `Indexed: ${res.results.added_or_updated} updated, ${res.results.unchanged} unchanged`,
       }));
       onRefreshData();
-    } catch (err: any) {
-      setIndexFeedback((prev) => ({ ...prev, [libId]: `Error: ${err.message}` }));
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setIndexFeedback((prev) => ({ ...prev, [libId]: `Error: ${msg}` }));
     } finally {
       setIndexingLibId(null);
     }
@@ -173,8 +108,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     try {
       await archiveLibrary(libId);
       onRefreshData();
-    } catch (err: any) {
-      alert(`Failed to stop monitoring folder: ${err.message}`);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      alert(`Failed to stop monitoring folder: ${msg}`);
     }
   };
 
@@ -182,8 +118,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     try {
       await unarchiveLibrary(libId);
       onRefreshData();
-    } catch (err: any) {
-      alert(`Failed to resume monitoring folder: ${err.message}`);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      alert(`Failed to resume monitoring folder: ${msg}`);
     }
   };
 
@@ -203,8 +140,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     try {
       await deleteLibrary(libId);
       onRefreshData();
-    } catch (err: any) {
-      alert(`Failed removing library: ${err.message}`);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      alert(`Failed removing library: ${msg}`);
     }
   };
 
@@ -214,11 +152,12 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     try {
       const res = await testGoogleAuth(credsPath.trim() || undefined);
       setTestAuthResult(res);
-    } catch (err: any) {
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
       setTestAuthResult({
         success: false,
         auth_mode: 'none',
-        error: err.message,
+        error: msg,
       });
     } finally {
       setTestingAuth(false);
@@ -229,8 +168,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     try {
       await updateLibrary(lib.id, { recursive: !lib.recursive });
       onRefreshData();
-    } catch (err: any) {
-      alert(`Update failed: ${err.message}`);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      alert(`Update failed: ${msg}`);
     }
   };
 
@@ -238,8 +178,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     try {
       await updateLibrary(lib.id, { subfolders_as_projects: !lib.subfolders_as_projects });
       onRefreshData();
-    } catch (err: any) {
-      alert(`Update failed: ${err.message}`);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      alert(`Update failed: ${msg}`);
     }
   };
 
@@ -253,8 +194,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
         [libId]: `Projects auto-detected: ${res.updated_count} photo(s) assigned`,
       }));
       onRefreshData();
-    } catch (err: any) {
-      setIndexFeedback((prev) => ({ ...prev, [libId]: `Error: ${err.message}` }));
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setIndexFeedback((prev) => ({ ...prev, [libId]: `Error: ${msg}` }));
     } finally {
       setDetectingProjectsLibId(null);
     }
@@ -275,8 +217,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       setSaveSuccess(true);
       onRefreshData();
       setTimeout(() => setSaveSuccess(false), 3000);
-    } catch (err: any) {
-      alert(`Failed updating settings: ${err.message}`);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      alert(`Failed updating settings: ${msg}`);
     } finally {
       setSavingSettings(false);
     }
@@ -300,223 +243,25 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
         {libraries.length > 0 && (
           <div className="space-y-2">
             {libraries.map((lib) => (
-              <div
+              <MonitoredFolderCard
                 key={lib.id}
-                data-testid="library-item"
-                className="bg-carbon-950 border border-carbon-800 rounded-md p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5"
-              >
-                <div className="min-w-0 flex-1 space-y-0.5">
-                  <div className="flex items-center gap-2">
-                    <span className="font-semibold text-white">{lib.name}</span>
-                    <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-carbon-800 text-carbon-300 tabular-nums">
-                      {lib.image_count} photos
-                    </span>
-                    {lib.is_archived && (
-                      <span
-                        data-testid="badge-archived"
-                        className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-amber-500/15 text-amber-300 border border-amber-500/30"
-                      >
-                        Archived (Monitoring Paused)
-                      </span>
-                    )}
-                  </div>
-                  <p className="font-mono text-carbon-400 truncate text-[11px]" title={lib.path}>
-                    {lib.path}
-                  </p>
-                  <div className="flex items-center gap-3 text-[10px] text-carbon-500 pt-0.5">
-                    {!lib.is_archived && (
-                      <>
-                        <label className="flex items-center gap-1 cursor-pointer text-carbon-300">
-                          <input
-                            type="checkbox"
-                            checked={lib.recursive}
-                            onChange={() => handleToggleRecursive(lib)}
-                            className="rounded bg-carbon-900 border-carbon-700 text-accent-600 focus:ring-accent-500 w-3 h-3"
-                          />
-                          <span>Recursive subfolders</span>
-                        </label>
-                        <label className="flex items-center gap-1 cursor-pointer text-carbon-300">
-                          <input
-                            type="checkbox"
-                            checked={lib.subfolders_as_projects}
-                            onChange={() => handleToggleSubfoldersAsProjects(lib)}
-                            className="rounded bg-carbon-900 border-carbon-700 text-accent-600 focus:ring-accent-500 w-3 h-3"
-                          />
-                          <span>Subfolders as projects</span>
-                        </label>
-                      </>
-                    )}
-                    {lib.last_indexed_at && (
-                      <span className="tabular-nums">Indexed: {new Date(lib.last_indexed_at).toLocaleDateString()}</span>
-                    )}
-                  </div>
-                  {indexFeedback[lib.id] && (
-                    <p className="text-[10px] text-accent-400 font-mono pt-0.5">{indexFeedback[lib.id]}</p>
-                  )}
-                </div>
-
-                <div className="flex items-center gap-1.5 shrink-0">
-                  {!lib.is_archived ? (
-                    <>
-                      <button
-                        type="button"
-                        onClick={() => handleIndexLibrary(lib.id)}
-                        disabled={indexingLibId === lib.id}
-                        className="flex items-center gap-1 px-2.5 py-1 rounded bg-carbon-800 hover:bg-carbon-700 text-carbon-200 hover:text-white transition-colors text-xs"
-                      >
-                        <RefreshCw className={`w-3 h-3 ${indexingLibId === lib.id ? 'animate-spin' : ''}`} />
-                        <span>{indexingLibId === lib.id ? 'Indexing...' : 'Index'}</span>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => handleDetectProjects(lib.id)}
-                        disabled={detectingProjectsLibId === lib.id}
-                        className="flex items-center gap-1 px-2.5 py-1 rounded bg-carbon-800 hover:bg-carbon-700 text-carbon-200 hover:text-white transition-colors text-xs"
-                        title="Auto-detect immediate subfolders as project names for all photos in this folder"
-                      >
-                        <span>{detectingProjectsLibId === lib.id ? 'Detecting...' : 'Detect Projects'}</span>
-                      </button>
-                      <button
-                        type="button"
-                        data-testid="btn-stop-monitoring"
-                        onClick={() => handleDeleteLibrary(lib.id, false)}
-                        className="px-2 py-1 rounded text-carbon-400 hover:text-amber-300 hover:bg-carbon-800 border border-carbon-800 transition-colors text-[11px]"
-                        title="Stop monitoring this folder (preserves all discovered matches)"
-                      >
-                        Stop Monitoring
-                      </button>
-                    </>
-                  ) : (
-                    <>
-                      <button
-                        type="button"
-                        data-testid="btn-resume-monitoring"
-                        onClick={() => handleUnarchiveLibrary(lib.id)}
-                        className="flex items-center gap-1 px-2.5 py-1 rounded bg-accent-600 hover:bg-accent-500 text-white transition-colors text-xs font-semibold"
-                      >
-                        Resume Monitoring
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => handleDeleteLibrary(lib.id, true)}
-                        className="p-1 rounded text-carbon-500 hover:text-rose-400 hover:bg-carbon-800 transition-colors"
-                        title="Permanently remove from database (original files on disk are never touched)"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
-                    </>
-                  )}
-                </div>
-              </div>
+                library={lib}
+                isIndexing={indexingLibId === lib.id}
+                isDetectingProjects={detectingProjectsLibId === lib.id}
+                feedback={indexFeedback[lib.id]}
+                onToggleRecursive={handleToggleRecursive}
+                onToggleSubfoldersAsProjects={handleToggleSubfoldersAsProjects}
+                onIndex={handleIndexLibrary}
+                onDetectProjects={handleDetectProjects}
+                onUnarchive={handleUnarchiveLibrary}
+                onDelete={handleDeleteLibrary}
+              />
             ))}
           </div>
         )}
 
         {/* Add Folder Form */}
-        <form onSubmit={handleAddLibrary} className="bg-carbon-950 border border-carbon-800 rounded-md p-3 space-y-2.5">
-          <span className="font-semibold text-carbon-200 block text-xs">Add New Local Folder</span>
-
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-            <div className="sm:col-span-2 space-y-1">
-              <label className="block text-carbon-400 text-[11px]">Folder Path</label>
-              <div className="flex gap-1.5">
-                <input
-                  type="text"
-                  data-testid="input-folder-path"
-                  value={newFolderPath}
-                  onChange={(e) => {
-                    setNewFolderPath(e.target.value);
-                    setValidationResult(null);
-                  }}
-                  placeholder="C:\Photos\Portfolio"
-                  required
-                  className="flex-1 bg-carbon-900 border border-carbon-800 rounded px-2.5 py-1 text-white font-mono text-xs focus:outline-none focus:border-accent-500"
-                />
-                <button
-                  type="button"
-                  onClick={handleBrowseFolder}
-                  disabled={browsingFolder}
-                  className="px-2.5 py-1 rounded bg-carbon-800 hover:bg-carbon-700 text-carbon-200 text-xs shrink-0 font-medium flex items-center gap-1"
-                  title="Browse local folders on this computer"
-                >
-                  <FolderOpen className="w-3 h-3" />
-                  <span>{browsingFolder ? 'Browsing...' : 'Browse...'}</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={handleValidateFolder}
-                  disabled={validatingPath || !newFolderPath.trim()}
-                  className="px-2.5 py-1 rounded bg-carbon-800 hover:bg-carbon-700 text-carbon-200 text-xs shrink-0 font-medium"
-                >
-                  {validatingPath ? 'Checking...' : 'Check'}
-                </button>
-              </div>
-              {validationResult && (
-                <div
-                  className={`text-[10px] flex items-center gap-1 ${
-                    validationResult.valid ? 'text-emerald-400' : 'text-rose-400'
-                  }`}
-                >
-                  {validationResult.valid ? (
-                    <>
-                      <Check className="w-3 h-3" />
-                      <span>Valid directory</span>
-                    </>
-                  ) : (
-                    <>
-                      <AlertCircle className="w-3 h-3" />
-                      <span>{validationResult.error || 'Invalid path'}</span>
-                    </>
-                  )}
-                </div>
-              )}
-            </div>
-
-            <div className="space-y-1">
-              <label className="block text-carbon-400 text-[11px]">Label (Optional)</label>
-              <input
-                type="text"
-                data-testid="input-folder-name"
-                value={newFolderName}
-                onChange={(e) => setNewFolderName(e.target.value)}
-                placeholder="e.g. Landscapes"
-                className="w-full bg-carbon-900 border border-carbon-800 rounded px-2.5 py-1 text-white text-xs focus:outline-none focus:border-accent-500"
-              />
-            </div>
-          </div>
-
-          <div className="flex items-center justify-between gap-2 pt-1">
-            <div className="flex items-center gap-4">
-              <label className="flex items-center gap-1.5 text-carbon-300 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={isRecursive}
-                  onChange={(e) => setIsRecursive(e.target.checked)}
-                  className="rounded bg-carbon-900 border-carbon-700 text-accent-600 focus:ring-accent-500 w-3.5 h-3.5"
-                />
-                <span>Include subfolders</span>
-              </label>
-              <label className="flex items-center gap-1.5 text-carbon-300 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={subfoldersAsProjects}
-                  onChange={(e) => setSubfoldersAsProjects(e.target.checked)}
-                  className="rounded bg-carbon-900 border-carbon-700 text-accent-600 focus:ring-accent-500 w-3.5 h-3.5"
-                />
-                <span>Subfolders as projects</span>
-              </label>
-            </div>
-
-            <button
-              type="submit"
-              disabled={addingFolder || !newFolderPath.trim()}
-              className="flex items-center gap-1.5 px-3 py-1 rounded bg-accent-600 hover:bg-accent-500 text-white font-semibold shadow-xs transition-all active:scale-98"
-            >
-              <FolderPlus className="w-3.5 h-3.5" />
-              <span>{addingFolder ? 'Adding...' : 'Add & Index'}</span>
-            </button>
-          </div>
-        </form>
+        <AddFolderSection onAddLibrary={handleAddLibrary} />
       </section>
 
       {/* 2. Provider Selection & Google Vision Setup */}
@@ -766,7 +511,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             </div>
           </div>
 
-          {/* Cost & Guard Options */}
+          {/* Cost & Guard Preferences */}
           <div className="space-y-3 pt-1 border-t border-carbon-800">
             <span className="font-semibold text-white block text-xs">Usage & Guard Preferences</span>
 

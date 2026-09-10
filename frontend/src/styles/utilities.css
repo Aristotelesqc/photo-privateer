@@ -1,0 +1,20 @@
+@utility scale-98 {
+  scale: 0.98;
+}
+
+@utility backdrop-blur-xs {
+  backdrop-filter: blur(2px);
+}
+
+@utility shadow-xs {
+  box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+}
+
+@utility py-0.2 {
+  padding-top: 1px;
+  padding-bottom: 1px;
+}
+
+@utility tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
