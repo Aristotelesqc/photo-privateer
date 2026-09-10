@@ -14,7 +14,7 @@ import re
 import sys
 from pathlib import Path
 
-WORKSPACE_ROOT = Path(__file__).resolve().parent.parent.parent.parent
+WORKSPACE_ROOT = Path(__file__).resolve().parents[4]
 
 
 def get_current_version() -> str:
