@@ -111,5 +111,6 @@ describe('ScanConfirmModal Component', () => {
     );
 
     expect(screen.getByText(/4 available \(2 missing\)/i)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Start Scan \(4\)/i })).toBeInTheDocument();
   });
 });

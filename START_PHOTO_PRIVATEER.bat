@@ -18,7 +18,7 @@ if exist ".venv\Scripts\python.exe" (
 where %PYTHON_EXE% >nul 2>nul
 if %ERRORLEVEL% NEQ 0 (
     echo [ERROR] Python is not found on your PATH or in .venv.
-    echo Please install Python 3.14+ (or 3.11+) or run setup.ps1.
+    echo Please install Python 3.14 (or Python 3.11+ fallback) or run setup.ps1.
     pause
     exit /b 1
 )

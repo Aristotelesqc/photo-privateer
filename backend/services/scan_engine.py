@@ -73,15 +73,18 @@ class ScanEngine:
         if not image_ids:
             raise ValueError("No image IDs provided for scan.")
 
+        # Deduplicate image IDs server-side while preserving original request order
+        unique_image_ids = list(dict.fromkeys(image_ids))
+
         # 2. Enforce active non-archived libraries
         active_libs = {lib.id: lib for lib in self.library_repo.list_libraries(include_archived=False) if lib.enabled}
 
         # 3. Validate images and filter to those present on disk
-        images = self.image_repo.get_by_ids(image_ids)
+        images = self.image_repo.get_by_ids(unique_image_ids)
         image_map = {img.id: img for img in images}
 
         archived_or_disabled_ids = [
-            iid for iid in image_ids
+            iid for iid in unique_image_ids
             if iid in image_map and (image_map[iid].library_id not in active_libs)
         ]
         if archived_or_disabled_ids:
@@ -92,7 +95,7 @@ class ScanEngine:
         usable_images: list[ImageOut] = []
         missing_ids: list[int] = []
 
-        for iid in image_ids:
+        for iid in unique_image_ids:
             img = image_map.get(iid)
             if img is None:
                 missing_ids.append(iid)
@@ -103,7 +106,7 @@ class ScanEngine:
 
         if not usable_images:
             raise ValueError(
-                f"None of the {len(image_ids)} selected images are currently available on disk. "
+                f"None of the {len(unique_image_ids)} selected images are currently available on disk. "
                 f"Check that files have not been moved or unmounted."
             )
 
@@ -227,6 +230,7 @@ class ScanEngine:
             successful = 0
             failed = 0
             cancelled = False
+            aborted_due_to_accounting_failure = False
 
             for img_id in ordered_image_ids:
                 # 1. Check cooperative cancellation before initiating next external request
@@ -326,6 +330,7 @@ class ScanEngine:
 
                 # 4. Immediate short SQLite write transaction:
                 # Phase A: Durably record provider call accounting in its own immediate transaction
+                accounting_persisted = False
                 try:
                     usage_repo.record_call(
                         provider=provider_id,
@@ -340,9 +345,50 @@ class ScanEngine:
                         error_message=provider_result.error_message,
                     )
                     conn.commit()
+                    accounting_persisted = True
                 except Exception as acc_exc:
-                    logger.error(f"Error persisting call accounting for image {img.id}: {acc_exc}", exc_info=True)
-                    conn.rollback()
+                    logger.critical(
+                        f"CRITICAL: Failed to durably record provider call accounting for image {img.id} "
+                        f"in session {session_id}: {acc_exc}. Failing closed to prevent unmetered external calls.",
+                        exc_info=True,
+                    )
+                    try:
+                        conn.rollback()
+                    except Exception:
+                        pass
+
+                    # Invariant: If a potentially billable external provider call occurred (or provider is google_vision),
+                    # failure to persist accounting locally MUST fail closed immediately.
+                    if attempted_units > 0 or provider_id == "google_vision" or req_status in ("SUCCESS", "REMOTE_ERROR"):
+                        aborted_due_to_accounting_failure = True
+                        failed += 1
+                        processed += 1
+                        try:
+                            usage_repo.record_scan_item(
+                                session_id=session_id,
+                                image_id=img.id,
+                                status="ERROR",
+                                error_message=f"Durable accounting persistence failed after provider request: {str(acc_exc)}",
+                                matches_found=0,
+                            )
+                            usage_repo.update_scan_session_progress(
+                                session_id=session_id,
+                                processed=processed,
+                                successful=successful,
+                                failed=failed,
+                                status="FAILED",
+                                notes=(
+                                    f"Scan aborted: local SQLite write failed while persisting provider call accounting "
+                                    f"for photo #{img.id}. Halted to prevent unmetered external API calls."
+                                ),
+                            )
+                            conn.commit()
+                        except Exception as log_exc:
+                            logger.error(f"Could not persist session failure state: {log_exc}")
+                        break
+
+                if not accounting_persisted:
+                    continue
 
                 # Phase B: Persist discoveries, item outcome, and session progress
                 try:
@@ -419,6 +465,9 @@ class ScanEngine:
                         pass
 
             # 5. Final session status update (re-check cancellation for in-flight final image)
+            if aborted_due_to_accounting_failure:
+                return
+
             cancelled = cancelled or usage_repo.is_cancel_requested(session_id)
             final_status = (
                 "CANCELLED"

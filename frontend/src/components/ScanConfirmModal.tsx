@@ -139,7 +139,7 @@ export const ScanConfirmModal: React.FC<ScanConfirmModalProps> = ({
                 : 'bg-accent-600 hover:bg-accent-500 text-white shadow-accent-600/20 active:scale-98'
             }`}
           >
-            <span>Start Scan ({projection.selected_count})</span>
+            <span>Start Scan ({projection.usable_count})</span>
             <ArrowRight className="w-3.5 h-3.5" />
           </button>
         </div>

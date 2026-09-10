@@ -374,3 +374,135 @@ def test_post_migration_foreign_key_check(db_conn):
     # Clean up orphan
     cur.execute("DELETE FROM images WHERE sha256 = 'orphan_hash'")
     db_conn.commit()
+
+
+def test_scan_worker_fails_closed_on_accounting_persistence_failure(repos, sample_images_dir: Path, monkeypatch):
+    """Verifies that if provider call accounting cannot be durably recorded after a request,
+    the worker immediately FAILS CLOSED, aborts the batch, and prevents subsequent images
+    from being sent to the provider.
+    """
+    lib_repo = repos["lib_repo"]
+    img_repo = repos["img_repo"]
+    indexer = repos["indexer"]
+    usage_repo = repos["usage_repo"]
+    scan_engine = repos["scan_engine"]
+    settings_repo = repos["settings_repo"]
+
+    lib = lib_repo.create(path=str(sample_images_dir), name="FailClosedLib")
+    indexer.index_library(lib.id)
+    images, _ = img_repo.list_images(library_id=lib.id)
+    assert len(images) >= 3
+    img1, img2, img3 = images[0], images[1], images[2]
+
+    session = usage_repo.create_scan_session(
+        provider="Google Cloud Vision",
+        total_images=3,
+    )
+
+    # Provider spy counting search invocations
+    call_count = 0
+    def search_spy(image_path, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        return ProviderResult(
+            success=True,
+            items=[
+                SearchResultItem(
+                    page_url="https://example.com/photo.jpg",
+                    domain="example.com",
+                    match_type="FULL",
+                )
+            ],
+            units_consumed=1,
+        )
+
+    mock_provider = MagicMock()
+    mock_provider.provider_id = "google_vision"
+    mock_provider.search.side_effect = search_spy
+
+    # Monkeypatch get_provider in scan_engine module to return our spy
+    import backend.services.scan_engine as se_module
+    monkeypatch.setattr(se_module, "get_provider", lambda **kwargs: mock_provider)
+
+    # Monkeypatch record_call to simulate SQLite write failure during provider call accounting
+    def failing_record_call(*args, **kwargs):
+        raise sqlite3.DatabaseError("Simulated disk error during provider call accounting")
+
+    monkeypatch.setattr(UsageRepository, "record_call", failing_record_call)
+
+    settings = settings_repo.get_app_settings()
+
+    # Run scan worker synchronously
+    scan_engine._run_scan_worker(
+        session_id=session.id,
+        ordered_image_ids=[img1.id, img2.id, img3.id],
+        provider_id="google_vision",
+        credentials_path=None,
+        free_tier_allowance=settings.free_tier_monthly_units,
+        unit_price_usd=settings.unit_price_usd,
+        db_path=scan_engine.db_path,
+    )
+
+    # Invariant 1: Provider was invoked for image 1, but NOT for image 2 or 3
+    assert call_count == 1, f"Provider was called {call_count} times instead of stopping after 1!"
+
+    # Invariant 2: Session marked FAILED with explanatory notes
+    updated_session = usage_repo.get_scan_session(session.id)
+    assert updated_session is not None
+    assert updated_session.status == "FAILED"
+    assert "Halted to prevent unmetered" in (updated_session.notes or "")
+
+    # Invariant 3: Accounting failure item recorded as ERROR
+    cur = usage_repo.conn.cursor()
+    cur.execute("SELECT status, error_message FROM scan_items WHERE scan_session_id = ?", (session.id,))
+    items = cur.fetchall()
+    assert len(items) == 1
+    assert items[0]["status"] == "ERROR"
+    assert "Durable accounting persistence failed" in items[0]["error_message"]
+
+    # Invariant 4: processed == successful + failed
+    assert updated_session.processed_images == 1
+    assert updated_session.failed_images == 1
+    assert updated_session.successful_images == 0
+    assert updated_session.processed_images == (updated_session.successful_images + updated_session.failed_images)
+
+
+def test_duplicate_image_ids_deduplicated(client, repos, sample_images_dir: Path):
+    """Verifies that duplicate image IDs in scan requests are deduplicated server-side,
+    preventing duplicate provider calls and ensuring correct total_images and usable_count.
+    """
+    lib_repo = repos["lib_repo"]
+    img_repo = repos["img_repo"]
+    indexer = repos["indexer"]
+    scan_engine = repos["scan_engine"]
+
+    lib = lib_repo.create(path=str(sample_images_dir), name="DedupLib")
+    indexer.index_library(lib.id)
+    images, _ = img_repo.list_images(library_id=lib.id)
+    assert len(images) >= 2
+    img1, img2 = images[0], images[1]
+
+    # Pass duplicates: [img1.id, img1.id, img2.id, img1.id]
+    duplicated_ids = [img1.id, img1.id, img2.id, img1.id]
+
+    # 1. validate_scan_request should return exactly 2 usable images
+    usable, missing = scan_engine.validate_scan_request(
+        image_ids=duplicated_ids,
+        provider_override="mock",
+    )
+    assert len(usable) == 2
+    assert [img.id for img in usable] == [img1.id, img2.id]
+    assert len(missing) == 0
+
+    # 2. /api/scans/prepare endpoint should report usable_count = 2 and selected_count = 2
+    prep_res = client.post("/api/scans/prepare", json={"image_ids": duplicated_ids})
+    assert prep_res.status_code == 200
+    prep_data = prep_res.json()
+    assert prep_data["usable_count"] == 2
+    assert prep_data["selected_count"] == 2
+
+    # 3. /api/scans/start endpoint should create session with total_images = 2
+    start_res = client.post("/api/scans/start", json={"image_ids": duplicated_ids})
+    assert start_res.status_code == 200
+    start_data = start_res.json()
+    assert start_data["total_images"] == 2

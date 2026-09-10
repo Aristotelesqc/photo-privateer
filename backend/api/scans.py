@@ -31,9 +31,10 @@ def prepare_scan(
     if not payload.image_ids:
         raise HTTPException(status_code=400, detail="No images selected for scan")
     
+    unique_ids = list(dict.fromkeys(payload.image_ids))
     try:
         usable_images, _ = engine.validate_scan_request(
-            image_ids=payload.image_ids,
+            image_ids=unique_ids,
             provider_override=payload.provider,
             force_override_guard=True,
         )
@@ -43,7 +44,7 @@ def prepare_scan(
         raise HTTPException(status_code=400, detail=str(e))
     
     return tracker.prepare_scan_projection(
-        image_count=len(payload.image_ids),
+        image_count=len(unique_ids),
         usable_count=len(usable_images),
         provider_override=payload.provider,
     )
@@ -57,9 +58,10 @@ def start_scan(
     if not payload.image_ids:
         raise HTTPException(status_code=400, detail="No images selected for scan")
 
+    unique_ids = list(dict.fromkeys(payload.image_ids))
     try:
         session = engine.start_background_scan(
-            image_ids=payload.image_ids,
+            image_ids=unique_ids,
             provider_override=payload.provider,
             force_override_guard=payload.force_override_guard,
         )
