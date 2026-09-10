@@ -8,37 +8,17 @@ from pathlib import Path
 # Base Paths
 WORKSPACE_ROOT = Path(__file__).resolve().parent.parent
 
-# User data storage: default to ~/.photo_privateer with legacy ~/.photoscrub fallback
-CUSTOM_DATA_DIR = os.environ.get("PHOTO_PRIVATEER_DATA_DIR") or os.environ.get("PHOTOSCRUB_DATA_DIR")
+# User data storage: default to ~/.photo_privateer
+CUSTOM_DATA_DIR = os.environ.get("PHOTO_PRIVATEER_DATA_DIR")
 if CUSTOM_DATA_DIR:
     DATA_DIR = Path(CUSTOM_DATA_DIR).resolve()
 else:
-    canonical_dir = Path.home() / ".photo_privateer"
-    legacy_dir = Path.home() / ".photoscrub"
-    if not canonical_dir.exists() and legacy_dir.exists():
-        DATA_DIR = canonical_dir
-        DATA_DIR.mkdir(parents=True, exist_ok=True)
-        # Migrate legacy files if present
-        for item in legacy_dir.iterdir():
-            dest = DATA_DIR / item.name
-            if not dest.exists() and item.is_file():
-                try:
-                    shutil.copy2(item, dest)
-                except Exception:
-                    pass
-    else:
-        DATA_DIR = canonical_dir
+    DATA_DIR = Path.home() / ".photo_privateer"
 
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 
-# Database file: canonical photo_privateer.sqlite with transparent legacy migration
+# Database file: canonical photo_privateer.sqlite
 DB_PATH = DATA_DIR / "photo_privateer.sqlite"
-legacy_db = DATA_DIR / "photoscrub.db"
-if not DB_PATH.exists() and legacy_db.exists():
-    try:
-        shutil.copy2(legacy_db, DB_PATH)
-    except Exception:
-        pass
 
 THUMBNAILS_DIR = DATA_DIR / "thumbnails"
 THUMBNAILS_DIR.mkdir(parents=True, exist_ok=True)
@@ -47,8 +27,8 @@ THUMBNAILS_DIR.mkdir(parents=True, exist_ok=True)
 FRONTEND_DIST_DIR = WORKSPACE_ROOT / "frontend" / "dist"
 
 # Server binding - strictly 127.0.0.1 for local privacy
-HOST = os.environ.get("PHOTO_PRIVATEER_HOST") or os.environ.get("PHOTOSCRUB_HOST", "127.0.0.1")
-PORT = int(os.environ.get("PHOTO_PRIVATEER_PORT") or os.environ.get("PHOTOSCRUB_PORT", "8765"))
+HOST = os.environ.get("PHOTO_PRIVATEER_HOST", "127.0.0.1")
+PORT = int(os.environ.get("PHOTO_PRIVATEER_PORT", "8765"))
 
 # Supported image formats
 SUPPORTED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".tif", ".tiff"}

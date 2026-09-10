@@ -1,7 +1,7 @@
 """Pydantic data schemas for Photo Privateer API and domain models."""
 from __future__ import annotations
 
-from typing import Optional, List
+from typing import Optional, List, Literal
 from pydantic import BaseModel, Field
 from backend.config import (
     DEFAULT_UNIT_PRICE_USD,
@@ -19,6 +19,7 @@ class LibraryUpdate(BaseModel):
     name: Optional[str] = None
     enabled: Optional[bool] = None
     recursive: Optional[bool] = None
+    is_archived: Optional[bool] = None
 
 class LibraryOut(BaseModel):
     id: int
@@ -26,6 +27,7 @@ class LibraryOut(BaseModel):
     name: str
     enabled: bool
     recursive: bool
+    is_archived: bool = False
     created_at: str
     last_indexed_at: Optional[str] = None
     image_count: int = 0
@@ -44,6 +46,7 @@ class ImageOut(BaseModel):
     format: Optional[str] = None
     indexed_at: str
     last_seen_on_disk: str
+    is_present_on_disk: bool = True
     last_scanned_at: Optional[str] = None
     scan_count: int = 0
     match_count: int = 0
@@ -57,11 +60,15 @@ class ImageListResponse(BaseModel):
     page_size: int
 
 # --- Matches ---
+ClassificationLiteral = Literal["UNREVIEWED", "APPROVED", "UNAUTHORIZED", "IRRELEVANT"]
+SourceKindLiteral = Literal["PAGE", "ASSET_ONLY"]
+
 class MatchOut(BaseModel):
     id: int
     image_id: int
     scan_session_id: Optional[int] = None
-    page_url: str
+    source_kind: SourceKindLiteral = "PAGE"
+    page_url: Optional[str] = None
     page_title: Optional[str] = None
     page_score: Optional[float] = None
     domain: str
@@ -71,7 +78,8 @@ class MatchOut(BaseModel):
     first_seen_at: str
     last_seen_at: str
     is_new: bool
-    classification: str
+    acknowledged_at: Optional[str] = None
+    classification: str = "UNREVIEWED"
     classified_at: Optional[str] = None
     auto_classified_by_rule_id: Optional[int] = None
     notes: Optional[str] = None
@@ -80,8 +88,9 @@ class MatchOut(BaseModel):
     image_thumbnail_url: Optional[str] = None
 
 class MatchUpdate(BaseModel):
-    classification: Optional[str] = None
+    classification: Optional[ClassificationLiteral] = None
     notes: Optional[str] = None
+    acknowledged: Optional[bool] = None
 
 class MatchListResponse(BaseModel):
     matches: List[MatchOut]
@@ -91,8 +100,8 @@ class MatchListResponse(BaseModel):
 
 # --- Domain Rules ---
 class DomainRuleCreate(BaseModel):
-    domain: str
-    classification: str
+    domain: str = Field(..., min_length=1)
+    classification: ClassificationLiteral
     notes: Optional[str] = None
 
 class DomainRuleOut(BaseModel):
@@ -105,11 +114,13 @@ class DomainRuleOut(BaseModel):
 
 # --- Scans ---
 class ScanPrepareRequest(BaseModel):
-    image_ids: List[int]
+    image_ids: List[int] = Field(..., min_length=1)
     provider: Optional[str] = None
 
 class ScanPrepareResponse(BaseModel):
     selected_count: int
+    usable_count: int
+    missing_count: int
     provider: str
     current_month: str
     units_used_this_month: int
@@ -122,9 +133,11 @@ class ScanPrepareResponse(BaseModel):
     disclaimer: str
 
 class ScanStartRequest(BaseModel):
-    image_ids: List[int]
+    image_ids: List[int] = Field(..., min_length=1)
     provider: Optional[str] = None  # None = use configured provider
     force_override_guard: bool = False
+
+ScanStatusLiteral = Literal["RUNNING", "COMPLETED", "FAILED", "CANCELLED", "INTERRUPTED"]
 
 class ScanSessionOut(BaseModel):
     id: int
@@ -136,6 +149,7 @@ class ScanSessionOut(BaseModel):
     successful_images: int
     failed_images: int
     status: str
+    cancel_requested: bool = False
     notes: Optional[str] = None
 
 # --- Usage & Accounting ---
@@ -168,15 +182,19 @@ class ProviderCallOut(BaseModel):
 class AppSettings(BaseModel):
     active_provider: str = "mock"  # "mock" or "google_vision"
     google_credentials_path: Optional[str] = None
-    free_tier_monthly_units: int = DEFAULT_FREE_TIER_MONTHLY_UNITS
+    free_tier_monthly_units: int = Field(default=DEFAULT_FREE_TIER_MONTHLY_UNITS, ge=0)
     block_on_free_tier_exceeded: bool = DEFAULT_BLOCK_ON_FREE_TIER_EXCEEDED
-    unit_price_usd: float = DEFAULT_UNIT_PRICE_USD
+    unit_price_usd: float = Field(default=DEFAULT_UNIT_PRICE_USD, ge=0.0)
     google_credentials_valid: bool = False
     google_credentials_error: Optional[str] = None
+    adc_available: bool = False
+    adc_project_id: Optional[str] = None
+    auth_mode: str = "none"  # "adc", "service_account", "none"
 
 class SettingsUpdate(BaseModel):
-    active_provider: Optional[str] = None
+    active_provider: Optional[Literal["mock", "google_vision"]] = None
     google_credentials_path: Optional[str] = None
-    free_tier_monthly_units: Optional[int] = None
+    free_tier_monthly_units: Optional[int] = Field(default=None, ge=0)
     block_on_free_tier_exceeded: Optional[bool] = None
-    unit_price_usd: Optional[float] = None
+    unit_price_usd: Optional[float] = Field(default=None, ge=0.0)
+

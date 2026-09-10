@@ -13,6 +13,8 @@ Photo Privateer is a local desktop web application for professional photographer
 5. **Deterministic Offline Capability**: The entire system must function and be testable offline using the built-in deterministic Mock Provider without requiring Google credentials.
 6. **No Fake Controls**: Every interactive element, button, and filter must function end-to-end. Non-interactive items must never pretend to be clickable.
 7. **Zero Scope Erosion**: Do not omit requirements, weaken safety constraints, or leave unfulfilled TODOs.
+8. **Non-Destructive Archiving**: Archiving a library retains all indexed photo metadata and review match triage records. Photos and matches are never deleted unless explicitly purged.
+9. **Cooperative Scan Cancellation & Crash Recovery**: In-progress scans can be cooperatively cancelled via flag checks between images. Any sessions left `RUNNING` due to an unexpected process termination are recovered to `INTERRUPTED` on startup.
 
 ---
 
@@ -41,8 +43,8 @@ Photo Privateer is a local desktop web application for professional photographer
 
 - **Backend**: Python 3.11+, FastAPI, Uvicorn, SQLite3 (WAL mode), Pydantic v2, Pillow.
 - **Frontend**: React 18, TypeScript, Vite, Tailwind CSS, Lucide React icons.
-- **Integration**: Google Cloud Vision client library (`google-cloud-vision`).
-- **Testing**: pytest & pytest-asyncio for Python; Playwright/Vitest for frontend/browser validation.
+- **Integration**: Google Cloud Vision client library (`google-cloud-vision`) with Application Default Credentials (ADC) and zero-cost credential testing.
+- **Testing**: pytest & pytest-asyncio for Python; Vitest for frontend unit tests; Playwright for end-to-end browser validation.
 - **Runtime Topology**: Single process local server. FastAPI serves both the JSON REST API (`/api/*`) and the compiled Vite static assets (`/` and `frontend/dist`).
 
 ---
@@ -59,26 +61,33 @@ photo-privateer/
 ├── requirements.txt               # Python package dependencies
 ├── .gitignore                     # Excludes caches, DBs, node_modules, and secrets
 ├── backend/
-│   ├── main.py                    # FastAPI app, static SPA mount, lifespan
+│   ├── main.py                    # FastAPI app, static SPA mount, lifespan startup recovery
 │   ├── config.py                  # User data paths, 127.0.0.1 binding, pricing constants
-│   ├── database.py                # SQLite connection, WAL mode, migrations
+│   ├── database.py                # SQLite connection, WAL mode, migration initialization
 │   ├── models.py                  # Pydantic schemas and dataclasses
-│   ├── repositories/              # Data access layer (libraries, images, matches, rules, usage)
+│   ├── migrations/                # Versioned schema migrations
+│   │   ├── runner.py              # Idempotent migration runner & applied tracker
+│   │   └── versions/              # 001_initial_schema through 005_library_fk_safety
+│   ├── repositories/              # Data access layer (libraries, images, matches, rules, usage, settings)
 │   ├── services/                  # Indexer, thumbnail cache, image service, rules, scan engine
 │   ├── providers/                 # Base provider interface, Mock provider, Google Vision provider
-│   └── api/                       # Modular FastAPI routers (/api/libraries, /api/photos, etc.)
+│   └── api/                       # Modular FastAPI routers (/api/libraries, /api/photos, /api/scans, etc.)
 ├── frontend/
 │   ├── package.json               # Node dependencies
 │   ├── vite.config.ts             # Vite build configuration and dev proxy
+│   ├── vitest.config.ts           # Vitest unit test configuration
+│   ├── playwright.config.ts       # Playwright E2E configuration with auto webServer management
+│   ├── e2e/                       # Playwright browser end-to-end test suite
 │   ├── src/
 │   │   ├── main.tsx               # React DOM root mount
 │   │   ├── App.tsx                # Navigation and top-level state
 │   │   ├── types/index.ts         # TypeScript interfaces
 │   │   ├── api/client.ts          # Typed API client
-│   │   ├── components/            # Header, Thumbnail, Modal dialogs
-│   │   └── views/                 # LibraryView, ReviewView, UsageView, SettingsView
+│   │   ├── components/            # Header, Thumbnail, Modal dialogs (ScanProgressModal, etc.)
+│   │   ├── views/                 # LibraryView, ReviewView, UsageView, SettingsView
+│   │   └── __tests__/             # Frontend component unit tests (Vitest)
 ├── tests/
-│   └── backend/                   # Unit and integration test suite
+│   └── backend/                   # Unit, integration, and resilience test suite (pytest)
 └── .agents/
     └── skills/
         └── verify-photo-privateer/# Reusable quality audit skill
@@ -99,13 +108,14 @@ Photo Privateer Core Services
    ├── ImageService (Strict containment validation against registered libraries)
    ├── DomainRulesEngine (Subdomain-aware normalization and auto-classification)
    ├── UsageTracker (Google Vision unit accounting and cost estimator)
-   └── ScanEngine (Batch coordination, provider dispatch, match normalization)
+   ├── MigrationRunner (Idempotent schema version transitions)
+   └── ScanEngine (Asynchronous batch coordination, cancellation checks, match normalization)
    ↓
 Persistence Layer
    ├── SQLite Repositories (~/.photo_privateer/photo_privateer.sqlite)
    └── SearchProvider Abstraction
          ├── MockSearchProvider (Deterministic offline edge cases)
-         └── GoogleVisionSearchProvider (Official Cloud Vision Web Detection)
+         └── GoogleVisionSearchProvider (Official Cloud Vision Web Detection & ADC)
 ```
 
 ---
@@ -117,6 +127,9 @@ Persistence Layer
 3. **New Discoveries Identifiable**: Newly discovered matches are flagged with `is_new = 1` until acknowledged.
 4. **Domain Rule Provenance**: Matches auto-classified by a domain rule store `auto_classified_by_rule_id`. A manual classification override by the user clears this rule reference and is permanently respected on subsequent scans.
 5. **Path Traversal Protection**: Photo streaming endpoints strictly verify that the requested file resolves within an active, enabled library root using `os.path.commonpath`.
+6. **Library Archival Integrity**: Archiving sets `is_archived = 1` and excludes the library from scanning without deleting photo records or match reviews.
+7. **Disk Presence Tracking**: If a library or folder is temporarily unmounted or missing on disk, `is_present_on_disk = 0` reflects reality without losing indexed data. Reconnection cleanly restores `is_present_on_disk = 1`.
+8. **Session Resilience**: Interrupted or crashed scans automatically recover to `INTERRUPTED` on startup.
 
 ---
 
@@ -137,7 +150,8 @@ class SearchProvider(abc.ABC):
 
 - Google Service Account JSON files must never be committed to git, uploaded to browser storage, or logged.
 - The Settings UI accepts and validates the local file path on disk; the secret payload never leaves the Python backend.
-- Remote candidate match images are loaded directly in the user's browser with `referrerpolicy="no-referrer"` and safe fallbacks.
+- Application Default Credentials (ADC) are checked with a local fast-path avoiding slow metadata ping delays.
+- Remote candidate match images are loaded directly in the user's browser with `referrerpolicy="no-referrer"` upon user opt-in.
 - The server binds strictly to `127.0.0.1`.
 
 ---
@@ -152,9 +166,11 @@ class SearchProvider(abc.ABC):
 
 ## 10. Testing & Verification
 
-- **Backend Tests**: Run `pytest tests/backend` to verify indexing, database migrations, rescan idempotency, domain rules, cost estimations, and full API workflows.
-- **Frontend Build**: Run `npm run build` in `frontend/` to generate `frontend/dist`.
-- **System Launch**: Execute `python start.py` or double-click `START_PHOTO_PRIVATEER.bat` to launch and test in a real browser.
+Verification follows a strict 4-tier testing hierarchy:
+1. **Tier 1 - Backend Tests**: `pytest -v tests/backend` (Unit, integration, migrations, archiving, cancellation, recovery, ADC auth).
+2. **Tier 2 - Frontend Unit Tests**: `npm test` inside `frontend/` (Vitest component testing for thumbnails, scan modal, confirm dialogs).
+3. **Tier 3 - Frontend Production Build**: `npm run build` inside `frontend/` (TypeScript verification and bundle emission).
+4. **Tier 4 - Playwright End-to-End Suite**: `npm run test:e2e` inside `frontend/` (Full headless browser validation of complete user journeys).
 
 ---
 

@@ -24,6 +24,7 @@ class ImageRepository:
             format=r["format"],
             indexed_at=r["indexed_at"],
             last_seen_on_disk=r["last_seen_on_disk"],
+            is_present_on_disk=bool(r["is_present_on_disk"]) if "is_present_on_disk" in r.keys() else True,
             last_scanned_at=r["last_scanned_at"],
             scan_count=r["scan_count"],
             match_count=r["match_count"],
@@ -45,15 +46,57 @@ class ImageRepository:
 
     def get_by_sha256(self, sha256: str) -> Optional[ImageOut]:
         cur = self.conn.cursor()
-        cur.execute("SELECT * FROM images WHERE sha256 = ? LIMIT 1", (sha256,))
+        cur.execute("SELECT * FROM images WHERE sha256 = ? ORDER BY is_present_on_disk DESC, id ASC LIMIT 1", (sha256,))
         r = cur.fetchone()
         return self._row_to_image(r) if r else None
+
+    def get_all_by_sha256(self, sha256: str) -> list[ImageOut]:
+        cur = self.conn.cursor()
+        cur.execute("SELECT * FROM images WHERE sha256 = ? ORDER BY id ASC", (sha256,))
+        return [self._row_to_image(r) for r in cur.fetchall()]
+
+    def reconcile_image_location(
+        self,
+        image_id: int,
+        library_id: int,
+        new_path: str,
+        new_filename: str,
+        new_size: int,
+        new_mtime: float,
+    ) -> ImageOut:
+        """Reconciles a renamed or moved image file, preserving ID and historical matches."""
+        now = datetime.now(timezone.utc).isoformat()
+        cur = self.conn.cursor()
+        cur.execute("""
+            UPDATE images
+            SET library_id = ?,
+                file_path = ?,
+                filename = ?,
+                file_size = ?,
+                file_modified_at = ?,
+                last_seen_on_disk = ?,
+                is_present_on_disk = 1
+            WHERE id = ?
+        """, (library_id, new_path, new_filename, new_size, new_mtime, now, image_id))
+        return self.get_by_id(image_id)  # type: ignore
+
+    def mark_missing_images_in_library(self, library_id: int, observed_paths: set[str]) -> int:
+        """Marks any images registered to this library that were not observed on disk as missing."""
+        cur = self.conn.cursor()
+        cur.execute("SELECT id, file_path FROM images WHERE library_id = ? AND is_present_on_disk = 1", (library_id,))
+        rows = cur.fetchall()
+        missing_ids = [r["id"] for r in rows if r["file_path"] not in observed_paths]
+        if missing_ids:
+            placeholders = ",".join("?" for _ in missing_ids)
+            cur.execute(f"UPDATE images SET is_present_on_disk = 0 WHERE id IN ({placeholders})", tuple(missing_ids))
+            return len(missing_ids)
+        return 0
 
     def list_images(
         self,
         library_id: Optional[int] = None,
         search: Optional[str] = None,
-        filter_status: Optional[str] = None,  # "all", "unscanned", "scanned", "has_matches", "has_unreviewed"
+        filter_status: Optional[str] = None,  # "all", "unscanned", "scanned", "has_matches", "has_unreviewed", "missing"
         sort_by: str = "indexed_at",
         sort_dir: str = "desc",
         limit: int = 50,
@@ -72,13 +115,15 @@ class ImageRepository:
             params.extend([term, term])
 
         if filter_status == "unscanned":
-            where_clauses.append("scan_count = 0")
+            where_clauses.append("scan_count = 0 AND is_present_on_disk = 1")
         elif filter_status == "scanned":
             where_clauses.append("scan_count > 0")
         elif filter_status == "has_matches":
             where_clauses.append("match_count > 0")
         elif filter_status == "has_unreviewed":
             where_clauses.append("unreviewed_count > 0")
+        elif filter_status == "missing":
+            where_clauses.append("is_present_on_disk = 0")
 
         where_sql = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
 
@@ -126,8 +171,8 @@ class ImageRepository:
         cur.execute("""
             INSERT INTO images (
                 library_id, sha256, file_path, filename, file_size, file_modified_at,
-                width, height, format, indexed_at, last_seen_on_disk
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                width, height, format, indexed_at, last_seen_on_disk, is_present_on_disk
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
             ON CONFLICT(file_path) DO UPDATE SET
                 sha256 = excluded.sha256,
                 filename = excluded.filename,
@@ -136,7 +181,8 @@ class ImageRepository:
                 width = excluded.width,
                 height = excluded.height,
                 format = excluded.format,
-                last_seen_on_disk = excluded.last_seen_on_disk
+                last_seen_on_disk = excluded.last_seen_on_disk,
+                is_present_on_disk = 1
         """, (
             library_id, sha256, file_path, filename, file_size, file_modified_at,
             width, height, format, now, now

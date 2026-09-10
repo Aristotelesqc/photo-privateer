@@ -123,10 +123,11 @@ CREATE INDEX IF NOT EXISTS idx_provider_calls_period ON provider_calls(billing_p
 
 def get_connection(db_path: Path | str | None = None) -> sqlite3.Connection:
     target_path = db_path if db_path is not None else DB_PATH
-    conn = sqlite3.connect(str(target_path), check_same_thread=False)
+    conn = sqlite3.connect(str(target_path), check_same_thread=False, timeout=10.0)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON;")
     conn.execute("PRAGMA journal_mode = WAL;")
+    conn.execute("PRAGMA busy_timeout = 10000;")
     return conn
 
 @contextmanager
@@ -141,9 +142,11 @@ def get_db(db_path: Path | str | None = None) -> Generator[sqlite3.Connection, N
     finally:
         conn.close()
 
-def init_db(db_path: Path | str | None = None) -> None:
+def init_db(db_path: Path | str | None = None) -> list[int]:
     target_path = db_path if db_path is not None else DB_PATH
     Path(target_path).parent.mkdir(parents=True, exist_ok=True)
     with get_connection(target_path) as conn:
-        conn.executescript(SCHEMA_SQL)
-        conn.commit()
+        from backend.migrations.runner import run_migrations
+        applied = run_migrations(conn)
+        return applied
+

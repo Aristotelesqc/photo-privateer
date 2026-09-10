@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 from pathlib import Path
 from typing import Any, Optional
@@ -42,6 +43,14 @@ class SettingsRepository:
 
         # Validate google credentials path if set
         valid, error = self._validate_credentials_path(google_credentials_path)
+        adc_available, adc_project = self._check_adc()
+
+        if valid:
+            auth_mode = "service_account"
+        elif adc_available:
+            auth_mode = "adc"
+        else:
+            auth_mode = "none"
 
         return AppSettings(
             active_provider=active_provider,
@@ -51,7 +60,89 @@ class SettingsRepository:
             unit_price_usd=unit_price,
             google_credentials_valid=valid,
             google_credentials_error=error,
+            adc_available=adc_available,
+            adc_project_id=adc_project,
+            auth_mode=auth_mode,
         )
+
+    def _check_adc(self) -> tuple[bool, Optional[str]]:
+        env_adc = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
+        appdata = os.environ.get("APPDATA")
+        gcloud_win = Path(appdata) / "gcloud" / "application_default_credentials.json" if appdata else None
+        gcloud_nix = Path.home() / ".config" / "gcloud" / "application_default_credentials.json"
+
+        has_adc_file = (
+            bool(env_adc and Path(env_adc).is_file())
+            or bool(gcloud_win and gcloud_win.is_file())
+            or bool(gcloud_nix.is_file())
+        )
+        if not has_adc_file:
+            return False, None
+
+        try:
+            import google.auth
+            creds, project_id = google.auth.default()
+            return (creds is not None), project_id
+        except Exception:
+            return False, None
+
+    def test_google_auth(self, credentials_path_override: Optional[str] = None) -> dict[str, Any]:
+        """Tests Google Cloud authentication without consuming any Vision API units."""
+        target_path = credentials_path_override if credentials_path_override is not None else self.get_setting("google_credentials_path")
+        
+        if target_path and Path(target_path).is_file():
+            try:
+                from google.oauth2 import service_account
+                import google.auth.transport.requests
+                creds = service_account.Credentials.from_service_account_file(
+                    target_path,
+                    scopes=["https://www.googleapis.com/auth/cloud-platform"],
+                )
+                request = google.auth.transport.requests.Request()
+                creds.refresh(request)
+                return {
+                    "success": True,
+                    "auth_mode": "service_account",
+                    "project_id": creds.project_id,
+                    "service_account_email": creds.service_account_email,
+                    "message": f"Service account verified successfully ({creds.service_account_email}).",
+                }
+            except Exception as e:
+                return {
+                    "success": False,
+                    "auth_mode": "service_account",
+                    "error": f"Failed to authenticate using service account key: {str(e)}",
+                }
+
+        # Otherwise attempt ADC if detected
+        adc_available, _ = self._check_adc()
+        if not adc_available:
+            return {
+                "success": False,
+                "auth_mode": "none",
+                "error": "No Google Cloud credentials configured. Specify a Service Account key path or run 'gcloud auth application-default login'.",
+            }
+
+        try:
+            import google.auth
+            import google.auth.transport.requests
+            creds, project_id = google.auth.default(
+                scopes=["https://www.googleapis.com/auth/cloud-platform"]
+            )
+            request = google.auth.transport.requests.Request()
+            creds.refresh(request)
+            return {
+                "success": True,
+                "auth_mode": "adc",
+                "project_id": project_id,
+                "message": f"Application Default Credentials (ADC) verified successfully (project: {project_id}).",
+            }
+        except Exception as e:
+            return {
+                "success": False,
+                "auth_mode": "none",
+                "error": f"Google authentication failed: {str(e)}",
+            }
 
     def update_settings(self, updates: dict[str, Any]) -> AppSettings:
         for k, v in updates.items():

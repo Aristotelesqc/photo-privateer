@@ -11,13 +11,16 @@ class LibraryRepository:
     def __init__(self, conn: sqlite3.Connection):
         self.conn = conn
 
-    def list_libraries(self) -> list[LibraryOut]:
+    def list_libraries(self, include_archived: bool = True) -> list[LibraryOut]:
         cur = self.conn.cursor()
-        cur.execute("""
+        where_clause = "" if include_archived else "WHERE l.is_archived = 0"
+        cur.execute(f"""
             SELECT l.id, l.path, l.name, l.enabled, l.recursive, l.created_at, l.last_indexed_at,
+                   COALESCE(l.is_archived, 0) as is_archived,
                    COUNT(i.id) as image_count
             FROM libraries l
             LEFT JOIN images i ON l.id = i.library_id
+            {where_clause}
             GROUP BY l.id
             ORDER BY l.created_at ASC
         """)
@@ -29,6 +32,7 @@ class LibraryRepository:
                 name=r["name"],
                 enabled=bool(r["enabled"]),
                 recursive=bool(r["recursive"]),
+                is_archived=bool(r["is_archived"]),
                 created_at=r["created_at"],
                 last_indexed_at=r["last_indexed_at"],
                 image_count=r["image_count"],
@@ -40,6 +44,7 @@ class LibraryRepository:
         cur = self.conn.cursor()
         cur.execute("""
             SELECT l.id, l.path, l.name, l.enabled, l.recursive, l.created_at, l.last_indexed_at,
+                   COALESCE(l.is_archived, 0) as is_archived,
                    COUNT(i.id) as image_count
             FROM libraries l
             LEFT JOIN images i ON l.id = i.library_id
@@ -55,6 +60,7 @@ class LibraryRepository:
             name=r["name"],
             enabled=bool(r["enabled"]),
             recursive=bool(r["recursive"]),
+            is_archived=bool(r["is_archived"]),
             created_at=r["created_at"],
             last_indexed_at=r["last_indexed_at"],
             image_count=r["image_count"],
@@ -75,13 +81,20 @@ class LibraryRepository:
         now = datetime.now(timezone.utc).isoformat()
         cur = self.conn.cursor()
         cur.execute("""
-            INSERT INTO libraries (path, name, enabled, recursive, created_at)
-            VALUES (?, ?, 1, ?, ?)
+            INSERT INTO libraries (path, name, enabled, recursive, is_archived, created_at)
+            VALUES (?, ?, 1, ?, 0, ?)
         """, (norm_path, folder_name, int(recursive), now))
         lib_id = cur.lastrowid
         return self.get_by_id(lib_id)  # type: ignore
 
-    def update(self, library_id: int, name: Optional[str] = None, enabled: Optional[bool] = None, recursive: Optional[bool] = None) -> Optional[LibraryOut]:
+    def update(
+        self,
+        library_id: int,
+        name: Optional[str] = None,
+        enabled: Optional[bool] = None,
+        recursive: Optional[bool] = None,
+        is_archived: Optional[bool] = None,
+    ) -> Optional[LibraryOut]:
         fields = []
         params = []
         if name is not None:
@@ -93,6 +106,9 @@ class LibraryRepository:
         if recursive is not None:
             fields.append("recursive = ?")
             params.append(int(recursive))
+        if is_archived is not None:
+            fields.append("is_archived = ?")
+            params.append(int(is_archived))
         if not fields:
             return self.get_by_id(library_id)
 
@@ -102,7 +118,22 @@ class LibraryRepository:
         cur.execute(sql, tuple(params))
         return self.get_by_id(library_id)
 
-    def delete(self, library_id: int) -> bool:
+    def archive(self, library_id: int) -> bool:
+        """Non-destructively archives a library (stops monitoring without deleting images or matches)."""
+        cur = self.conn.cursor()
+        cur.execute("UPDATE libraries SET is_archived = 1, enabled = 0 WHERE id = ?", (library_id,))
+        return cur.rowcount > 0
+
+    def unarchive(self, library_id: int) -> bool:
+        """Restores an archived library to active monitoring."""
+        cur = self.conn.cursor()
+        cur.execute("UPDATE libraries SET is_archived = 0, enabled = 1 WHERE id = ?", (library_id,))
+        return cur.rowcount > 0
+
+    def delete(self, library_id: int, purge_permanently: bool = False) -> bool:
+        """Safely removes folder from monitoring. Defaults to non-destructive archive."""
+        if not purge_permanently:
+            return self.archive(library_id)
         cur = self.conn.cursor()
         cur.execute("DELETE FROM libraries WHERE id = ?", (library_id,))
         return cur.rowcount > 0

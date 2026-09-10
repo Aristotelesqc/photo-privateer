@@ -12,7 +12,7 @@ import {
   X,
 } from 'lucide-react';
 import { Library, ImageItem, AppSettings, ScanPrepareResponse } from '../types';
-import { fetchPhotos, prepareScan, startScan } from '../api/client';
+import { fetchPhotos, prepareScan, startScan, fetchScanHistory } from '../api/client';
 import { Thumbnail } from '../components/Thumbnail';
 import { ScanConfirmModal } from '../components/ScanConfirmModal';
 import { ScanProgressModal } from '../components/ScanProgressModal';
@@ -77,6 +77,18 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
     loadPhotos();
   }, [selectedLibraryId, searchQuery, statusFilter, page, density]);
 
+  // Restore active scan progress modal if a scan is already running
+  useEffect(() => {
+    fetchScanHistory(1)
+      .then((sessions) => {
+        if (sessions && sessions.length > 0 && sessions[0].status === 'RUNNING') {
+          setScanSession(sessions[0]);
+          setScanModalOpen(true);
+        }
+      })
+      .catch(() => {});
+  }, []);
+
   // Selection handlers
   const toggleSelect = (id: number) => {
     setSelectedIds((prev) => {
@@ -101,6 +113,12 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
     setPreparingScan(true);
     try {
       const proj = await prepareScan(Array.from(selectedIds));
+      if (proj.usable_count === 0) {
+        alert(
+          'None of the selected photographs are currently available on disk. Please verify that the original storage path or drive is accessible.'
+        );
+        return;
+      }
       setScanProjection(proj);
     } catch (err: any) {
       alert(`Error preparing scan: ${err.message}`);
@@ -118,8 +136,6 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
     try {
       const session = await startScan(ids, undefined, forceOverride);
       setScanSession(session);
-      onRefreshData();
-      loadPhotos();
       deselectAll();
     } catch (err: any) {
       alert(`Scan failed: ${err.message}`);
@@ -316,10 +332,20 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
                     {isSelected ? <Check className="w-3.5 h-3.5 stroke-[2.5]" /> : <Square className="w-3.5 h-3.5" />}
                   </div>
 
-                  {/* Format Pill Overlay */}
-                  <span className="absolute top-1.5 right-1.5 text-[9px] font-mono px-1 py-0.2 rounded bg-black/70 text-carbon-300 backdrop-blur-xs">
-                    {formatStr}
-                  </span>
+                  {/* Format Pill Overlay & Missing Warning */}
+                  <div className="absolute top-1.5 right-1.5 flex flex-col items-end gap-1">
+                    <span className="text-[9px] font-mono px-1 py-0.2 rounded bg-black/70 text-carbon-300 backdrop-blur-xs">
+                      {formatStr}
+                    </span>
+                    {!photo.is_present_on_disk && (
+                      <span
+                        className="text-[9px] font-medium px-1 py-0.2 rounded bg-amber-950/90 text-amber-300 border border-amber-800/80 backdrop-blur-xs shadow-xs"
+                        title="File missing from original path on disk"
+                      >
+                        Missing
+                      </span>
+                    )}
+                  </div>
 
                   {/* Status Overlay Footer on Image */}
                   <div className="absolute bottom-1.5 left-1.5 right-1.5 flex items-center justify-between pointer-events-none">
@@ -438,9 +464,15 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
         <ScanProgressModal
           session={scanSession}
           loading={scanning}
+          onScanFinished={() => {
+            onRefreshData();
+            loadPhotos();
+          }}
           onClose={() => {
             setScanModalOpen(false);
             setScanSession(null);
+            onRefreshData();
+            loadPhotos();
           }}
         />
       )}

@@ -4,6 +4,7 @@ export interface Library {
   name: string;
   enabled: boolean;
   recursive: boolean;
+  is_archived: boolean;
   created_at: string;
   last_indexed_at: string | null;
   image_count: number;
@@ -22,6 +23,7 @@ export interface ImageItem {
   format: string | null;
   indexed_at: string;
   last_seen_on_disk: string;
+  is_present_on_disk: boolean;
   last_scanned_at: string | null;
   scan_count: number;
   match_count: number;
@@ -42,16 +44,18 @@ export interface MatchItem {
   id: number;
   image_id: number;
   scan_session_id: number | null;
-  page_url: string;
+  page_url: string | null;
   page_title: string | null;
   page_score: number | null;
   domain: string;
   candidate_image_url: string | null;
   match_type: 'FULL' | 'PARTIAL' | 'PAGE' | 'OTHER';
+  source_kind: 'FULL' | 'PARTIAL' | 'ASSET_ONLY';
   provider: string;
   first_seen_at: string;
   last_seen_at: string;
   is_new: boolean;
+  acknowledged_at: string | null;
   classification: ClassificationType;
   classified_at: string | null;
   auto_classified_by_rule_id: number | null;
@@ -85,12 +89,15 @@ export interface ScanSession {
   processed_images: number;
   successful_images: number;
   failed_images: number;
-  status: 'RUNNING' | 'COMPLETED' | 'CANCELLED' | 'FAILED';
+  status: 'RUNNING' | 'COMPLETED' | 'CANCELLED' | 'FAILED' | 'INTERRUPTED';
+  cancel_requested: boolean;
   notes: string | null;
 }
 
 export interface ScanPrepareResponse {
   selected_count: number;
+  usable_count: number;
+  missing_count: number;
   provider: string;
   current_month: string;
   units_used_this_month: number;
@@ -138,4 +145,16 @@ export interface AppSettings {
   unit_price_usd: number;
   google_credentials_valid: boolean;
   google_credentials_error: string | null;
+  adc_available: boolean;
+  adc_project_id: string | null;
+  auth_mode: 'adc' | 'service_account' | 'none';
+}
+
+export interface TestGoogleAuthResponse {
+  success: boolean;
+  auth_mode: string;
+  message: string | null;
+  error: string | null;
+  project_id: string | null;
+  service_account_email: string | null;
 }

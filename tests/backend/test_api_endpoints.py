@@ -42,15 +42,28 @@ def test_full_api_workflow(client, sample_images_dir: Path):
     assert prep_data["selected_count"] == 1
     assert prep_data["estimated_incremental_cost_usd"] == 0.0
 
-    # 6. Start Scan
+    # 6. Start Scan (asynchronous background execution)
     res_scan = client.post("/api/scans/start", json={
         "image_ids": [first_photo["id"]],
         "provider": "mock",
     })
     assert res_scan.status_code == 200
     scan_data = res_scan.json()
-    assert scan_data["status"] == "COMPLETED"
+    assert scan_data["status"] in ("RUNNING", "COMPLETED")
     assert scan_data["total_images"] == 1
+    session_id = scan_data["id"]
+
+    import time
+    for _ in range(50):
+        res_poll = client.get(f"/api/scans/{session_id}")
+        assert res_poll.status_code == 200
+        poll_data = res_poll.json()
+        if poll_data["status"] in ("COMPLETED", "FAILED"):
+            scan_data = poll_data
+            break
+        time.sleep(0.05)
+
+    assert scan_data["status"] == "COMPLETED"
 
     # 7. List Matches
     res_matches = client.get(f"/api/matches?image_id={first_photo['id']}")

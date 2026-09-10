@@ -1,11 +1,12 @@
 import React, { useState } from 'react';
-import { Image as ImageIcon, ImageOff } from 'lucide-react';
+import { Image as ImageIcon, ImageOff, Eye } from 'lucide-react';
 
 interface ThumbnailProps {
   src: string;
   alt: string;
   className?: string;
   isRemote?: boolean;
+  autoLoadRemote?: boolean;
 }
 
 export const Thumbnail: React.FC<ThumbnailProps> = ({
@@ -13,9 +14,29 @@ export const Thumbnail: React.FC<ThumbnailProps> = ({
   alt,
   className = '',
   isRemote = false,
+  autoLoadRemote = false,
 }) => {
+  const [revealed, setRevealed] = useState(!isRemote || autoLoadRemote);
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState(false);
+
+  // Privacy Opt-In: Do not request suspect external URLs until user explicitly clicks
+  if (isRemote && !revealed) {
+    return (
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          setRevealed(true);
+        }}
+        title="Suspect remote origin. Click to fetch preview without sending referrer."
+        className={`bg-carbon-950 border border-carbon-800 hover:border-accent-500/60 flex flex-col items-center justify-center text-carbon-400 hover:text-carbon-200 text-xs p-1.5 text-center transition-all cursor-pointer group ${className}`}
+      >
+        <Eye className="w-3.5 h-3.5 mb-1 text-carbon-500 group-hover:text-accent-400 transition-colors" />
+        <span className="text-[9px] font-mono text-carbon-400 group-hover:text-carbon-200">Load preview</span>
+      </button>
+    );
+  }
 
   if (error) {
     return (

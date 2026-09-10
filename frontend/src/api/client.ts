@@ -11,6 +11,7 @@ import {
   UsageSummary,
   ProviderCall,
   AppSettings,
+  TestGoogleAuthResponse,
 } from '../types';
 
 const API_BASE = '/api';
@@ -59,6 +60,16 @@ export const updateLibrary = (id: number, updates: { name?: string; enabled?: bo
 export const deleteLibrary = (id: number) =>
   request<{ status: string; message: string }>(`/libraries/${id}`, {
     method: 'DELETE',
+  });
+
+export const archiveLibrary = (id: number) =>
+  request<Library>(`/libraries/${id}/archive`, {
+    method: 'POST',
+  });
+
+export const unarchiveLibrary = (id: number) =>
+  request<Library>(`/libraries/${id}/unarchive`, {
+    method: 'POST',
   });
 
 export const browseFolder = () =>
@@ -114,6 +125,11 @@ export const fetchScanHistory = (limit: number = 20) =>
 
 export const fetchScanSession = (id: number) =>
   request<ScanSession>(`/scans/${id}`);
+
+export const cancelScan = (id: number) =>
+  request<ScanSession>(`/scans/${id}/cancel`, {
+    method: 'POST',
+  });
 
 // --- Matches ---
 export const fetchMatches = (params: {
@@ -187,3 +203,9 @@ export const validateFolder = (path: string) =>
       body: JSON.stringify({ path }),
     }
   );
+
+export const testGoogleAuth = (credentials_path?: string) =>
+  request<TestGoogleAuthResponse>('/settings/test-google-auth', {
+    method: 'POST',
+    body: JSON.stringify({ credentials_path: credentials_path || null }),
+  });

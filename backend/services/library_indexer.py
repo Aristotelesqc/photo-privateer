@@ -57,10 +57,12 @@ class LibraryIndexer:
         scanned = 0
         added_or_updated = 0
         unchanged = 0
+        observed_paths: set[str] = set()
 
         for file_path in self._discover_files(root, lib.recursive):
             scanned += 1
             norm_path = str(file_path.resolve())
+            observed_paths.add(norm_path)
             stat = file_path.stat()
             file_size = stat.st_size
             mtime = stat.st_mtime
@@ -69,6 +71,16 @@ class LibraryIndexer:
             existing = self.image_repo.get_by_path(norm_path)
             if existing and abs(existing.file_modified_at - mtime) < 0.001 and existing.file_size == file_size:
                 unchanged += 1
+                # If marked missing previously, mark back present on disk
+                if not existing.is_present_on_disk:
+                    self.image_repo.reconcile_image_location(
+                        image_id=existing.id,
+                        library_id=library_id,
+                        new_path=norm_path,
+                        new_filename=file_path.name,
+                        new_size=file_size,
+                        new_mtime=mtime,
+                    )
                 # Ensure thumbnail exists in cache
                 if not self.thumbnail_cache.has_thumbnail(existing.sha256):
                     try:
@@ -79,6 +91,35 @@ class LibraryIndexer:
 
             # Compute hash and extract dimensions safely
             sha256 = calculate_sha256(file_path)
+
+            # Check if this is a renamed or moved file with identical content hash
+            if not existing:
+                candidates = self.image_repo.get_all_by_sha256(sha256)
+                # An unambiguous rename is when an existing record with identical SHA-256 no longer exists at its old path
+                reconciled = False
+                for candidate in candidates:
+                    if not Path(candidate.file_path).exists():
+                        # Old path is gone -> reconcile existing image ID to new path
+                        self.image_repo.reconcile_image_location(
+                            image_id=candidate.id,
+                            library_id=library_id,
+                            new_path=norm_path,
+                            new_filename=file_path.name,
+                            new_size=file_size,
+                            new_mtime=mtime,
+                        )
+                        # Ensure thumbnail cached
+                        if not self.thumbnail_cache.has_thumbnail(sha256):
+                            try:
+                                self.thumbnail_cache.get_or_create_thumbnail(file_path, sha256)
+                            except Exception:
+                                pass
+                        added_or_updated += 1
+                        reconciled = True
+                        break
+                if reconciled:
+                    continue
+
             width: int | None = None
             height: int | None = None
             img_format: str | None = None
@@ -89,7 +130,6 @@ class LibraryIndexer:
                     width, height = img.size
                     img_format = img.format or file_path.suffix.lstrip(".").upper()
             except Exception:
-                # If Pillow fails on unusual metadata, fall back cleanly
                 img_format = file_path.suffix.lstrip(".").upper()
 
             # Pre-generate thumbnail
@@ -112,6 +152,9 @@ class LibraryIndexer:
             )
             added_or_updated += 1
 
+        # Mark indexed files not observed on disk as missing (never delete history!)
+        missing_count = self.image_repo.mark_missing_images_in_library(library_id, observed_paths)
+
         # Update library last indexed timestamp
         self.library_repo.update_last_indexed(library_id)
 
@@ -119,4 +162,5 @@ class LibraryIndexer:
             "scanned": scanned,
             "added_or_updated": added_or_updated,
             "unchanged": unchanged,
+            "missing": missing_count,
         }

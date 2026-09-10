@@ -31,11 +31,15 @@ Photo Privateer indexes your local photograph folders without moving, renaming, 
 
 Key Features:
 - **Zero modification of source files**: Photos are read strictly in read-only binary mode.
+- **Non-destructive library archiving**: Archive unmonitored libraries while preserving all historical photos and match triage records.
 - **Historical permanence**: Rescanning updates timestamps and flags new discoveries without overwriting prior human classifications or notes.
 - **Review Queue**: Classify matches as `UNREVIEWED`, `APPROVED`, `UNAUTHORIZED` (Infringing), or `IRRELEVANT` with an unobtrusive reset workflow.
 - **Side-by-Side Detail Inspection**: Inspect the original photo and discovered web match side-by-side at high resolution without losing your place in the review queue.
 - **Domain Rules**: Automatically whitelist portfolio sites or blacklist scrapers across subdomains.
 - **Transparent Local Accounting**: Local tracker counts Google Vision units, projects pending scan costs, and enforces a conservative free-tier safety guard.
+- **Asynchronous Cooperative Scanning**: Background thread execution with live polling, instant cooperative cancellation, and automatic recovery of interrupted sessions on startup.
+- **Zero-Cost Google Auth Validation**: Test credentials and Application Default Credentials (ADC) token generation without consuming Cloud Vision quota.
+- **Privacy-First Remote Previews**: Candidate match images require user opt-in to fetch and are loaded with `referrerpolicy="no-referrer"`.
 - **No Background Daemons**: Scanning occurs solely when explicitly requested by you.
 
 ---
@@ -53,12 +57,13 @@ Photo Privateer Core Engine
    ├── ImageService         (Path traversal protection & containment check)
    ├── DomainRulesEngine    (Domain extraction and auto-classification)
    ├── UsageTracker         (Monthly usage aggregator & cost projection)
-   └── ScanEngine           (Batch dispatch, match normalization, persistence)
+   ├── MigrationRunner      (Versioned idempotent schema migrations)
+   └── ScanEngine           (Asynchronous batch dispatch, cancellation, persistence)
                ↓
 Persistence & Search Providers
    ├── SQLite Database      (~/.photo_privateer/photo_privateer.sqlite with WAL mode)
    ├── MockSearchProvider   (Deterministic offline edge cases)
-   └── GoogleVisionProvider (Official google-cloud-vision client)
+   └── GoogleVisionProvider (Official google-cloud-vision client & ADC support)
 ```
 
 The application is served as a single local process: FastAPI binds strictly to `127.0.0.1` and serves both the REST API and the compiled React SPA from `frontend/dist`.
@@ -68,8 +73,8 @@ The application is served as a single local process: FastAPI binds strictly to `
 ## 3. Prerequisites
 
 - **Operating System**: Windows 10/11 (or macOS / Linux).
-- **Python**: Version 3.9 or higher (Python 3.11+ recommended).
-- **Node.js**: Version 18+ (only needed for first-time frontend build or frontend development; not needed during normal launch after the frontend is compiled).
+- **Python**: Version 3.11 or higher.
+- **Node.js**: Version 18+ (only needed for first-time frontend build, test execution, or frontend development; not needed during normal launch after the frontend is compiled).
 
 ---
 
@@ -195,7 +200,7 @@ Photo Privateer tracks every executed API call in SQLite and provides an **API U
 ## 11. Data Storage & Backup
 
 All application state is stored locally in SQLite:
-- **Database file**: `~/.photo_privateer/photo_privateer.sqlite` (or overridden by the `PHOTO_PRIVATEER_DATA_DIR` environment variable; legacy `photoscrub.db` files are automatically migrated).
+- **Database file**: `~/.photo_privateer/photo_privateer.sqlite` (or overridden by the `PHOTO_PRIVATEER_DATA_DIR` environment variable).
 - **Cached thumbnails**: `~/.photo_privateer/thumbnails/*.webp`.
 
 ### How to Back Up Your History:
@@ -207,15 +212,33 @@ All application state is stored locally in SQLite:
 
 ## 12. Running Automated Tests
 
-Run the full backend test suite:
+Photo Privateer includes a comprehensive, multi-tiered test suite ensuring full offline reproducibility and zero regressions.
+
+### Tier 1: Backend Integration & Resilience Suite
+Runs the complete Python pytest suite covering schema migrations, non-destructive archiving, cooperative cancellation, startup crash recovery, SHA-256 rename reconciliation, disk presence restoration, and zero-cost Google auth validation:
 ```powershell
 pytest -v tests/backend
 ```
 
-Run frontend typechecking and production build:
+### Tier 2: Frontend Unit & Component Tests
+Runs Vitest unit tests verifying components including the privacy opt-in thumbnail loader, live scan progress modal with cooperative cancellation, and confirmation dialogs:
+```powershell
+cd frontend
+npm test
+```
+
+### Tier 3: Production Frontend Build
+Validates TypeScript type safety, asset bundling, and compiles production assets into `frontend/dist/`:
 ```powershell
 cd frontend
 npm run build
+```
+
+### Tier 4: Playwright End-to-End Browser Tests
+Launches an automated headless browser test against a live backend instance verifying real user journeys (library indexing, mock scanning with live polling, review queue triage with privacy opt-in, ADC auth testing, and library archiving):
+```powershell
+cd frontend
+npm run test:e2e
 ```
 
 ---

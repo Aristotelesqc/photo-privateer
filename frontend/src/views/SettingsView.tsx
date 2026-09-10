@@ -12,16 +12,23 @@ import {
   Save,
   CheckCircle2,
   FolderOpen,
+  HelpCircle,
+  ChevronDown,
+  ChevronUp,
+  ExternalLink,
 } from 'lucide-react';
 import { Library, AppSettings } from '../types';
 import {
   createLibrary,
   updateLibrary,
   deleteLibrary,
+  archiveLibrary,
+  unarchiveLibrary,
   indexLibrary,
   updateSettings,
   validateFolder,
   browseFolder,
+  testGoogleAuth,
 } from '../api/client';
 
 interface SettingsViewProps {
@@ -61,6 +68,16 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const [savingSettings, setSavingSettings] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [browsingFolder, setBrowsingFolder] = useState(false);
+  const [testingAuth, setTestingAuth] = useState(false);
+  const [testAuthResult, setTestAuthResult] = useState<{
+    success: boolean;
+    auth_mode: string;
+    message?: string | null;
+    error?: string | null;
+    project_id?: string | null;
+    service_account_email?: string | null;
+  } | null>(null);
+  const [showApiGuide, setShowApiGuide] = useState(false);
 
   React.useEffect(() => {
     if (settings) {
@@ -148,8 +165,35 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     }
   };
 
-  const handleDeleteLibrary = async (libId: number) => {
-    if (!confirm('Remove this folder from Photo Privateer? Source files on disk will NOT be touched.')) {
+  const handleArchiveLibrary = async (libId: number) => {
+    try {
+      await archiveLibrary(libId);
+      onRefreshData();
+    } catch (err: any) {
+      alert(`Failed to stop monitoring folder: ${err.message}`);
+    }
+  };
+
+  const handleUnarchiveLibrary = async (libId: number) => {
+    try {
+      await unarchiveLibrary(libId);
+      onRefreshData();
+    } catch (err: any) {
+      alert(`Failed to resume monitoring folder: ${err.message}`);
+    }
+  };
+
+  const handleDeleteLibrary = async (libId: number, isArchived: boolean) => {
+    if (!isArchived) {
+      // Default to non-destructive archiving
+      if (confirm('Stop monitoring this folder? All historical photos, scans, and discovered matches will be safely preserved in your database.')) {
+        await handleArchiveLibrary(libId);
+      }
+      return;
+    }
+
+    // Explicit permanent removal from database if already archived
+    if (!confirm('Permanently remove this folder and its associated photo records from Photo Privateer? Original files on disk will NOT be touched.')) {
       return;
     }
     try {
@@ -157,6 +201,23 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       onRefreshData();
     } catch (err: any) {
       alert(`Failed removing library: ${err.message}`);
+    }
+  };
+
+  const handleTestAuth = async () => {
+    setTestingAuth(true);
+    setTestAuthResult(null);
+    try {
+      const res = await testGoogleAuth(credsPath.trim() || undefined);
+      setTestAuthResult(res);
+    } catch (err: any) {
+      setTestAuthResult({
+        success: false,
+        auth_mode: 'none',
+        error: err.message,
+      });
+    } finally {
+      setTestingAuth(false);
     }
   };
 
@@ -211,6 +272,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             {libraries.map((lib) => (
               <div
                 key={lib.id}
+                data-testid="library-item"
                 className="bg-carbon-950 border border-carbon-800 rounded-md p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5"
               >
                 <div className="min-w-0 flex-1 space-y-0.5">
@@ -219,20 +281,30 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                     <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-carbon-800 text-carbon-300 tabular-nums">
                       {lib.image_count} photos
                     </span>
+                    {lib.is_archived && (
+                      <span
+                        data-testid="badge-archived"
+                        className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-amber-500/15 text-amber-300 border border-amber-500/30"
+                      >
+                        Archived (Monitoring Paused)
+                      </span>
+                    )}
                   </div>
                   <p className="font-mono text-carbon-400 truncate text-[11px]" title={lib.path}>
                     {lib.path}
                   </p>
                   <div className="flex items-center gap-3 text-[10px] text-carbon-500 pt-0.5">
-                    <label className="flex items-center gap-1 cursor-pointer text-carbon-300">
-                      <input
-                        type="checkbox"
-                        checked={lib.recursive}
-                        onChange={() => handleToggleRecursive(lib)}
-                        className="rounded bg-carbon-900 border-carbon-700 text-accent-600 focus:ring-accent-500 w-3 h-3"
-                      />
-                      <span>Recursive subfolders</span>
-                    </label>
+                    {!lib.is_archived && (
+                      <label className="flex items-center gap-1 cursor-pointer text-carbon-300">
+                        <input
+                          type="checkbox"
+                          checked={lib.recursive}
+                          onChange={() => handleToggleRecursive(lib)}
+                          className="rounded bg-carbon-900 border-carbon-700 text-accent-600 focus:ring-accent-500 w-3 h-3"
+                        />
+                        <span>Recursive subfolders</span>
+                      </label>
+                    )}
                     {lib.last_indexed_at && (
                       <span className="tabular-nums">Indexed: {new Date(lib.last_indexed_at).toLocaleDateString()}</span>
                     )}
@@ -243,21 +315,47 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 </div>
 
                 <div className="flex items-center gap-1.5 shrink-0">
-                  <button
-                    onClick={() => handleIndexLibrary(lib.id)}
-                    disabled={indexingLibId === lib.id}
-                    className="flex items-center gap-1 px-2.5 py-1 rounded bg-carbon-800 hover:bg-carbon-700 text-carbon-200 hover:text-white transition-colors text-xs"
-                  >
-                    <RefreshCw className={`w-3 h-3 ${indexingLibId === lib.id ? 'animate-spin' : ''}`} />
-                    <span>{indexingLibId === lib.id ? 'Indexing...' : 'Index'}</span>
-                  </button>
-                  <button
-                    onClick={() => handleDeleteLibrary(lib.id)}
-                    className="p-1 rounded text-carbon-400 hover:text-rose-400 hover:bg-carbon-800 transition-colors"
-                    title="Remove folder"
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                  </button>
+                  {!lib.is_archived ? (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => handleIndexLibrary(lib.id)}
+                        disabled={indexingLibId === lib.id}
+                        className="flex items-center gap-1 px-2.5 py-1 rounded bg-carbon-800 hover:bg-carbon-700 text-carbon-200 hover:text-white transition-colors text-xs"
+                      >
+                        <RefreshCw className={`w-3 h-3 ${indexingLibId === lib.id ? 'animate-spin' : ''}`} />
+                        <span>{indexingLibId === lib.id ? 'Indexing...' : 'Index'}</span>
+                      </button>
+                      <button
+                        type="button"
+                        data-testid="btn-stop-monitoring"
+                        onClick={() => handleDeleteLibrary(lib.id, false)}
+                        className="px-2 py-1 rounded text-carbon-400 hover:text-amber-300 hover:bg-carbon-800 border border-carbon-800 transition-colors text-[11px]"
+                        title="Stop monitoring this folder (preserves all discovered matches)"
+                      >
+                        Stop Monitoring
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <button
+                        type="button"
+                        data-testid="btn-resume-monitoring"
+                        onClick={() => handleUnarchiveLibrary(lib.id)}
+                        className="flex items-center gap-1 px-2.5 py-1 rounded bg-accent-600 hover:bg-accent-500 text-white transition-colors text-xs font-semibold"
+                      >
+                        Resume Monitoring
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteLibrary(lib.id, true)}
+                        className="p-1 rounded text-carbon-500 hover:text-rose-400 hover:bg-carbon-800 transition-colors"
+                        title="Permanently remove from database (original files on disk are never touched)"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </>
+                  )}
                 </div>
               </div>
             ))}
@@ -274,6 +372,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               <div className="flex gap-1.5">
                 <input
                   type="text"
+                  data-testid="input-folder-path"
                   value={newFolderPath}
                   onChange={(e) => {
                     setNewFolderPath(e.target.value);
@@ -327,6 +426,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               <label className="block text-carbon-400 text-[11px]">Label (Optional)</label>
               <input
                 type="text"
+                data-testid="input-folder-name"
                 value={newFolderName}
                 onChange={(e) => setNewFolderName(e.target.value)}
                 placeholder="e.g. Landscapes"
@@ -421,37 +521,187 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           </div>
 
           {/* Credentials Path Input */}
-          <div className="bg-carbon-950 border border-carbon-800 rounded-md p-3 space-y-2">
-            <div className="flex items-center justify-between">
-              <label className="font-semibold text-white text-xs">Service Account Key (JSON Path)</label>
-              {settings?.google_credentials_valid ? (
-                <span className="flex items-center gap-1 text-emerald-400 font-mono text-[10px]">
-                  <Check className="w-3 h-3" />
-                  <span>Valid Key</span>
-                </span>
-              ) : (
-                <span className="flex items-center gap-1 text-amber-400 font-mono text-[10px]">
-                  <AlertCircle className="w-3 h-3" />
-                  <span>{settings?.google_credentials_error || 'No key configured'}</span>
-                </span>
-              )}
+          <div className="bg-carbon-950 border border-carbon-800 rounded-md p-3 space-y-2.5">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <label className="font-semibold text-white text-xs">Google Cloud Authentication</label>
+              <div className="flex items-center gap-2">
+                {settings?.auth_mode === 'service_account' ? (
+                  <span className="flex items-center gap-1 text-emerald-400 font-mono text-[10px] bg-emerald-500/10 px-1.5 py-0.5 rounded border border-emerald-500/20">
+                    <Check className="w-3 h-3" />
+                    <span>Key Configured</span>
+                  </span>
+                ) : settings?.auth_mode === 'adc' ? (
+                  <span className="flex items-center gap-1 text-accent-300 font-mono text-[10px] bg-accent-500/10 px-1.5 py-0.5 rounded border border-accent-500/20">
+                    <Check className="w-3 h-3" />
+                    <span>ADC Active</span>
+                  </span>
+                ) : (
+                  <span className="flex items-center gap-1 text-amber-400 font-mono text-[10px] bg-amber-500/10 px-1.5 py-0.5 rounded border border-amber-500/20">
+                    <AlertCircle className="w-3 h-3" />
+                    <span>No credentials configured</span>
+                  </span>
+                )}
+              </div>
             </div>
 
-            <input
-              type="text"
-              value={credsPath}
-              onChange={(e) => setCredsPath(e.target.value)}
-              placeholder="C:\Users\Username\.secrets\vision-key.json"
-              className="w-full bg-carbon-900 border border-carbon-800 rounded px-2.5 py-1 text-white font-mono text-xs focus:outline-none focus:border-accent-500"
-            />
+            {/* ADC Notification Card if available on environment */}
+            {settings?.adc_available && (
+              <div className="bg-carbon-900 border border-carbon-800 rounded p-2.5 text-[11px] text-carbon-300 flex items-start gap-2">
+                <ShieldCheck className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+                <div>
+                  <span className="font-semibold text-white">Application Default Credentials (ADC) detected.</span>
+                  {settings.adc_project_id && (
+                    <span className="font-mono text-carbon-400"> (project: {settings.adc_project_id})</span>
+                  )}
+                  <p className="text-carbon-400 text-[10px] mt-0.5">
+                    Google Cloud Vision can authenticate via your local gcloud CLI session without entering an explicit service account key path below.
+                  </p>
+                </div>
+              </div>
+            )}
 
-            <div className="bg-carbon-900 rounded p-2.5 border border-carbon-800/80 text-[10px] text-carbon-300 space-y-1">
-              <span className="font-semibold text-carbon-200">GCP Quick Setup:</span>
-              <ol className="list-decimal list-inside space-y-0.5 text-carbon-400 pl-0.5">
-                <li>Create GCP project & enable <strong>Cloud Vision API</strong>.</li>
-                <li>Under <em>IAM & Service Accounts</em>, create a service account with <em>Cloud Vision User</em>.</li>
-                <li>Download JSON key file locally and paste its local absolute path above.</li>
-              </ol>
+            <div className="space-y-1">
+              <label className="block text-carbon-400 text-[11px]">Service Account Key File (Optional if ADC is configured)</label>
+              <input
+                type="text"
+                value={credsPath}
+                onChange={(e) => setCredsPath(e.target.value)}
+                placeholder="C:\Users\Username\.secrets\vision-key.json"
+                className="w-full bg-carbon-900 border border-carbon-800 rounded px-2.5 py-1 text-white font-mono text-xs focus:outline-none focus:border-accent-500"
+              />
+            </div>
+
+            <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
+              <button
+                type="button"
+                onClick={handleTestAuth}
+                disabled={testingAuth}
+                className="px-2.5 py-1 rounded bg-carbon-800 hover:bg-carbon-700 text-carbon-200 text-xs font-medium flex items-center gap-1.5 transition-all active:scale-98"
+              >
+                <Key className="w-3 h-3 text-accent-400" />
+                <span>{testingAuth ? 'Testing Auth Token...' : 'Test Authentication (0 Units)'}</span>
+              </button>
+
+              <span className="text-[10px] font-mono text-carbon-500">
+                Tests auth token acquisition without making Vision API calls.
+              </span>
+            </div>
+
+            {/* Test Auth Result Banner */}
+            {testAuthResult && (
+              <div
+                className={`p-2.5 rounded border text-[11px] flex items-start gap-2 ${
+                  testAuthResult.success
+                    ? 'bg-emerald-950/40 border-emerald-800 text-emerald-300'
+                    : 'bg-rose-950/40 border-rose-800 text-rose-300'
+                }`}
+              >
+                {testAuthResult.success ? (
+                  <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+                ) : (
+                  <AlertCircle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+                )}
+                <div>
+                  <p className="font-semibold">{testAuthResult.success ? 'Authentication Succeeded' : 'Authentication Failed'}</p>
+                  <p className="text-[10px] opacity-90 mt-0.5">
+                    {testAuthResult.message || testAuthResult.error}
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {/* API Setup Help Section */}
+            <div className="bg-carbon-900 rounded-md border border-carbon-800 overflow-hidden" data-testid="api-setup-guide">
+              <button
+                type="button"
+                data-testid="btn-toggle-api-guide"
+                onClick={() => setShowApiGuide(!showApiGuide)}
+                className="w-full px-3 py-2.5 flex items-center justify-between text-left hover:bg-carbon-850 transition-colors text-xs font-medium text-carbon-200"
+              >
+                <span className="flex items-center gap-2">
+                  <HelpCircle className="w-4 h-4 text-accent-400 shrink-0" />
+                  <span className="font-semibold text-white">Guide d'Aide : Configuration de l'API Google Cloud Vision</span>
+                </span>
+                <span className="flex items-center gap-1 text-[11px] text-accent-400 font-mono">
+                  <span>{showApiGuide ? 'Masquer le guide' : 'Afficher le guide pas-à-pas'}</span>
+                  {showApiGuide ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                </span>
+              </button>
+
+              {showApiGuide && (
+                <div className="p-3.5 pt-1 space-y-3 border-t border-carbon-800 text-[11px] text-carbon-300">
+                  <p className="text-carbon-300 leading-relaxed text-[11px]">
+                    Photo Privateer utilise l'API officielle <strong>Google Cloud Vision (Web Detection)</strong> pour identifier les réutilisations de vos photographies sur le web public. Suivez ces étapes simples pour configurer votre accès :
+                  </p>
+
+                  <div className="space-y-2.5">
+                    <div className="bg-carbon-950 p-2.5 rounded border border-carbon-800/80">
+                      <div className="flex items-center gap-1.5 font-semibold text-white mb-1">
+                        <span className="w-4 h-4 rounded-full bg-accent-500/20 text-accent-300 flex items-center justify-center text-[10px] font-mono">1</span>
+                        <span>Créer un compte et un projet Google Cloud</span>
+                      </div>
+                      <p className="text-carbon-400 text-[10px] pl-5">
+                        Rendez-vous sur la <a href="https://console.cloud.google.com/" target="_blank" rel="noreferrer" className="text-accent-400 underline inline-flex items-center gap-0.5">Google Cloud Console <ExternalLink className="w-2.5 h-2.5" /></a> et connectez-vous avec votre compte Google. Créez ensuite un nouveau projet (par ex. <em>photo-privateer</em>).
+                      </p>
+                    </div>
+
+                    <div className="bg-carbon-950 p-2.5 rounded border border-carbon-800/80">
+                      <div className="flex items-center gap-1.5 font-semibold text-white mb-1">
+                        <span className="w-4 h-4 rounded-full bg-accent-500/20 text-accent-300 flex items-center justify-center text-[10px] font-mono">2</span>
+                        <span>Activer l'API Cloud Vision</span>
+                      </div>
+                      <p className="text-carbon-400 text-[10px] pl-5">
+                        Dans le menu de gauche, naviguez vers <strong>APIs &amp; Services &gt; Library</strong>. Recherchez <code>Cloud Vision API</code>, cliquez dessus puis cliquez sur <strong>Enable</strong> (Activer).
+                      </p>
+                    </div>
+
+                    <div className="bg-carbon-950 p-2.5 rounded border border-carbon-800/80">
+                      <div className="flex items-center gap-1.5 font-semibold text-white mb-1">
+                        <span className="w-4 h-4 rounded-full bg-accent-500/20 text-accent-300 flex items-center justify-center text-[10px] font-mono">3</span>
+                        <span>Créer un Compte de Service (Service Account)</span>
+                      </div>
+                      <p className="text-carbon-400 text-[10px] pl-5">
+                        Allez dans <strong>IAM &amp; Admin &gt; Service Accounts</strong>. Cliquez sur <strong>Create Service Account</strong> (nommez-le par ex. <em>photo-privateer-app</em>). À l'étape des autorisations, attribuez-lui le rôle <strong>Cloud Vision User</strong>.
+                      </p>
+                    </div>
+
+                    <div className="bg-carbon-950 p-2.5 rounded border border-carbon-800/80">
+                      <div className="flex items-center gap-1.5 font-semibold text-white mb-1">
+                        <span className="w-4 h-4 rounded-full bg-accent-500/20 text-accent-300 flex items-center justify-center text-[10px] font-mono">4</span>
+                        <span>Télécharger la clé privée JSON &amp; la stocker localement</span>
+                      </div>
+                      <p className="text-carbon-400 text-[10px] pl-5 leading-relaxed">
+                        Cliquez sur le compte de service créé, ouvrez l'onglet <strong>Keys</strong> (Clés) &gt; <strong>Add Key</strong> &gt; <strong>Create new key</strong> &gt; choisissez le format <strong>JSON</strong>. Téléchargez le fichier et conservez-le dans un dossier privé et sécurisé sur votre machine (ex: <code>C:\Users\VotreNom\.secrets\vision-key.json</code>). Copiez ensuite son chemin absolu dans le champ ci-dessus.
+                      </p>
+                    </div>
+
+                    <div className="bg-carbon-950 p-2.5 rounded border border-carbon-800/80">
+                      <div className="flex items-center gap-1.5 font-semibold text-white mb-1">
+                        <span className="w-4 h-4 rounded-full bg-emerald-500/20 text-emerald-300 flex items-center justify-center text-[10px] font-mono">5</span>
+                        <span>Alternative sans fichier : Application Default Credentials (ADC)</span>
+                      </div>
+                      <p className="text-carbon-400 text-[10px] pl-5 leading-relaxed">
+                        Si vous avez installé le Google Cloud SDK (<code>gcloud</code>), exécutez simplement <code>gcloud auth application-default login</code> dans votre terminal. Photo Privateer détectera automatiquement votre session ADC sans nécessiter de fichier clé JSON.
+                      </p>
+                    </div>
+
+                    <div className="bg-carbon-950 p-2.5 rounded border border-carbon-800/80">
+                      <div className="flex items-center gap-1.5 font-semibold text-white mb-1">
+                        <span className="w-4 h-4 rounded-full bg-accent-500/20 text-accent-300 flex items-center justify-center text-[10px] font-mono">6</span>
+                        <span>Tester la connexion sans frais (0 Quota)</span>
+                      </div>
+                      <p className="text-carbon-400 text-[10px] pl-5 leading-relaxed">
+                        Cliquez sur le bouton <strong>Test Authentication (0 Units)</strong> ci-dessus. L'application vérifie instantanément la validité de la clé et l'obtention d'un jeton d'accès sans effectuer aucun appel Vision payant.
+                      </p>
+                    </div>
+
+                    <div className="p-2.5 rounded bg-accent-500/10 border border-accent-500/20 text-[10px] text-accent-200">
+                      <span className="font-semibold text-white block mb-0.5">💰 Tarifs et Quota Gratuit :</span>
+                      Google offre chaque mois civil <strong>1 000 requêtes gratuites ($0.00)</strong> sur l'API Web Detection. Au-delà, le tarif est de $3.50 par tranche de 1 000 requêtes (~0.0035 $ / photo). Le garde-fou local intégré de Photo Privateer bloque automatiquement tout scan qui dépasserait votre quota gratuit sans votre confirmation explicite.
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
 

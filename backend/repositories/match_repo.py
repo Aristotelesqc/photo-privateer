@@ -16,6 +16,7 @@ class MatchRepository:
             id=r["id"],
             image_id=r["image_id"],
             scan_session_id=r["scan_session_id"],
+            source_kind=r["source_kind"] if ("source_kind" in r.keys() and r["source_kind"]) else "PAGE",
             page_url=r["page_url"],
             page_title=r["page_title"],
             page_score=r["page_score"],
@@ -26,6 +27,7 @@ class MatchRepository:
             first_seen_at=r["first_seen_at"],
             last_seen_at=r["last_seen_at"],
             is_new=bool(r["is_new"]),
+            acknowledged_at=r["acknowledged_at"] if "acknowledged_at" in r.keys() else None,
             classification=r["classification"],
             classified_at=r["classified_at"],
             auto_classified_by_rule_id=r["auto_classified_by_rule_id"],
@@ -116,53 +118,57 @@ class MatchRepository:
         self,
         image_id: int,
         scan_session_id: Optional[int],
-        page_url: str,
-        page_title: Optional[str],
-        page_score: Optional[float],
         domain: str,
-        candidate_image_url: Optional[str],
         match_type: str,
         provider: str,
+        source_kind: str = "PAGE",
+        page_url: Optional[str] = None,
+        page_title: Optional[str] = None,
+        page_score: Optional[float] = None,
+        candidate_image_url: Optional[str] = None,
         default_classification: str = CLASS_UNREVIEWED,
         rule_id: Optional[int] = None,
     ) -> tuple[MatchOut, bool]:
-        """Upsert a match. Preserves prior classification and notes if match already existed.
-        Returns: (MatchOut, is_genuinely_new)
-        """
+        """Upsert a match. Preserves prior classification, human notes, and review status if known."""
         now = datetime.now(timezone.utc).isoformat()
         cur = self.conn.cursor()
 
-        # Check existing match
+        # Check existing match using deterministic identity that works even with NULL page_url or candidate_image_url
         cur.execute("""
-            SELECT id, classification, notes, auto_classified_by_rule_id
+            SELECT id, classification, notes, auto_classified_by_rule_id, is_new, acknowledged_at
             FROM matches
-            WHERE image_id = ? AND page_url = ? AND candidate_image_url IS ?
-        """, (image_id, page_url, candidate_image_url))
+            WHERE image_id = ? 
+              AND source_kind = ?
+              AND COALESCE(page_url, '') = COALESCE(?, '')
+              AND COALESCE(candidate_image_url, '') = COALESCE(?, '')
+        """, (image_id, source_kind, page_url, candidate_image_url))
         existing = cur.fetchone()
 
         if existing:
-            # Rediscovery of known match: update last_seen_at, scan_session_id, but PRESERVE user classification!
+            # Rediscovery: preserve user's human classification and notes!
+            # If already classified or acknowledged, do not re-flag as new.
+            is_new = 0 if (existing["classification"] != CLASS_UNREVIEWED or existing["acknowledged_at"] is not None) else existing["is_new"]
             cur.execute("""
                 UPDATE matches
                 SET last_seen_at = ?,
                     scan_session_id = ?,
                     page_title = COALESCE(?, page_title),
                     page_score = COALESCE(?, page_score),
-                    is_new = 0
+                    is_new = ?
                 WHERE id = ?
-            """, (now, scan_session_id, page_title, page_score, existing["id"]))
+            """, (now, scan_session_id, page_title, page_score, is_new, existing["id"]))
             return self.get_by_id(existing["id"]), False  # type: ignore
 
         # Genuinely new match
         cur.execute("""
             INSERT INTO matches (
-                image_id, scan_session_id, page_url, page_title, page_score,
+                image_id, scan_session_id, source_kind, page_url, page_title, page_score,
                 domain, candidate_image_url, match_type, provider,
                 first_seen_at, last_seen_at, is_new, classification,
                 classified_at, auto_classified_by_rule_id, notes
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, NULL)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, NULL)
         """, (
-            image_id, scan_session_id, page_url, page_title, page_score,
+            image_id, scan_session_id, source_kind, page_url, page_title, page_score,
             domain, candidate_image_url, match_type, provider,
             now, now, default_classification,
             now if default_classification != CLASS_UNREVIEWED else None,
@@ -176,11 +182,12 @@ class MatchRepository:
         match_id: int,
         classification: Optional[str] = None,
         notes: Optional[str] = None,
+        acknowledged: Optional[bool] = None,
     ) -> Optional[MatchOut]:
         cur = self.conn.cursor()
         now = datetime.now(timezone.utc).isoformat()
         fields = []
-        params = []
+        params: list[object] = []
 
         if classification is not None:
             fields.append("classification = ?")
@@ -189,6 +196,15 @@ class MatchRepository:
             params.append(now)
             # Manual user classification clears auto_classified_by_rule_id provenance
             fields.append("auto_classified_by_rule_id = NULL")
+            if classification != CLASS_UNREVIEWED:
+                fields.append("is_new = 0")
+                fields.append("acknowledged_at = COALESCE(acknowledged_at, ?)")
+                params.append(now)
+
+        if acknowledged is not None and acknowledged:
+            fields.append("is_new = 0")
+            fields.append("acknowledged_at = COALESCE(acknowledged_at, ?)")
+            params.append(now)
 
         if notes is not None:
             fields.append("notes = ?")
@@ -205,7 +221,6 @@ class MatchRepository:
         r = cur.fetchone()
         if r:
             image_id = r["image_id"]
-            # Recalculate match_count and unreviewed_count on images table
             cur.execute("""
                 UPDATE images
                 SET unreviewed_count = (
@@ -220,16 +235,18 @@ class MatchRepository:
         return self.get_by_id(match_id)
 
     def apply_rule_to_unreviewed_matches(self, domain: str, classification: str, rule_id: int) -> int:
-        """Applies a newly created domain rule to existing UNREVIEWED matches for that domain."""
+        """Applies a newly created domain rule to existing UNREVIEWED matches for that domain and its subdomains."""
         now = datetime.now(timezone.utc).isoformat()
         cur = self.conn.cursor()
+        # Matches exact domain OR subdomains (e.g. blog.foo.com for rule foo.com)
         cur.execute("""
             UPDATE matches
             SET classification = ?,
                 classified_at = ?,
                 auto_classified_by_rule_id = ?
-            WHERE domain = ? AND classification = 'UNREVIEWED'
-        """, (classification, now, rule_id, domain))
+            WHERE (domain = ? OR domain LIKE '%.' || ?) 
+              AND classification = 'UNREVIEWED'
+        """, (classification, now, rule_id, domain, domain))
         updated_count = cur.rowcount
 
         # Refresh affected images' match counts
@@ -238,6 +255,6 @@ class MatchRepository:
             SET unreviewed_count = (
                 SELECT COUNT(*) FROM matches WHERE matches.image_id = images.id AND classification = 'UNREVIEWED'
             )
-            WHERE id IN (SELECT DISTINCT image_id FROM matches WHERE domain = ?)
-        """, (domain,))
+            WHERE id IN (SELECT DISTINCT image_id FROM matches WHERE domain = ? OR domain LIKE '%.' || ?)
+        """, (domain, domain))
         return updated_count

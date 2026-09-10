@@ -9,9 +9,13 @@ Write-Host "===================================================" -ForegroundColo
 Write-Host "[1/4] Checking Python environment..." -ForegroundColor Yellow
 $pythonVersion = python --version 2>&1
 if ($LASTEXITCODE -ne 0) {
-    Write-Error "Python was not found. Please install Python 3.9 or higher and add it to PATH."
+    Write-Error "Python was not found. Please install Python 3.11 or higher and add it to PATH."
 }
 Write-Host "  Found: $pythonVersion" -ForegroundColor Green
+python -c "import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)"
+if ($LASTEXITCODE -ne 0) {
+    Write-Error "Photo Privateer requires Python 3.11 or higher. Found: $pythonVersion"
+}
 
 # 2. Install Python dependencies
 Write-Host "[2/4] Installing Python backend dependencies..." -ForegroundColor Yellow

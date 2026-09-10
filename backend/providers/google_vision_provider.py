@@ -102,56 +102,58 @@ class GoogleVisionSearchProvider(SearchProvider):
 
             web_detection = response.web_detection
             items: list[SearchResultItem] = []
-            seen_combos: set[tuple[str, Optional[str]]] = set()
+            seen_combos: set[tuple[Optional[str], Optional[str]]] = set()
 
             # 1. Pages with matching images
             if web_detection.pages_with_matching_images:
                 for page in web_detection.pages_with_matching_images:
-                    p_url = normalize_web_url(page.url)
+                    p_url = normalize_web_url(page.url) if page.url else None
                     p_title = page.page_title if page.page_title else None
                     p_score = float(page.score) if page.score else None
-                    domain = normalize_domain_from_url(p_url)
+                    domain = normalize_domain_from_url(p_url) if p_url else "unknown-domain"
 
-                    # Determine match type based on nested images
-                    candidate_urls = []
-                    match_type = "PAGE"
-
+                    # Normalize all matching images without dropping full vs partial
+                    candidate_pairs: list[tuple[Optional[str], str]] = []
                     if page.full_matching_images:
-                        match_type = "FULL"
                         for full_img in page.full_matching_images:
-                            candidate_urls.append(full_img.url)
-                    elif page.partial_matching_images:
-                        match_type = "PARTIAL"
+                            if full_img.url:
+                                candidate_pairs.append((full_img.url, "FULL"))
+                    if page.partial_matching_images:
                         for part_img in page.partial_matching_images:
-                            candidate_urls.append(part_img.url)
+                            if part_img.url:
+                                candidate_pairs.append((part_img.url, "PARTIAL"))
 
-                    if not candidate_urls:
-                        candidate_urls = [None]
+                    if not candidate_pairs:
+                        candidate_pairs.append((None, "PAGE"))
 
-                    for c_url in candidate_urls:
+                    for c_url, m_type in candidate_pairs:
                         combo = (p_url, c_url)
                         if combo not in seen_combos:
                             seen_combos.add(combo)
                             items.append(SearchResultItem(
+                                source_kind="PAGE",
                                 page_url=p_url,
                                 domain=domain,
-                                match_type=match_type,
+                                match_type=m_type,
                                 page_title=p_title,
                                 page_score=p_score,
                                 candidate_image_url=c_url,
                                 provider_metadata={"source": "pages_with_matching_images"},
                             ))
 
-            # 2. Full matching images without page wrapper
+            # 2. Full matching images without page wrapper (represented honestly as ASSET_ONLY)
             if web_detection.full_matching_images:
                 for img in web_detection.full_matching_images:
                     c_url = img.url
+                    if not c_url:
+                        continue
                     domain = normalize_domain_from_url(c_url)
-                    combo = (c_url, c_url)
+                    combo = (None, c_url)
                     if combo not in seen_combos:
                         seen_combos.add(combo)
                         items.append(SearchResultItem(
-                            page_url=c_url,
+                            source_kind="ASSET_ONLY",
+                            page_url=None,
                             domain=domain,
                             match_type="FULL",
                             page_title=None,
@@ -160,16 +162,19 @@ class GoogleVisionSearchProvider(SearchProvider):
                             provider_metadata={"source": "full_matching_images"},
                         ))
 
-            # 3. Partial matching images without page wrapper
+            # 3. Partial matching images without page wrapper (represented honestly as ASSET_ONLY)
             if web_detection.partial_matching_images:
                 for img in web_detection.partial_matching_images:
                     c_url = img.url
+                    if not c_url:
+                        continue
                     domain = normalize_domain_from_url(c_url)
-                    combo = (c_url, c_url)
+                    combo = (None, c_url)
                     if combo not in seen_combos:
                         seen_combos.add(combo)
                         items.append(SearchResultItem(
-                            page_url=c_url,
+                            source_kind="ASSET_ONLY",
+                            page_url=None,
                             domain=domain,
                             match_type="PARTIAL",
                             page_title=None,

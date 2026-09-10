@@ -46,6 +46,7 @@ class UsageRepository:
             estimated_cost, error_message
         ))
         call_id = cur.lastrowid
+        self.conn.commit()
         return self.get_call_by_id(call_id)  # type: ignore
 
     def get_call_by_id(self, call_id: int) -> Optional[ProviderCallOut]:
@@ -70,16 +71,17 @@ class UsageRepository:
         )
 
     def get_period_units(self, billing_period: str, provider: Optional[str] = None) -> int:
+        """Returns units consumed in billing period. Conservatively counts successful and remote attempts."""
         cur = self.conn.cursor()
         if provider:
             cur.execute("""
-                SELECT COALESCE(SUM(successful_units), 0)
+                SELECT COALESCE(SUM(CASE WHEN request_status IN ('SUCCESS', 'REMOTE_ERROR') THEN attempted_units ELSE 0 END), 0)
                 FROM provider_calls
                 WHERE billing_period = ? AND provider = ?
             """, (billing_period, provider))
         else:
             cur.execute("""
-                SELECT COALESCE(SUM(successful_units), 0)
+                SELECT COALESCE(SUM(CASE WHEN request_status IN ('SUCCESS', 'REMOTE_ERROR') THEN attempted_units ELSE 0 END), 0)
                 FROM provider_calls
                 WHERE billing_period = ?
             """, (billing_period,))
@@ -105,7 +107,7 @@ class UsageRepository:
         cur.execute("""
             SELECT 
                 COUNT(*) as total_calls,
-                COALESCE(SUM(successful_units), 0) as total_units
+                COALESCE(SUM(CASE WHEN request_status IN ('SUCCESS', 'REMOTE_ERROR') THEN attempted_units ELSE 0 END), 0) as total_units
             FROM provider_calls
         """)
         lifetime = cur.fetchone()
@@ -160,11 +162,46 @@ class UsageRepository:
         cur.execute("""
             INSERT INTO scan_sessions (
                 started_at, provider, total_images, processed_images,
-                successful_images, failed_images, status
-            ) VALUES (?, ?, ?, 0, 0, 0, 'RUNNING')
+                successful_images, failed_images, status, cancel_requested
+            ) VALUES (?, ?, ?, 0, 0, 0, 'RUNNING', 0)
         """, (now, provider, total_images))
         session_id = cur.lastrowid
+        self.conn.commit()
         return self.get_scan_session(session_id)  # type: ignore
+
+    def get_active_running_session(self) -> Optional[ScanSessionOut]:
+        """Returns currently active RUNNING session if one exists."""
+        cur = self.conn.cursor()
+        cur.execute("SELECT * FROM scan_sessions WHERE status = 'RUNNING' ORDER BY started_at DESC LIMIT 1")
+        r = cur.fetchone()
+        return self._row_to_scan_session(r) if r else None
+
+    def request_cancel_session(self, session_id: int) -> bool:
+        """Sets cooperative cancellation flag on running session."""
+        cur = self.conn.cursor()
+        cur.execute("UPDATE scan_sessions SET cancel_requested = 1 WHERE id = ? AND status = 'RUNNING'", (session_id,))
+        self.conn.commit()
+        return cur.rowcount > 0
+
+    def is_cancel_requested(self, session_id: int) -> bool:
+        cur = self.conn.cursor()
+        cur.execute("SELECT cancel_requested FROM scan_sessions WHERE id = ?", (session_id,))
+        r = cur.fetchone()
+        return bool(r["cancel_requested"]) if (r and "cancel_requested" in r.keys()) else False
+
+    def recover_interrupted_sessions(self) -> int:
+        """At startup, marks any dangling RUNNING sessions as INTERRUPTED."""
+        cur = self.conn.cursor()
+        now = datetime.now(timezone.utc).isoformat()
+        cur.execute("""
+            UPDATE scan_sessions
+            SET status = 'INTERRUPTED',
+                completed_at = ?,
+                notes = COALESCE(notes || '; ', '') || 'Interrupted by application shutdown/restart'
+            WHERE status = 'RUNNING'
+        """, (now,))
+        self.conn.commit()
+        return cur.rowcount
 
     def update_scan_session_progress(
         self,
@@ -176,7 +213,7 @@ class UsageRepository:
         notes: Optional[str] = None,
     ) -> None:
         cur = self.conn.cursor()
-        now = datetime.now(timezone.utc).isoformat() if status in ("COMPLETED", "CANCELLED", "FAILED") else None
+        now = datetime.now(timezone.utc).isoformat() if status in ("COMPLETED", "CANCELLED", "FAILED", "INTERRUPTED") else None
         
         fields = ["processed_images = ?", "successful_images = ?", "failed_images = ?"]
         params: list[object] = [processed, successful, failed]
@@ -194,13 +231,9 @@ class UsageRepository:
 
         params.append(session_id)
         cur.execute(f"UPDATE scan_sessions SET {', '.join(fields)} WHERE id = ?", tuple(params))
+        self.conn.commit()
 
-    def get_scan_session(self, session_id: int) -> Optional[ScanSessionOut]:
-        cur = self.conn.cursor()
-        cur.execute("SELECT * FROM scan_sessions WHERE id = ?", (session_id,))
-        r = cur.fetchone()
-        if not r:
-            return None
+    def _row_to_scan_session(self, r: sqlite3.Row) -> ScanSessionOut:
         return ScanSessionOut(
             id=r["id"],
             started_at=r["started_at"],
@@ -211,27 +244,20 @@ class UsageRepository:
             successful_images=r["successful_images"],
             failed_images=r["failed_images"],
             status=r["status"],
+            cancel_requested=bool(r["cancel_requested"]) if "cancel_requested" in r.keys() else False,
             notes=r["notes"],
         )
+
+    def get_scan_session(self, session_id: int) -> Optional[ScanSessionOut]:
+        cur = self.conn.cursor()
+        cur.execute("SELECT * FROM scan_sessions WHERE id = ?", (session_id,))
+        r = cur.fetchone()
+        return self._row_to_scan_session(r) if r else None
 
     def list_scan_sessions(self, limit: int = 20) -> list[ScanSessionOut]:
         cur = self.conn.cursor()
         cur.execute("SELECT * FROM scan_sessions ORDER BY started_at DESC LIMIT ?", (limit,))
-        return [
-            ScanSessionOut(
-                id=r["id"],
-                started_at=r["started_at"],
-                completed_at=r["completed_at"],
-                provider=r["provider"],
-                total_images=r["total_images"],
-                processed_images=r["processed_images"],
-                successful_images=r["successful_images"],
-                failed_images=r["failed_images"],
-                status=r["status"],
-                notes=r["notes"],
-            )
-            for r in cur.fetchall()
-        ]
+        return [self._row_to_scan_session(r) for r in cur.fetchall()]
 
     def record_scan_item(
         self,

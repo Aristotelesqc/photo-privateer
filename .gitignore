@@ -27,6 +27,8 @@ wheels/
 .pytest_cache/
 .coverage
 htmlcov/
+test-results/
+playwright-report/
 
 # Node & Frontend
 node_modules/

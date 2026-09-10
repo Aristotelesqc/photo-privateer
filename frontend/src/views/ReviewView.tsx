@@ -10,6 +10,8 @@ import {
   Filter,
   Search,
   Globe,
+  Eye,
+  ImageOff,
 } from 'lucide-react';
 import { MatchItem, ClassificationType } from '../types';
 import { fetchMatches, updateMatch, createRule } from '../api/client';
@@ -44,6 +46,13 @@ export const ReviewView: React.FC<ReviewViewProps> = ({
 
   // Side-by-side Inspection Modal State
   const [inspectingMatch, setInspectingMatch] = useState<MatchItem | null>(null);
+  const [inspectRemoteError, setInspectRemoteError] = useState(false);
+  const [inspectRemoteRevealed, setInspectRemoteRevealed] = useState(false);
+
+  useEffect(() => {
+    setInspectRemoteError(false);
+    setInspectRemoteRevealed(false);
+  }, [inspectingMatch?.id]);
 
   // Notes editing state
   const [editingNotes, setEditingNotes] = useState<{ [matchId: number]: string }>({});
@@ -278,6 +287,13 @@ export const ReviewView: React.FC<ReviewViewProps> = ({
                       {m.match_type} Match
                     </span>
 
+                    {/* Asset-only badge if no page context */}
+                    {m.source_kind === 'ASSET_ONLY' && (
+                      <span className="px-1.5 py-0.2 rounded text-[9px] font-mono uppercase bg-amber-500/10 text-amber-300 border border-amber-500/30">
+                        Asset Only
+                      </span>
+                    )}
+
                     {/* New Badge */}
                     {m.is_new && (
                       <span className="px-1.5 py-0.2 rounded text-[9px] font-bold bg-accent-500/20 text-accent-300 border border-accent-500/30">
@@ -294,21 +310,35 @@ export const ReviewView: React.FC<ReviewViewProps> = ({
                   </div>
 
                   {/* Page Title */}
-                  <h4 className="text-xs font-medium text-carbon-100 line-clamp-1" title={m.page_title || m.page_url}>
-                    {m.page_title || 'Untitled Web Page'}
+                  <h4 className="text-xs font-medium text-carbon-100 line-clamp-1" title={m.page_title || m.page_url || m.candidate_image_url || 'Discovered Asset'}>
+                    {m.page_title || (m.source_kind === 'ASSET_ONLY' ? 'Standalone Image Asset' : 'Untitled Web Page')}
                   </h4>
 
                   {/* Page URL & Open Tab */}
                   <div className="flex items-center gap-2 text-[11px] font-mono text-carbon-400 truncate">
-                    <a
-                      href={m.page_url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-accent-400 hover:text-accent-300 hover:underline truncate inline-flex items-center gap-1"
-                    >
-                      <span>{m.page_url}</span>
-                      <ExternalLink className="w-2.5 h-2.5 shrink-0" />
-                    </a>
+                    {m.page_url ? (
+                      <a
+                        href={m.page_url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-accent-400 hover:text-accent-300 hover:underline truncate inline-flex items-center gap-1"
+                      >
+                        <span>{m.page_url}</span>
+                        <ExternalLink className="w-2.5 h-2.5 shrink-0" />
+                      </a>
+                    ) : m.candidate_image_url ? (
+                      <a
+                        href={m.candidate_image_url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-accent-400 hover:text-accent-300 hover:underline truncate inline-flex items-center gap-1"
+                      >
+                        <span>Direct Image Asset: {m.candidate_image_url}</span>
+                        <ExternalLink className="w-2.5 h-2.5 shrink-0" />
+                      </a>
+                    ) : (
+                      <span className="text-carbon-500 italic">No web URL provided</span>
+                    )}
                   </div>
 
                   {/* Timestamps & Photo Ref */}
@@ -506,40 +536,83 @@ export const ReviewView: React.FC<ReviewViewProps> = ({
               <div className="flex flex-col gap-2 bg-carbon-950 p-3 rounded-lg border border-carbon-800">
                 <div className="flex items-center justify-between text-xs">
                   <span className="font-mono text-accent-400 font-semibold tracking-wide uppercase text-[10px]">
-                    Found Web Match
+                    {inspectingMatch.source_kind === 'ASSET_ONLY' ? 'Discovered Asset' : 'Found Web Match'}
                   </span>
-                  <a
-                    href={inspectingMatch.page_url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-accent-400 hover:text-accent-300 hover:underline flex items-center gap-1 text-[11px] font-mono"
-                  >
-                    <span>Open Web Page</span>
-                    <ExternalLink className="w-3 h-3" />
-                  </a>
+                  {inspectingMatch.page_url ? (
+                    <a
+                      href={inspectingMatch.page_url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-accent-400 hover:text-accent-300 hover:underline flex items-center gap-1 text-[11px] font-mono"
+                    >
+                      <span>Open Web Page</span>
+                      <ExternalLink className="w-3 h-3" />
+                    </a>
+                  ) : inspectingMatch.candidate_image_url ? (
+                    <a
+                      href={inspectingMatch.candidate_image_url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-accent-400 hover:text-accent-300 hover:underline flex items-center gap-1 text-[11px] font-mono"
+                    >
+                      <span>Open Image Asset</span>
+                      <ExternalLink className="w-3 h-3" />
+                    </a>
+                  ) : null}
                 </div>
-                <div className="flex-1 min-h-[280px] max-h-[50vh] flex items-center justify-center overflow-hidden rounded bg-carbon-900/60 border border-carbon-800/80">
-                  {inspectingMatch.candidate_image_url ? (
+                <div className="flex-1 min-h-[280px] max-h-[50vh] flex items-center justify-center overflow-hidden rounded bg-carbon-900/60 border border-carbon-800/80 p-2">
+                  {!inspectingMatch.candidate_image_url ? (
+                    <div className="text-carbon-500 text-xs font-mono p-4 text-center">
+                      No candidate image URL provided by provider. Page match only.
+                    </div>
+                  ) : !inspectRemoteRevealed ? (
+                    <div className="flex flex-col items-center justify-center p-6 text-center space-y-3">
+                      <div className="w-10 h-10 rounded-full bg-carbon-900 border border-carbon-800 flex items-center justify-center text-carbon-400">
+                        <Eye className="w-5 h-5 text-accent-400" />
+                      </div>
+                      <div>
+                        <p className="text-xs font-medium text-carbon-200">Remote Match Image</p>
+                        <p className="text-[11px] text-carbon-400 max-w-xs mt-0.5">
+                          Hosted on <span className="font-mono text-carbon-300">{inspectingMatch.domain}</span>. Privacy protection active (no referrer sent).
+                        </p>
+                      </div>
+                      <button
+                        onClick={() => setInspectRemoteRevealed(true)}
+                        className="px-3 py-1.5 rounded bg-accent-600 hover:bg-accent-500 text-white text-xs font-semibold transition-all active:scale-98"
+                      >
+                        Load Discovered Image
+                      </button>
+                    </div>
+                  ) : inspectRemoteError ? (
+                    <div className="text-carbon-400 text-xs font-mono p-6 text-center space-y-2">
+                      <ImageOff className="w-6 h-6 mx-auto text-carbon-600" />
+                      <p className="text-carbon-300">Remote candidate image could not be loaded directly.</p>
+                      <p className="text-[10px] text-carbon-500">The remote host may block direct hotlinking.</p>
+                      {(inspectingMatch.page_url || inspectingMatch.candidate_image_url) && (
+                        <a
+                          href={inspectingMatch.page_url || inspectingMatch.candidate_image_url || '#'}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1 text-accent-400 hover:underline text-[11px] pt-1"
+                        >
+                          <span>{inspectingMatch.page_url ? 'Open Web Page' : 'Open Image Asset'}</span>
+                          <ExternalLink className="w-3 h-3" />
+                        </a>
+                      )}
+                    </div>
+                  ) : (
                     <img
                       src={inspectingMatch.candidate_image_url}
                       alt="Discovered match preview"
                       referrerPolicy="no-referrer"
                       className="max-h-[48vh] max-w-full object-contain rounded"
-                      onError={(e) => {
-                        (e.currentTarget as HTMLElement).style.display = 'none';
-                        e.currentTarget.parentElement!.innerHTML =
-                          '<div class="text-carbon-500 text-xs font-mono p-4 text-center">Remote candidate preview could not be loaded directly (blocked by source host). Click "Open Web Page" to view live.</div>';
-                      }}
+                      onError={() => setInspectRemoteError(true)}
                     />
-                  ) : (
-                    <div className="text-carbon-500 text-xs font-mono p-4 text-center">
-                      No candidate image URL provided by provider. Page match only.
-                    </div>
                   )}
                 </div>
                 <div className="text-[11px] font-mono text-carbon-400 truncate pt-1">
                   <p className="text-carbon-200 line-clamp-1">{inspectingMatch.page_title || 'Untitled Page'}</p>
-                  <p className="text-carbon-500 truncate text-[10px]">{inspectingMatch.page_url}</p>
+                  <p className="text-carbon-500 truncate text-[10px]">{inspectingMatch.page_url || inspectingMatch.candidate_image_url}</p>
                 </div>
               </div>
             </div>

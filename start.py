@@ -1,9 +1,11 @@
 """Photo Privateer local application launcher."""
 from __future__ import annotations
 
+import argparse
 import os
 import sys
 import time
+import urllib.request
 import webbrowser
 import threading
 from pathlib import Path
@@ -11,9 +13,9 @@ from pathlib import Path
 WORKSPACE_ROOT = Path(__file__).resolve().parent
 
 def check_environment():
-    # 1. Verify Python version
-    if sys.version_info < (3, 9):
-        print("ERROR: Photo Privateer requires Python 3.9 or higher.")
+    # 1. Verify Python version (strictly Python 3.11+)
+    if sys.version_info < (3, 11):
+        print(f"ERROR: Photo Privateer requires Python 3.11 or higher. Running: {sys.version}")
         sys.exit(1)
 
     # 2. Verify backend dependencies
@@ -43,16 +45,32 @@ def check_environment():
             print(f"Could not build frontend automatically: {e}")
             print("Please run 'npm install && npm run build' inside frontend/.")
 
-def open_browser_delayed(url: str, delay_seconds: float = 1.2):
-    def _open():
-        time.sleep(delay_seconds)
-        print(f"Opening Photo Privateer in default browser: {url}")
-        webbrowser.open_new_tab(url)
-    
-    t = threading.Thread(target=_open, daemon=True)
+def wait_for_server_and_open_browser(url: str, timeout: float = 15.0):
+    """Polls the local server endpoint until it is accepting connections, then opens the browser."""
+    def _poll_and_open():
+        start_time = time.time()
+        while time.time() - start_time < timeout:
+            try:
+                req = urllib.request.Request(url, headers={"User-Agent": "PhotoPrivateerBootstrap/1.0"})
+                with urllib.request.urlopen(req, timeout=1.0) as resp:
+                    if resp.status in (200, 304):
+                        print(f"Server is ready. Opening Photo Privateer in default browser: {url}")
+                        webbrowser.open_new_tab(url)
+                        return
+            except Exception:
+                time.sleep(0.2)
+        print(f"Notice: Server startup took longer than {timeout}s. You can open manually at: {url}")
+
+    t = threading.Thread(target=_poll_and_open, daemon=True, name="browser-opener")
     t.start()
 
 def main():
+    parser = argparse.ArgumentParser(description="Photo Privateer Desktop Server")
+    parser.add_argument("--no-browser", action="store_true", help="Start server without launching a web browser")
+    parser.add_argument("--port", type=int, default=None, help="Override HTTP port")
+    parser.add_argument("--host", type=str, default=None, help="Override HTTP host binding")
+    args = parser.parse_args()
+
     check_environment()
 
     # Import backend configuration
@@ -60,23 +78,29 @@ def main():
     from backend.config import HOST, PORT
     import uvicorn
 
-    url = f"http://{HOST}:{PORT}/"
+    bind_host = args.host or HOST
+    bind_port = args.port or PORT
+
+    url = f"http://{bind_host}:{bind_port}/"
     print("=" * 60)
     print("  Photo Privateer — Local Reverse Image Search Discovery")
     print("=" * 60)
-    print(f"  * Binding strictly to: {HOST}")
+    print(f"  * Binding strictly to: {bind_host}")
     print(f"  * Local Web URL:       {url}")
     print("  * Press Ctrl+C in this console to stop the server.")
     print("=" * 60)
 
-    # Launch browser automatically
-    open_browser_delayed(url)
+    # Launch browser only once server is verified ready
+    if not args.no_browser:
+        wait_for_server_and_open_browser(url)
+    else:
+        print("  * Running in headless mode (--no-browser).")
 
     # Start FastAPI
     uvicorn.run(
         "backend.main:app",
-        host=HOST,
-        port=PORT,
+        host=bind_host,
+        port=bind_port,
         log_level="info",
         reload=False,
     )

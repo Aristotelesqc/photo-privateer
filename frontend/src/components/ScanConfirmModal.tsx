@@ -48,6 +48,11 @@ export const ScanConfirmModal: React.FC<ScanConfirmModalProps> = ({
             <div className="bg-carbon-950 border border-carbon-800 rounded-lg p-2.5">
               <span className="text-[11px] text-carbon-400">Selected Photos</span>
               <p className="text-xl font-bold text-white font-mono mt-0.5 tabular-nums">{projection.selected_count}</p>
+              {projection.missing_count > 0 && (
+                <p className="text-[10px] text-amber-400 font-mono mt-0.5">
+                  {projection.usable_count} available ({projection.missing_count} missing)
+                </p>
+              )}
             </div>
             <div className="bg-carbon-950 border border-carbon-800 rounded-lg p-2.5">
               <span className="text-[11px] text-carbon-400">Estimated Cost</span>

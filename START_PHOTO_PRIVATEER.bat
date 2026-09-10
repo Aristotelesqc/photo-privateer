@@ -6,15 +6,24 @@ echo ===================================================
 echo   Photo Privateer - Starting Local Application
 echo ===================================================
 
-where python >nul 2>nul
+set "PYTHON_EXE=python"
+if exist ".venv\Scripts\python.exe" (
+    set "PYTHON_EXE=.venv\Scripts\python.exe"
+    echo   [INFO] Using virtual environment: .venv
+) else if exist "venv\Scripts\python.exe" (
+    set "PYTHON_EXE=venv\Scripts\python.exe"
+    echo   [INFO] Using virtual environment: venv
+)
+
+where %PYTHON_EXE% >nul 2>nul
 if %ERRORLEVEL% NEQ 0 (
-    echo [ERROR] Python is not found on your PATH.
-    echo Please install Python 3.9+ or run setup.ps1.
+    echo [ERROR] Python is not found on your PATH or in .venv.
+    echo Please install Python 3.11+ or run setup.ps1.
     pause
     exit /b 1
 )
 
-python start.py
+%PYTHON_EXE% start.py %*
 if %ERRORLEVEL% NEQ 0 (
     echo.
     echo [ERROR] Application exited with an error.

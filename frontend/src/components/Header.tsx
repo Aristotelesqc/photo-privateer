@@ -56,6 +56,7 @@ export const Header: React.FC<HeaderProps> = ({
         <nav className="flex items-center gap-1 bg-carbon-900 p-0.5 rounded-lg border border-carbon-800 text-xs">
           <button
             onClick={() => setActiveTab('library')}
+            data-testid="nav-library"
             className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md font-medium transition-all ${
               activeTab === 'library'
                 ? 'bg-carbon-800 text-white shadow-xs border border-carbon-700/60'
@@ -68,6 +69,7 @@ export const Header: React.FC<HeaderProps> = ({
 
           <button
             onClick={() => setActiveTab('review')}
+            data-testid="nav-review"
             className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md font-medium transition-all ${
               activeTab === 'review'
                 ? 'bg-carbon-800 text-white shadow-xs border border-carbon-700/60'
@@ -85,6 +87,7 @@ export const Header: React.FC<HeaderProps> = ({
 
           <button
             onClick={() => setActiveTab('usage')}
+            data-testid="nav-usage"
             className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md font-medium transition-all ${
               activeTab === 'usage'
                 ? 'bg-carbon-800 text-white shadow-xs border border-carbon-700/60'
@@ -102,6 +105,7 @@ export const Header: React.FC<HeaderProps> = ({
 
           <button
             onClick={() => setActiveTab('settings')}
+            data-testid="nav-settings"
             className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md font-medium transition-all ${
               activeTab === 'settings'
                 ? 'bg-carbon-800 text-white shadow-xs border border-carbon-700/60'

@@ -34,6 +34,19 @@ async def lifespan(app: FastAPI):
     logger.info("Initializing Photo Privateer SQLite database...")
     init_db()
     logger.info("Database initialized successfully.")
+    
+    # Startup crash recovery: mark dangling RUNNING sessions as INTERRUPTED
+    try:
+        from backend.database import get_connection
+        from backend.repositories.usage_repo import UsageRepository
+        with get_connection() as conn:
+            repo = UsageRepository(conn)
+            recovered = repo.recover_interrupted_sessions()
+            if recovered > 0:
+                logger.warning(f"Recovered {recovered} dangling scan session(s) marked as INTERRUPTED.")
+    except Exception as e:
+        logger.error(f"Failed to recover interrupted scan sessions: {e}")
+
     yield
     logger.info("Photo Privateer shutting down.")
 

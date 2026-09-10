@@ -23,8 +23,8 @@ def normalize_web_url(url: str) -> str:
     """Normalizes URL by stripping common marketing tracker parameters while preserving path."""
     try:
         parsed = urlparse(url)
-        # Filter tracking params
-        tracking_prefixes = {"utm_", "fbclid", "gclid", "msclkid", "ref", "mc_eid"}
+        # Filter tracking params - only genuine marketing trackers, never semantic query parameters
+        tracking_prefixes = {"utm_", "fbclid", "gclid", "msclkid"}
         query_pairs = parse_qsl(parsed.query, keep_blank_values=True)
         filtered_query = [
             (k, v) for k, v in query_pairs
@@ -50,9 +50,10 @@ def normalize_web_url(url: str) -> str:
 
 @dataclass
 class SearchResultItem:
-    page_url: str
     domain: str
     match_type: str  # "FULL", "PARTIAL", "PAGE", "OTHER"
+    source_kind: str = "PAGE"  # "PAGE" or "ASSET_ONLY"
+    page_url: Optional[str] = None
     page_title: Optional[str] = None
     page_score: Optional[float] = None
     candidate_image_url: Optional[str] = None

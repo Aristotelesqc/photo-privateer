@@ -56,3 +56,24 @@ def validate_folder(payload: FolderValidateRequest):
         return FolderValidateResponse(valid=True, resolved_path=str(p), is_dir=True, error=None)
     except Exception as e:
         return FolderValidateResponse(valid=False, resolved_path=payload.path, is_dir=False, error=str(e))
+
+class TestGoogleAuthRequest(BaseModel):
+    credentials_path: str | None = None
+
+class TestGoogleAuthResponse(BaseModel):
+    success: bool
+    auth_mode: str
+    message: str | None = None
+    error: str | None = None
+    project_id: str | None = None
+    service_account_email: str | None = None
+
+@router.post("/test-google-auth", response_model=TestGoogleAuthResponse)
+def test_google_auth(
+    payload: TestGoogleAuthRequest | None = None,
+    repo: SettingsRepository = Depends(get_settings_repo),
+):
+    path_override = payload.credentials_path if payload else None
+    result = repo.test_google_auth(path_override)
+    return TestGoogleAuthResponse(**result)
+

@@ -51,12 +51,31 @@ def update_library(library_id: int, payload: LibraryUpdate, repo: LibraryReposit
         raise HTTPException(status_code=404, detail="Library not found")
     return repo.update(library_id, name=payload.name, enabled=payload.enabled, recursive=payload.recursive)
 
-@router.delete("/{library_id}")
-def delete_library(library_id: int, repo: LibraryRepository = Depends(get_library_repo)):
-    success = repo.delete(library_id)
+@router.post("/{library_id}/archive", response_model=LibraryOut)
+def archive_library(library_id: int, repo: LibraryRepository = Depends(get_library_repo)):
+    success = repo.archive(library_id)
     if not success:
         raise HTTPException(status_code=404, detail="Library not found")
-    return {"status": "success", "message": "Library removed"}
+    return repo.get_by_id(library_id)
+
+@router.post("/{library_id}/unarchive", response_model=LibraryOut)
+def unarchive_library(library_id: int, repo: LibraryRepository = Depends(get_library_repo)):
+    success = repo.unarchive(library_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="Library not found")
+    return repo.get_by_id(library_id)
+
+@router.delete("/{library_id}")
+def delete_library(
+    library_id: int,
+    purge_permanently: bool = False,
+    repo: LibraryRepository = Depends(get_library_repo),
+):
+    success = repo.delete(library_id, purge_permanently=purge_permanently)
+    if not success:
+        raise HTTPException(status_code=404, detail="Library not found")
+    action = "purged permanently" if purge_permanently else "archived (monitoring stopped)"
+    return {"status": "success", "message": f"Library {action}"}
 
 @router.post("/{library_id}/index")
 def index_library(library_id: int, indexer: LibraryIndexer = Depends(get_library_indexer)):

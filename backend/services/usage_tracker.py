@@ -14,16 +14,21 @@ class UsageTracker:
     def prepare_scan_projection(
         self,
         image_count: int,
+        usable_count: Optional[int] = None,
         provider_override: Optional[str] = None,
     ) -> ScanPrepareResponse:
         settings = self.settings_repo.get_app_settings()
         provider = provider_override or settings.active_provider
         current_period = get_current_billing_period()
+        effective_count = usable_count if usable_count is not None else image_count
+        missing_count = max(0, image_count - effective_count)
 
         # If mock provider, costs and billable units are 0
         if provider == "mock":
             return ScanPrepareResponse(
                 selected_count=image_count,
+                usable_count=effective_count,
+                missing_count=missing_count,
                 provider="mock",
                 current_month=current_period,
                 units_used_this_month=0,
@@ -38,14 +43,14 @@ class UsageTracker:
 
         # Real provider usage calculation
         current_used = self.usage_repo.get_period_units(current_period, provider="google_vision")
-        projected_total = current_used + image_count
+        projected_total = current_used + effective_count
         allowance = settings.free_tier_monthly_units
         remaining_free_before = max(0, allowance - current_used)
 
         # How many units in this pending scan fall beyond the free allowance?
         if current_used >= allowance:
             # Already in paid territory
-            billable_in_this_scan = image_count
+            billable_in_this_scan = effective_count
         else:
             # Partially or fully in free tier
             billable_in_this_scan = max(0, projected_total - allowance)
@@ -63,6 +68,8 @@ class UsageTracker:
 
         return ScanPrepareResponse(
             selected_count=image_count,
+            usable_count=effective_count,
+            missing_count=missing_count,
             provider="google_vision",
             current_month=current_period,
             units_used_this_month=current_used,
