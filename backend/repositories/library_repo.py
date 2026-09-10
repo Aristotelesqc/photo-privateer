@@ -198,9 +198,13 @@ class LibraryRepository:
             image_ids = [r["id"] if isinstance(r, sqlite3.Row) else r[0] for r in image_rows]
             sha_hashes = [r["sha256"] if isinstance(r, sqlite3.Row) else r[1] for r in image_rows]
 
+            candidate_session_ids = set()
             if image_ids:
                 for chunk in chunked(image_ids, 500):
                     placeholders = ",".join("?" for _ in chunk)
+                    # Track sessions associated with these images before item deletion
+                    cur.execute(f"SELECT DISTINCT scan_session_id FROM scan_items WHERE image_id IN ({placeholders}) AND scan_session_id IS NOT NULL", tuple(chunk))
+                    candidate_session_ids.update(r["scan_session_id"] if isinstance(r, sqlite3.Row) else r[0] for r in cur.fetchall())
                     # Nullify provider_calls image reference so history is preserved without FK collision
                     cur.execute(f"UPDATE provider_calls SET image_id = NULL WHERE image_id IN ({placeholders})", tuple(chunk))
                     # Delete matches associated with these images
@@ -213,11 +217,15 @@ class LibraryRepository:
             cur.execute("DELETE FROM libraries WHERE id = ?", (library_id,))
             lib_deleted = cur.rowcount > 0
 
-            # Clean up empty scan sessions whose items were all purged
-            cur.execute("""
-                DELETE FROM scan_sessions
-                WHERE id NOT IN (SELECT DISTINCT scan_session_id FROM scan_items WHERE scan_session_id IS NOT NULL)
-            """)
+            # Clean up empty scan sessions that belonged to purged images and are not active RUNNING sessions
+            if candidate_session_ids:
+                sess_placeholders = ",".join("?" for _ in candidate_session_ids)
+                cur.execute(f"""
+                    DELETE FROM scan_sessions
+                    WHERE id IN ({sess_placeholders})
+                      AND status != 'RUNNING'
+                      AND id NOT IN (SELECT DISTINCT scan_session_id FROM scan_items WHERE scan_session_id IS NOT NULL)
+                """, tuple(candidate_session_ids))
             self.conn.commit()
 
             # Evict associated cached thumbnails from disk

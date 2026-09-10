@@ -74,7 +74,10 @@ def archive_library(library_id: int, repo: LibraryRepository = Depends(get_libra
 
 @router.post("/{library_id}/unarchive", response_model=LibraryOut)
 def unarchive_library(library_id: int, repo: LibraryRepository = Depends(get_library_repo)):
-    success = repo.unarchive(library_id)
+    try:
+        success = repo.unarchive(library_id)
+    except ValueError as err:
+        raise HTTPException(status_code=400, detail=str(err))
     if not success:
         raise HTTPException(status_code=404, detail="Library not found")
     return repo.get_by_id(library_id)

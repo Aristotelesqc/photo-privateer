@@ -14,7 +14,7 @@ import sqlite3
 import threading
 import time
 import shutil
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from unittest.mock import MagicMock
 import pytest
@@ -525,11 +525,15 @@ def test_scan_worker_zombie_session_auto_recovery(repos, sample_images_dir: Path
     images, _ = img_repo.list_images(library_id=lib.id)
     assert len(images) >= 1
 
-    # Simulate an abandoned / crashed scan session that was left RUNNING
+    # Simulate an abandoned / crashed scan session that was left RUNNING in the past
     zombie = usage_repo.create_scan_session(
         provider="mock",
         total_images=5,
     )
+    past_started = (datetime.now(timezone.utc) - timedelta(minutes=1)).isoformat()
+    usage_repo.conn.execute("UPDATE scan_sessions SET started_at = ? WHERE id = ?", (past_started, zombie.id))
+    usage_repo.conn.commit()
+
     # Ensure no worker thread is alive for this session
     for t in threading.enumerate():
         if t.name == f"scan-worker-{zombie.id}" and t.is_alive():
@@ -601,6 +605,20 @@ def test_library_purge_cleans_empty_scan_sessions_and_thumbnails(repos, temp_dir
         image_id=image.id,
         status="SUCCESS",
     )
+    usage_repo.update_scan_session_progress(
+        session_id=session.id,
+        processed=1,
+        successful=1,
+        failed=0,
+        status="COMPLETED",
+    )
+
+    # Create an unrelated active RUNNING scan session with 0 items
+    active_unrelated = usage_repo.create_scan_session(
+        provider="mock",
+        total_images=5,
+    )
+    assert active_unrelated.status == "RUNNING"
 
     # Purge the library
     lib_repo.purge(lib.id)
@@ -611,8 +629,11 @@ def test_library_purge_cleans_empty_scan_sessions_and_thumbnails(repos, temp_dir
     # Invariant 2: Thumbnail file unlinked from disk
     assert not thumb_path.exists()
 
-    # Invariant 3: Empty scan session pruned
+    # Invariant 3: Empty scan session associated with purged image is pruned
     assert usage_repo.get_scan_session(session.id) is None
+
+    # Invariant 4: Unrelated in-flight / empty session is NOT pruned
+    assert usage_repo.get_scan_session(active_unrelated.id) is not None
 
 
 def test_unarchive_rejects_overlapping_active_library(repos, sample_images_dir: Path):
@@ -639,8 +660,8 @@ def test_unarchive_rejects_overlapping_active_library(repos, sample_images_dir: 
         lib_repo.unarchive(lib_a_id)
 
 
-def test_migration_007_preserves_legacy_manual_projects(temp_dir: Path):
-    """Verifies that migration 007 migrates non-empty legacy project values to project_source = 'manual'."""
+def test_migration_007_defaults_project_source_to_auto(temp_dir: Path):
+    """Verifies that migration 007 defaults legacy project records to project_source = 'auto'."""
     from backend.migrations.runner import run_migrations, MIGRATIONS
 
     db_file = temp_dir / "migration_007_test.sqlite"
@@ -670,12 +691,12 @@ def test_migration_007_preserves_legacy_manual_projects(temp_dir: Path):
     # Now run all migrations through runner
     run_migrations(conn)
 
-    # Check that image 1 now has project_source = 'manual'
+    # Check that image 1 now has project_source = 'auto'
     cur = conn.cursor()
     cur.execute("SELECT project, project_source FROM images WHERE id = 1")
     row = cur.fetchone()
     assert row["project"] == "Summer Wedding"
-    assert row["project_source"] == "manual"
+    assert row["project_source"] == "auto"
     conn.close()
 
 
@@ -751,3 +772,56 @@ def test_csrf_origin_protection_blocks_cross_origin_mutations(client, repos, sam
     # 4. Safe read GET with cross-origin is permitted
     res4 = client.get("/api/photos", headers={"Origin": "http://evil.com"})
     assert res4.status_code == 200
+
+
+def test_unarchive_api_returns_400_on_overlap(client, repos, sample_images_dir: Path):
+    """Verifies that attempting to unarchive a library whose path overlaps an active library returns HTTP 400."""
+    lib_repo = repos["lib_repo"]
+    active_lib = lib_repo.create(path=str(sample_images_dir), name="ActiveLib")
+
+    # Insert archived subfolder library directly
+    subfolder = sample_images_dir / "api_overlap_subfolder"
+    subfolder.mkdir(exist_ok=True)
+    cur = lib_repo.conn.cursor()
+    cur.execute(
+        "INSERT INTO libraries (path, name, is_archived, enabled, created_at) VALUES (?, 'ArchivedOverlap', 1, 0, datetime('now'))",
+        (str(subfolder),),
+    )
+    archived_id = cur.lastrowid
+    lib_repo.conn.commit()
+
+    # Call API to unarchive
+    res = client.post(f"/api/libraries/{archived_id}/unarchive")
+    assert res.status_code == 400
+    assert "overlaps with active library" in res.json()["detail"]
+
+
+def test_zombie_recovery_skips_recent_sessions(repos, sample_images_dir: Path):
+    """Verifies that validate_scan_request does not auto-fail a freshly created scan session (< 5 seconds old)."""
+    lib_repo = repos["lib_repo"]
+    indexer = repos["indexer"]
+    usage_repo = repos["usage_repo"]
+    scan_engine = repos["scan_engine"]
+
+    lib = lib_repo.create(path=str(sample_images_dir), name="FreshSessionLib")
+    indexer.index_library(lib.id)
+    images, _ = repos["img_repo"].list_images(library_id=lib.id)
+
+    # Create a brand new session with current timestamp
+    fresh_session = usage_repo.create_scan_session(
+        provider="mock",
+        total_images=2,
+    )
+    assert fresh_session.status == "RUNNING"
+
+    # Immediately validating a new scan request should detect conflict and NOT recover the fresh session
+    with pytest.raises(Exception) as exc_info:
+        scan_engine.validate_scan_request(
+            image_ids=[images[0].id],
+            provider_override="mock",
+        )
+    assert "Another scan session" in str(exc_info.value)
+
+    # Verify session was NOT transitioned to FAILED
+    session_after = usage_repo.get_scan_session(fresh_session.id)
+    assert session_after.status == "RUNNING"

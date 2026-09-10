@@ -5,6 +5,7 @@ import logging
 import os
 import sqlite3
 import threading
+from datetime import datetime, timezone
 from typing import Optional, Callable
 from pathlib import Path
 
@@ -20,6 +21,8 @@ from backend.models import ScanSessionOut, ImageOut
 from backend.config import CLASS_UNREVIEWED
 
 logger = logging.getLogger(__name__)
+
+_scan_start_lock = threading.Lock()
 
 class ScanConflictError(ValueError):
     """Raised when an attempt is made to start a scan while another is already running."""
@@ -68,22 +71,37 @@ class ScanEngine:
             worker_name = f"scan-worker-{active.id}"
             is_alive = any(t.name == worker_name and t.is_alive() for t in threading.enumerate())
             if not is_alive:
-                logger.warning(
-                    f"Dangling RUNNING scan session #{active.id} detected without active worker thread. Auto-recovering to FAILED."
-                )
-                try:
-                    self.usage_repo.update_scan_session_progress(
-                        session_id=active.id,
-                        processed=active.processed_images,
-                        successful=active.successful_images,
-                        failed=active.failed_images,
-                        status="FAILED",
-                        notes="Auto-recovered from crashed worker thread.",
+                # Guard against race conditions with freshly launched sessions:
+                # Only auto-recover if the session was started more than 5 seconds ago
+                is_stale = True
+                if active.started_at:
+                    try:
+                        started = datetime.fromisoformat(active.started_at)
+                        if started.tzinfo is None:
+                            started = started.replace(tzinfo=timezone.utc)
+                        age_sec = (datetime.now(timezone.utc) - started).total_seconds()
+                        if age_sec < 5.0:
+                            is_stale = False
+                    except Exception:
+                        pass
+
+                if is_stale:
+                    logger.warning(
+                        f"Dangling RUNNING scan session #{active.id} detected without active worker thread. Auto-recovering to FAILED."
                     )
-                    self.usage_repo.conn.commit()
-                    active = None
-                except Exception as exc:
-                    logger.error(f"Failed to auto-recover dangling session #{active.id}: {exc}")
+                    try:
+                        self.usage_repo.update_scan_session_progress(
+                            session_id=active.id,
+                            processed=active.processed_images,
+                            successful=active.successful_images,
+                            failed=active.failed_images,
+                            status="FAILED",
+                            notes="Auto-recovered from crashed worker thread.",
+                        )
+                        self.usage_repo.conn.commit()
+                        active = None
+                    except Exception as exc:
+                        logger.error(f"Failed to auto-recover dangling session #{active.id}: {exc}")
 
             if active:
                 raise ScanConflictError(
@@ -156,59 +174,60 @@ class ScanEngine:
         force_override_guard: bool = False,
     ) -> ScanSessionOut:
         """Validates request, commits ScanSession to SQLite immediately, and spawns the local background worker."""
-        usable_images, missing_ids = self.validate_scan_request(
-            image_ids=image_ids,
-            provider_override=provider_override,
-            force_override_guard=force_override_guard,
-        )
-
-        settings = self.settings_repo.get_app_settings()
-        provider_id = provider_override or settings.active_provider
-        provider = get_provider(
-            provider_id=provider_id,
-            credentials_path=settings.google_credentials_path,
-        )
-
-        note_str = f"Skipped {len(missing_ids)} missing files." if missing_ids else None
-
-        # Create session and commit
-        try:
-            session = self.usage_repo.create_scan_session(
-                provider=provider.display_name,
-                total_images=len(usable_images),
-            )
-        except sqlite3.IntegrityError as e:
-            raise ScanConflictError(
-                "Another scan session is currently running. Single active scan enforced."
-            ) from e
-
-        if note_str:
-            self.usage_repo.update_scan_session_progress(
-                session_id=session.id,
-                processed=0,
-                successful=0,
-                failed=0,
-                notes=note_str,
+        with _scan_start_lock:
+            usable_images, missing_ids = self.validate_scan_request(
+                image_ids=image_ids,
+                provider_override=provider_override,
+                force_override_guard=force_override_guard,
             )
 
-        # Spawn local daemon thread worker with isolated DB connection
-        worker_thread = threading.Thread(
-            target=self._run_scan_worker,
-            kwargs={
-                "session_id": session.id,
-                "ordered_image_ids": [img.id for img in usable_images],
-                "provider_id": provider_id,
-                "credentials_path": settings.google_credentials_path,
-                "free_tier_allowance": settings.free_tier_monthly_units,
-                "unit_price_usd": settings.unit_price_usd,
-                "db_path": self.db_path,
-            },
-            daemon=True,
-            name=f"scan-worker-{session.id}",
-        )
-        worker_thread.start()
+            settings = self.settings_repo.get_app_settings()
+            provider_id = provider_override or settings.active_provider
+            provider = get_provider(
+                provider_id=provider_id,
+                credentials_path=settings.google_credentials_path,
+            )
 
-        return self.usage_repo.get_scan_session(session.id)  # type: ignore
+            note_str = f"Skipped {len(missing_ids)} missing files." if missing_ids else None
+
+            # Create session and commit
+            try:
+                session = self.usage_repo.create_scan_session(
+                    provider=provider.display_name,
+                    total_images=len(usable_images),
+                )
+            except sqlite3.IntegrityError as e:
+                raise ScanConflictError(
+                    "Another scan session is currently running. Single active scan enforced."
+                ) from e
+
+            if note_str:
+                self.usage_repo.update_scan_session_progress(
+                    session_id=session.id,
+                    processed=0,
+                    successful=0,
+                    failed=0,
+                    notes=note_str,
+                )
+
+            # Spawn local daemon thread worker with isolated DB connection
+            worker_thread = threading.Thread(
+                target=self._run_scan_worker,
+                kwargs={
+                    "session_id": session.id,
+                    "ordered_image_ids": [img.id for img in usable_images],
+                    "provider_id": provider_id,
+                    "credentials_path": settings.google_credentials_path,
+                    "free_tier_allowance": settings.free_tier_monthly_units,
+                    "unit_price_usd": settings.unit_price_usd,
+                    "db_path": self.db_path,
+                },
+                daemon=True,
+                name=f"scan-worker-{session.id}",
+            )
+            worker_thread.start()
+
+            return self.usage_repo.get_scan_session(session.id)  # type: ignore
 
     def cancel_scan(self, session_id: int) -> ScanSessionOut:
         """Signals cooperative cancellation for a running scan session."""
@@ -284,8 +303,8 @@ class ScanEngine:
                     continue
 
                 try:
-                    norm_file = os.path.normcase(os.path.abspath(img.file_path))
-                    norm_root = os.path.normcase(os.path.abspath(lib.path))
+                    norm_file = os.path.normcase(str(Path(img.file_path).resolve()))
+                    norm_root = os.path.normcase(str(Path(lib.path).resolve()))
                     if os.path.commonpath([norm_file, norm_root]) != norm_root:
                         raise ValueError(f"Path traversal detected: {img.file_path} resolves outside library root {lib.path}")
                 except Exception as p_err:
