@@ -75,10 +75,15 @@ def main():
 
     # Import backend configuration
     sys.path.insert(0, str(WORKSPACE_ROOT))
-    from backend.config import HOST, PORT
+    from backend.config import HOST, PORT, validate_loopback_host
     import uvicorn
 
-    bind_host = args.host or HOST
+    raw_host = args.host or HOST
+    try:
+        bind_host = validate_loopback_host(raw_host)
+    except ValueError as e:
+        print(f"ERROR: {e}")
+        sys.exit(1)
     bind_port = args.port or PORT
 
     url = f"http://{bind_host}:{bind_port}/"

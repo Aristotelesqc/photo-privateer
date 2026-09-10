@@ -26,19 +26,28 @@ router = APIRouter(prefix="/api/scans", tags=["scans"])
 def prepare_scan(
     payload: ScanPrepareRequest,
     tracker: UsageTracker = Depends(get_usage_tracker),
-    image_repo: ImageRepository = Depends(get_image_repo),
+    engine: ScanEngine = Depends(get_scan_engine),
 ):
     if not payload.image_ids:
         raise HTTPException(status_code=400, detail="No images selected for scan")
     
-    images = image_repo.get_by_ids(payload.image_ids)
-    usable_count = sum(1 for img in images if img.is_present_on_disk and Path(img.file_path).exists())
+    try:
+        usable_images, _ = engine.validate_scan_request(
+            image_ids=payload.image_ids,
+            provider_override=payload.provider,
+            force_override_guard=True,
+        )
+    except ScanConflictError as e:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     
     return tracker.prepare_scan_projection(
         image_count=len(payload.image_ids),
-        usable_count=usable_count,
+        usable_count=len(usable_images),
         provider_override=payload.provider,
     )
+
 
 @router.post("/start", response_model=ScanSessionOut)
 def start_scan(

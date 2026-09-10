@@ -31,15 +31,18 @@ logger = logging.getLogger("photo_privateer")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    logger.info("Initializing Photo Privateer SQLite database...")
-    init_db()
+    # Dynamic DB path resolution: allows test suites and isolated environments to inject target database
+    from backend.database import get_db_path, get_connection, init_db
+    target_db_path = getattr(app.state, "db_path", None) or get_db_path()
+
+    logger.info(f"Initializing Photo Privateer SQLite database at: {target_db_path}")
+    init_db(target_db_path)
     logger.info("Database initialized successfully.")
     
     # Startup crash recovery: mark dangling RUNNING sessions as INTERRUPTED
     try:
-        from backend.database import get_connection
         from backend.repositories.usage_repo import UsageRepository
-        with get_connection() as conn:
+        with get_connection(target_db_path) as conn:
             repo = UsageRepository(conn)
             recovered = repo.recover_interrupted_sessions()
             if recovered > 0:
@@ -56,6 +59,15 @@ app = FastAPI(
     version=APP_VERSION,
     lifespan=lifespan,
 )
+
+def create_app(db_path: Path | str | None = None) -> FastAPI:
+    """Helper app factory to configure an isolated database path on app state."""
+    if db_path is not None:
+        from backend.database import set_db_path
+        p = Path(db_path).resolve()
+        app.state.db_path = p
+        set_db_path(p)
+    return app
 
 # CORS: Restricted strictly to localhost origins for local security
 app.add_middleware(

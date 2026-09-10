@@ -9,6 +9,9 @@ from backend.config import (
     DEFAULT_BLOCK_ON_FREE_TIER_EXCEEDED,
 )
 
+# --- Providers ---
+ProviderKind = Literal["mock", "google_vision"]
+
 # --- Libraries ---
 class LibraryCreate(BaseModel):
     path: str = Field(..., description="Absolute path to directory on local disk")
@@ -20,7 +23,6 @@ class LibraryUpdate(BaseModel):
     name: Optional[str] = None
     enabled: Optional[bool] = None
     recursive: Optional[bool] = None
-    is_archived: Optional[bool] = None
     subfolders_as_projects: Optional[bool] = None
 
 class LibraryOut(BaseModel):
@@ -51,6 +53,7 @@ class ImageOut(BaseModel):
     last_seen_on_disk: str
     is_present_on_disk: bool = True
     project: Optional[str] = None
+    project_source: str = "auto"
     last_scanned_at: Optional[str] = None
     scan_count: int = 0
     match_count: int = 0
@@ -70,6 +73,7 @@ class ImageListResponse(BaseModel):
 # --- Matches ---
 ClassificationLiteral = Literal["UNREVIEWED", "APPROVED", "UNAUTHORIZED", "IRRELEVANT"]
 SourceKindLiteral = Literal["PAGE", "ASSET_ONLY"]
+MatchTypeLiteral = Literal["FULL", "PARTIAL", "PAGE", "OTHER"]
 
 class MatchOut(BaseModel):
     id: int
@@ -81,7 +85,7 @@ class MatchOut(BaseModel):
     page_score: Optional[float] = None
     domain: str
     candidate_image_url: Optional[str] = None
-    match_type: str  # FULL, PARTIAL, PAGE, OTHER
+    match_type: MatchTypeLiteral = "FULL"
     provider: str
     first_seen_at: str
     last_seen_at: str
@@ -124,7 +128,7 @@ class DomainRuleOut(BaseModel):
 # --- Scans ---
 class ScanPrepareRequest(BaseModel):
     image_ids: List[int] = Field(..., min_length=1)
-    provider: Optional[str] = None
+    provider: Optional[ProviderKind] = None
 
 class ScanPrepareResponse(BaseModel):
     selected_count: int
@@ -143,7 +147,7 @@ class ScanPrepareResponse(BaseModel):
 
 class ScanStartRequest(BaseModel):
     image_ids: List[int] = Field(..., min_length=1)
-    provider: Optional[str] = None  # None = use configured provider
+    provider: Optional[ProviderKind] = None  # None = use configured provider
     force_override_guard: bool = False
 
 ScanStatusLiteral = Literal["RUNNING", "COMPLETED", "FAILED", "CANCELLED", "INTERRUPTED"]

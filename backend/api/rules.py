@@ -33,7 +33,13 @@ def create_or_update_rule(
         notes=payload.notes,
     )
 
-    # Automatically retroactively classify unreviewed matches for this domain
+    # 1. Cascade update existing matches that were auto-classified by this rule (respecting manual overrides)
+    match_repo.cascade_rule_update(
+        rule_id=rule.id,
+        new_classification=payload.classification,
+    )
+
+    # 2. Automatically retroactively classify unreviewed matches for this domain
     match_repo.apply_rule_to_unreviewed_matches(
         domain=clean_domain,
         classification=payload.classification,
@@ -41,6 +47,7 @@ def create_or_update_rule(
     )
 
     return rule
+
 
 @router.delete("/{rule_id}")
 def delete_rule(rule_id: int, repo: DomainRuleRepository = Depends(get_domain_rule_repo)):

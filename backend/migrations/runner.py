@@ -159,6 +159,16 @@ def migration_004_matches_asset_only_and_uniqueness(conn: sqlite3.Connection) ->
     if "acknowledged_at" not in cols:
         conn.execute("ALTER TABLE matches ADD COLUMN acknowledged_at TEXT")
 
+    # Deterministically deduplicate any historical duplicates before creating the unique index
+    conn.execute("""
+        DELETE FROM matches
+        WHERE id NOT IN (
+            SELECT MIN(id)
+            FROM matches
+            GROUP BY image_id, source_kind, COALESCE(page_url, ''), COALESCE(candidate_image_url, '')
+        )
+    """)
+
     # Create deterministic unique index that handles NULL candidate_image_url and NULL page_url safely
     conn.execute("""
         CREATE UNIQUE INDEX IF NOT EXISTS idx_matches_unique_identity 
@@ -229,6 +239,24 @@ def migration_006_project_classification(conn: sqlite3.Connection) -> None:
     if "subfolders_as_projects" not in lib_cols:
         conn.execute("ALTER TABLE libraries ADD COLUMN subfolders_as_projects INTEGER NOT NULL DEFAULT 1;")
 
+def migration_007_project_source_and_atomic_running_scan(conn: sqlite3.Connection) -> None:
+    """Adds project_source to images, marks legacy orphaned running sessions as interrupted, and creates atomic partial unique index for running scans."""
+    cur = conn.cursor()
+    cur.execute("PRAGMA table_info(images)")
+    image_cols = {row[1] for row in cur.fetchall()}
+    if "project_source" not in image_cols:
+        conn.execute("ALTER TABLE images ADD COLUMN project_source TEXT NOT NULL DEFAULT 'auto';")
+
+    # Clean orphaned running sessions before indexing
+    conn.execute("UPDATE scan_sessions SET status = 'INTERRUPTED' WHERE status = 'RUNNING';")
+
+    # Create atomic partial unique index guaranteeing only one active RUNNING scan at database level
+    conn.execute("""
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_single_running_scan 
+        ON scan_sessions(status) 
+        WHERE status = 'RUNNING';
+    """)
+
 MIGRATIONS: list[Migration] = [
     Migration(1, "001_initial_schema", migration_001_initial_schema),
     Migration(2, "002_library_archiving_and_disk_presence", migration_002_library_archiving_and_disk_presence),
@@ -236,6 +264,7 @@ MIGRATIONS: list[Migration] = [
     Migration(4, "004_matches_asset_only_and_uniqueness", migration_004_matches_asset_only_and_uniqueness),
     Migration(5, "005_library_fk_safety", migration_005_library_fk_safety),
     Migration(6, "006_project_classification", migration_006_project_classification),
+    Migration(7, "007_project_source_and_atomic_running_scan", migration_007_project_source_and_atomic_running_scan),
 ]
 
 def run_migrations(conn: sqlite3.Connection) -> list[int]:

@@ -30,6 +30,13 @@ class SettingsRepository:
             "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
             (key, str(value)),
         )
+        self.conn.commit()
+
+    def delete_setting(self, key: str) -> None:
+        cur = self.conn.cursor()
+        cur.execute("DELETE FROM settings WHERE key = ?", (key,))
+        self.conn.commit()
+
 
     def get_app_settings(self) -> AppSettings:
         active_provider = self.get_setting("active_provider", "mock")
@@ -146,9 +153,13 @@ class SettingsRepository:
 
     def update_settings(self, updates: dict[str, Any]) -> AppSettings:
         for k, v in updates.items():
-            if v is not None:
+            if k == "google_credentials_path" and (v is None or v == ""):
+                self.delete_setting(k)
+            elif v is not None:
                 self.set_setting(k, str(v))
+        self.conn.commit()
         return self.get_app_settings()
+
 
     def _validate_credentials_path(self, path_str: Optional[str]) -> tuple[bool, Optional[str]]:
         if not path_str:

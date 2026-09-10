@@ -14,7 +14,7 @@ Run pytest across all unit, integration, and resilience tests:
 ```powershell
 pytest -v tests/backend
 ```
-Ensure all 19 tests pass (indexing, hashing immutability, versioned SQLite migrations, rescan history preservation, domain rules, cost estimation, cooperative scan cancellation, crash recovery, rename reconciliation, and zero-cost authentication).
+Ensure 100% of tests pass with 0 failures and 0 regressions (indexing, hashing immutability, versioned SQLite migrations, rescan history preservation, domain rules, cost estimation, cooperative scan cancellation, crash recovery, rename reconciliation, hermetic test isolation, server-side protection of archived libraries, transactional purge, and zero-cost authentication).
 
 ### 2. Frontend Unit Tests (Vitest)
 Run Vitest component unit tests:
@@ -23,7 +23,8 @@ Push-Location frontend
 npm test
 Pop-Location
 ```
-Ensure all 10 unit tests pass (Thumbnail privacy opt-in, ScanProgressModal polling, ScanConfirmModal usable photo breakdown).
+Ensure 100% of frontend unit tests pass with 0 failures (Thumbnail privacy opt-in, ScanProgressModal polling, ScanConfirmModal usable photo breakdown).
+
 
 ### 3. Frontend Production Build
 Run TypeScript checking and Vite production bundling:

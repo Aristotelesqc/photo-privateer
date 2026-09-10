@@ -75,14 +75,21 @@ export const ReviewView: React.FC<ReviewViewProps> = ({
 
   // Handle classification click
   const handleClassify = async (matchId: number, classification: ClassificationType) => {
-    // Optimistic UI update
-    setMatches((prev) =>
-      prev.map((m) =>
-        m.id === matchId
-          ? { ...m, classification, auto_classified_by_rule_id: null }
-          : m
-      )
-    );
+    // If we are currently reviewing under the UNREVIEWED filter and classification is non-UNREVIEWED,
+    // immediately remove it from the visible list and decrement total count for responsive review queue.
+    if (activeClassification === 'UNREVIEWED' && classification !== 'UNREVIEWED') {
+      setMatches((prev) => prev.filter((m) => m.id !== matchId));
+      setTotalMatches((prev) => Math.max(0, prev - 1));
+    } else {
+      // Optimistic UI update
+      setMatches((prev) =>
+        prev.map((m) =>
+          m.id === matchId
+            ? { ...m, classification, auto_classified_by_rule_id: null }
+            : m
+        )
+      );
+    }
     setInspectingMatch((m) =>
       m && m.id === matchId ? { ...m, classification, auto_classified_by_rule_id: null } : m
     );
@@ -100,15 +107,17 @@ export const ReviewView: React.FC<ReviewViewProps> = ({
   const handleSaveNotes = async (matchId: number) => {
     const noteText = editingNotes[matchId];
     if (noteText === undefined) return;
+    const cleanNote = noteText.trim();
     try {
-      await updateMatch(matchId, { notes: noteText.trim() || undefined });
+      await updateMatch(matchId, { notes: cleanNote === '' ? null : cleanNote });
       setMatches((prev) =>
-        prev.map((m) => (m.id === matchId ? { ...m, notes: noteText.trim() || null } : m))
+        prev.map((m) => (m.id === matchId ? { ...m, notes: cleanNote === '' ? null : cleanNote } : m))
       );
     } catch (err) {
       console.error('Failed saving note', err);
     }
   };
+
 
   // Handle Domain Rule creation
   const handleRuleSaved = async (domain: string, classification: ClassificationType, notes?: string) => {

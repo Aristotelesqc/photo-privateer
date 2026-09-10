@@ -26,6 +26,7 @@ class ImageRepository:
             last_seen_on_disk=r["last_seen_on_disk"],
             is_present_on_disk=bool(r["is_present_on_disk"]) if "is_present_on_disk" in r.keys() else True,
             project=r["project"] if "project" in r.keys() else None,
+            project_source=r["project_source"] if "project_source" in r.keys() else "auto",
             last_scanned_at=r["last_scanned_at"],
             scan_count=r["scan_count"],
             match_count=r["match_count"],
@@ -83,13 +84,15 @@ class ImageRepository:
 
     def mark_missing_images_in_library(self, library_id: int, observed_paths: set[str]) -> int:
         """Marks any images registered to this library that were not observed on disk as missing."""
+        from backend.utils import chunked
         cur = self.conn.cursor()
         cur.execute("SELECT id, file_path FROM images WHERE library_id = ? AND is_present_on_disk = 1", (library_id,))
         rows = cur.fetchall()
         missing_ids = [r["id"] for r in rows if r["file_path"] not in observed_paths]
         if missing_ids:
-            placeholders = ",".join("?" for _ in missing_ids)
-            cur.execute(f"UPDATE images SET is_present_on_disk = 0 WHERE id IN ({placeholders})", tuple(missing_ids))
+            for chunk in chunked(missing_ids, 500):
+                placeholders = ",".join("?" for _ in chunk)
+                cur.execute(f"UPDATE images SET is_present_on_disk = 0 WHERE id IN ({placeholders})", tuple(chunk))
             return len(missing_ids)
         return 0
 
@@ -164,6 +167,13 @@ class ImageRepository:
         rows = cur.fetchall()
         return [self._row_to_image(r) for r in rows], total
 
+    def detach_archived_image(self, image_id: int, archive_path: str) -> None:
+        """Detaches an old image record whose path was replaced by different content,
+        relocating its unique file_path constraint to an archive alias and marking it absent.
+        """
+        cur = self.conn.cursor()
+        cur.execute("UPDATE images SET file_path = ?, is_present_on_disk = 0 WHERE id = ?", (archive_path, image_id))
+
     def upsert_image(
         self,
         library_id: int,
@@ -176,14 +186,15 @@ class ImageRepository:
         height: Optional[int],
         format: Optional[str],
         project: Optional[str] = None,
+        project_source: str = "auto",
     ) -> ImageOut:
         now = datetime.now(timezone.utc).isoformat()
         cur = self.conn.cursor()
         cur.execute("""
             INSERT INTO images (
                 library_id, sha256, file_path, filename, file_size, file_modified_at,
-                width, height, format, project, indexed_at, last_seen_on_disk, is_present_on_disk
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+                width, height, format, project, project_source, indexed_at, last_seen_on_disk, is_present_on_disk
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
             ON CONFLICT(file_path) DO UPDATE SET
                 sha256 = excluded.sha256,
                 filename = excluded.filename,
@@ -192,31 +203,53 @@ class ImageRepository:
                 width = excluded.width,
                 height = excluded.height,
                 format = excluded.format,
-                project = COALESCE(images.project, excluded.project),
+                project = CASE 
+                    WHEN images.project_source = 'manual' THEN images.project
+                    ELSE COALESCE(images.project, excluded.project)
+                END,
+                project_source = CASE
+                    WHEN images.project_source = 'manual' THEN 'manual'
+                    ELSE excluded.project_source
+                END,
                 last_seen_on_disk = excluded.last_seen_on_disk,
                 is_present_on_disk = 1
         """, (
             library_id, sha256, file_path, filename, file_size, file_modified_at,
-            width, height, format, project, now, now
+            width, height, format, project, project_source, now, now
         ))
         cur.execute("SELECT * FROM images WHERE file_path = ?", (file_path,))
         r = cur.fetchone()
         return self._row_to_image(r)
 
-    def update_project(self, image_id: int, project: Optional[str]) -> Optional[ImageOut]:
+    def update_project(self, image_id: int, project: Optional[str], source: str = "manual") -> Optional[ImageOut]:
         val = project.strip() if (project and project.strip()) else None
         cur = self.conn.cursor()
-        cur.execute("UPDATE images SET project = ? WHERE id = ?", (val, image_id))
+        cur.execute("UPDATE images SET project = ?, project_source = ? WHERE id = ?", (val, source, image_id))
         return self.get_by_id(image_id)
 
-    def batch_update_project(self, image_ids: list[int], project: Optional[str]) -> int:
+    def update_project_auto(self, image_id: int, project: Optional[str]) -> bool:
+        """Updates project only if current project was auto-detected or is unassigned (never overwrites manual assignment)."""
+        val = project.strip() if (project and project.strip()) else None
+        cur = self.conn.cursor()
+        cur.execute("""
+            UPDATE images 
+            SET project = ?, project_source = 'auto' 
+            WHERE id = ? AND (project_source = 'auto' OR project IS NULL OR project = '')
+        """, (val, image_id))
+        return cur.rowcount > 0
+
+    def batch_update_project(self, image_ids: list[int], project: Optional[str], source: str = "manual") -> int:
         if not image_ids:
             return 0
+        from backend.utils import chunked
         val = project.strip() if (project and project.strip()) else None
-        placeholders = ",".join("?" for _ in image_ids)
+        total_updated = 0
         cur = self.conn.cursor()
-        cur.execute(f"UPDATE images SET project = ? WHERE id IN ({placeholders})", (val, *image_ids))
-        return cur.rowcount
+        for chunk in chunked(image_ids, 500):
+            placeholders = ",".join("?" for _ in chunk)
+            cur.execute(f"UPDATE images SET project = ?, project_source = ? WHERE id IN ({placeholders})", (val, source, *chunk))
+            total_updated += cur.rowcount
+        return total_updated
 
     def get_distinct_projects(self, library_id: Optional[int] = None) -> list[str]:
         cur = self.conn.cursor()
@@ -267,7 +300,11 @@ class ImageRepository:
     def get_by_ids(self, image_ids: list[int]) -> list[ImageOut]:
         if not image_ids:
             return []
-        placeholders = ",".join("?" for _ in image_ids)
+        from backend.utils import chunked
+        results: list[ImageOut] = []
         cur = self.conn.cursor()
-        cur.execute(f"SELECT * FROM images WHERE id IN ({placeholders})", tuple(image_ids))
-        return [self._row_to_image(r) for r in cur.fetchall()]
+        for chunk in chunked(image_ids, 500):
+            placeholders = ",".join("?" for _ in chunk)
+            cur.execute(f"SELECT * FROM images WHERE id IN ({placeholders})", tuple(chunk))
+            results.extend([self._row_to_image(r) for r in cur.fetchall()])
+        return results

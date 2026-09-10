@@ -34,16 +34,27 @@ class LibraryIndexer:
         if not root_dir.is_dir():
             return
 
+        resolved_root = root_dir.resolve()
         if recursive:
             for root, _, files in os.walk(root_dir):
                 for filename in files:
                     p = Path(root) / filename
                     if p.suffix.lower() in SUPPORTED_EXTENSIONS:
-                        yield p
+                        try:
+                            real_p = p.resolve()
+                            if os.path.commonpath([str(resolved_root), str(real_p)]) == str(resolved_root):
+                                yield p
+                        except (ValueError, OSError):
+                            continue
         else:
             for item in root_dir.iterdir():
                 if item.is_file() and item.suffix.lower() in SUPPORTED_EXTENSIONS:
-                    yield item
+                    try:
+                        real_p = item.resolve()
+                        if os.path.commonpath([str(resolved_root), str(real_p)]) == str(resolved_root):
+                            yield item
+                    except (ValueError, OSError):
+                        continue
 
     def index_library(self, library_id: int) -> dict[str, int]:
         lib = self.library_repo.get_by_id(library_id)
@@ -67,13 +78,13 @@ class LibraryIndexer:
             file_size = stat.st_size
             mtime = stat.st_mtime
 
-            # Determine project if subfolders_as_projects is enabled
+            # Determine project based on immediate parent folder
             detected_project = None
             if getattr(lib, "subfolders_as_projects", True):
                 try:
                     rel_p = file_path.resolve().relative_to(root)
                     if len(rel_p.parts) > 1:
-                        detected_project = rel_p.parts[0]
+                        detected_project = rel_p.parts[-2]
                 except Exception:
                     pass
 
@@ -83,7 +94,7 @@ class LibraryIndexer:
                 unchanged += 1
                 # Auto-assign detected project if photo currently has no project
                 if getattr(lib, "subfolders_as_projects", True) and not existing.project and detected_project:
-                    self.image_repo.update_project(existing.id, detected_project)
+                    self.image_repo.update_project_auto(existing.id, detected_project)
                 # If marked missing previously, mark back present on disk
                 if not existing.is_present_on_disk:
                     self.image_repo.reconcile_image_location(
@@ -105,6 +116,15 @@ class LibraryIndexer:
             # Compute hash and extract dimensions safely
             sha256 = calculate_sha256(file_path)
 
+            # Photo identity replacement check:
+            # If an existing record was at this path but has a DIFFERENT sha256,
+            # detach the old record to an archive alias to preserve its history without inheriting to new file.
+            if existing:
+                if existing.sha256 != sha256:
+                    archive_alias = f"{norm_path}#archived-{existing.id}"
+                    self.image_repo.detach_archived_image(existing.id, archive_alias)
+                    existing = None
+
             # Check if this is a renamed or moved file with identical content hash
             if not existing:
                 candidates = self.image_repo.get_all_by_sha256(sha256)
@@ -122,7 +142,7 @@ class LibraryIndexer:
                             new_mtime=mtime,
                         )
                         if detected_project and not candidate.project:
-                            self.image_repo.update_project(candidate.id, detected_project)
+                            self.image_repo.update_project_auto(candidate.id, detected_project)
                         # Ensure thumbnail cached
                         if not self.thumbnail_cache.has_thumbnail(sha256):
                             try:
@@ -153,7 +173,7 @@ class LibraryIndexer:
             except Exception:
                 pass
 
-            # Upsert into database
+            # Upsert into database with project_source='auto'
             self.image_repo.upsert_image(
                 library_id=library_id,
                 sha256=sha256,
@@ -165,6 +185,7 @@ class LibraryIndexer:
                 height=height,
                 format=img_format,
                 project=detected_project,
+                project_source="auto",
             )
             added_or_updated += 1
 
@@ -182,7 +203,9 @@ class LibraryIndexer:
         }
 
     def detect_and_apply_subfolder_projects(self, library_id: int) -> int:
-        """Retroactively detects and sets project names for all images in a library based on subfolders."""
+        """Retroactively detects and sets project names based on immediate parent subfolders.
+        Preserves manually assigned projects (never overwrites project_source == 'manual').
+        """
         lib = self.library_repo.get_by_id(library_id)
         if not lib:
             raise ValueError(f"Library {library_id} not found")
@@ -197,12 +220,12 @@ class LibraryIndexer:
             try:
                 rel = img_path.relative_to(root)
                 if len(rel.parts) > 1:
-                    proj = rel.parts[0]
-                    self.image_repo.update_project(img_id, proj)
-                    updated += 1
+                    proj = rel.parts[-2]  # Immediate parent folder
+                    if self.image_repo.update_project_auto(img_id, proj):
+                        updated += 1
                 else:
-                    self.image_repo.update_project(img_id, None)
-                    updated += 1
+                    if self.image_repo.update_project_auto(img_id, None):
+                        updated += 1
             except Exception:
                 pass
         self.image_repo.conn.commit()

@@ -10,7 +10,14 @@ import pytest
 from PIL import Image
 from fastapi.testclient import TestClient
 
-from backend.database import init_db, get_connection
+# Force an isolated temporary directory for the entire pytest session BEFORE any backend import
+SESSION_TEMP_DATA_DIR = Path(tempfile.mkdtemp(prefix="photo_privateer_pytest_data_")).resolve()
+os.environ["PHOTO_PRIVATEER_DATA_DIR"] = str(SESSION_TEMP_DATA_DIR)
+os.environ["PHOTO_PRIVATEER_TEST_MODE"] = "1"
+
+from backend.database import init_db, get_connection, set_db_path, get_db_path
+set_db_path(SESSION_TEMP_DATA_DIR / "session_test.db")
+
 from backend.services.thumbnail_cache import ThumbnailCache
 from backend.repositories.library_repo import LibraryRepository
 from backend.repositories.image_repo import ImageRepository
@@ -25,6 +32,20 @@ from backend.services.scan_engine import ScanEngine
 from backend.main import app
 from backend.api import deps
 
+@pytest.fixture(scope="session", autouse=True)
+def cleanup_session_temp():
+    yield
+    shutil.rmtree(SESSION_TEMP_DATA_DIR, ignore_errors=True)
+
+@pytest.fixture(autouse=True)
+def assert_no_real_db_touch():
+    """Safety guard: asserts that under no circumstances does any backend test resolve or touch ~/.photo_privateer."""
+    real_db = (Path.home() / ".photo_privateer" / "photo_privateer.sqlite").resolve()
+    active_db = get_db_path().resolve()
+    assert active_db != real_db, f"CRITICAL SECURITY BREACH: Test is about to access real user DB: {real_db}"
+    yield
+    assert get_db_path().resolve() != real_db, f"CRITICAL SECURITY BREACH: Test accessed real user DB during run: {real_db}"
+
 @pytest.fixture
 def temp_dir() -> Generator[Path, None, None]:
     d = Path(tempfile.mkdtemp(prefix="photo_privateer_test_"))
@@ -34,10 +55,17 @@ def temp_dir() -> Generator[Path, None, None]:
         shutil.rmtree(d, ignore_errors=True)
 
 @pytest.fixture
-def db_path(temp_dir: Path) -> Path:
+def db_path(temp_dir: Path) -> Generator[Path, None, None]:
     p = temp_dir / "test.db"
+    set_db_path(p)
+    app.state.db_path = p
     init_db(p)
-    return p
+    try:
+        yield p
+    finally:
+        set_db_path(None)
+        if hasattr(app.state, "db_path"):
+            delattr(app.state, "db_path")
 
 @pytest.fixture
 def db_conn(db_path: Path):
@@ -86,7 +114,8 @@ def repos(db_conn, temp_dir: Path):
     indexer = LibraryIndexer(lib_repo, img_repo, thumb_cache)
     rules_engine = DomainRulesEngine(rule_repo)
     tracker = UsageTracker(usage_repo, settings_repo)
-    scan_engine = ScanEngine(img_repo, match_repo, rule_repo, usage_repo, settings_repo)
+    scan_engine = ScanEngine(img_repo, match_repo, rule_repo, usage_repo, settings_repo, lib_repo)
+
 
     return {
         "lib_repo": lib_repo,

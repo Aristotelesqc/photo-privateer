@@ -1,37 +1,71 @@
 """Photo Privateer configuration and constants."""
 from __future__ import annotations
 
+import ipaddress
 import os
 import shutil
 from pathlib import Path
 
 # Application Version
-APP_VERSION = "1.1.0"
+APP_VERSION = "1.1.1"
 
 # Base Paths
 WORKSPACE_ROOT = Path(__file__).resolve().parent.parent
 
-# User data storage: default to ~/.photo_privateer
-CUSTOM_DATA_DIR = os.environ.get("PHOTO_PRIVATEER_DATA_DIR")
-if CUSTOM_DATA_DIR:
-    DATA_DIR = Path(CUSTOM_DATA_DIR).resolve()
-else:
-    DATA_DIR = Path.home() / ".photo_privateer"
+def validate_loopback_host(host_str: str) -> str:
+    """Validates that a host address is strictly loopback (127.0.0.1, ::1, or localhost).
+    Raises ValueError on non-loopback addresses such as 0.0.0.0 or LAN IPs.
+    """
+    cleaned = host_str.strip().strip("'\"")
+    if cleaned.lower() == "localhost":
+        return cleaned
+    try:
+        ip = ipaddress.ip_address(cleaned)
+        if not ip.is_loopback:
+            raise ValueError(
+                f"Binding to non-loopback address '{cleaned}' is forbidden for security. "
+                f"Photo Privateer is strictly local-first and only permits loopback (127.0.0.1, ::1)."
+            )
+        return cleaned
+    except ValueError as e:
+        if "forbidden for security" in str(e):
+            raise
+        raise ValueError(
+            f"Invalid host address '{cleaned}': must be a valid loopback address (127.0.0.1 or ::1)."
+        )
 
-DATA_DIR.mkdir(parents=True, exist_ok=True)
+# Server binding - strictly loopback for local privacy
+_RAW_HOST = os.environ.get("PHOTO_PRIVATEER_HOST", "127.0.0.1")
+HOST = validate_loopback_host(_RAW_HOST)
+PORT = int(os.environ.get("PHOTO_PRIVATEER_PORT", "8765"))
 
-# Database file: canonical photo_privateer.sqlite
-DB_PATH = DATA_DIR / "photo_privateer.sqlite"
+def get_data_dir() -> Path:
+    """Returns canonical data directory, respecting PHOTO_PRIVATEER_DATA_DIR environment override."""
+    custom = os.environ.get("PHOTO_PRIVATEER_DATA_DIR")
+    if custom:
+        p = Path(custom).resolve()
+    else:
+        p = (Path.home() / ".photo_privateer").resolve()
+    p.mkdir(parents=True, exist_ok=True)
+    return p
 
-THUMBNAILS_DIR = DATA_DIR / "thumbnails"
-THUMBNAILS_DIR.mkdir(parents=True, exist_ok=True)
+def get_db_path() -> Path:
+    """Returns canonical database file path."""
+    return get_data_dir() / "photo_privateer.sqlite"
+
+def get_thumbnails_dir() -> Path:
+    """Returns thumbnail cache directory."""
+    p = get_data_dir() / "thumbnails"
+    p.mkdir(parents=True, exist_ok=True)
+    return p
+
+# Canonical locations (dynamically evaluated)
+DATA_DIR = get_data_dir()
+DB_PATH = get_db_path()
+THUMBNAILS_DIR = get_thumbnails_dir()
 
 # Frontend distribution directory
 FRONTEND_DIST_DIR = WORKSPACE_ROOT / "frontend" / "dist"
-
-# Server binding - strictly 127.0.0.1 for local privacy
-HOST = os.environ.get("PHOTO_PRIVATEER_HOST", "127.0.0.1")
-PORT = int(os.environ.get("PHOTO_PRIVATEER_PORT", "8765"))
 
 # Supported image formats
 SUPPORTED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".tif", ".tiff"}

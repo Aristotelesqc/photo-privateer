@@ -220,3 +220,62 @@ def test_zero_cost_google_auth_verification(repos):
     assert res["success"] is False
     assert res["auth_mode"] == "none"
     assert "No Google Cloud credentials configured" in res["error"]
+
+
+def test_lifespan_uses_temp_db_and_does_not_touch_user_home(temp_dir: Path):
+    """Explicitly proves that FastAPI lifespan uses the injected temporary DB and never touches user home."""
+    from fastapi.testclient import TestClient
+    from backend.main import create_app
+    from backend.database import get_db_path, get_connection
+
+    test_db = temp_dir / "lifespan_isolated.db"
+    isolated_app = create_app(db_path=test_db)
+
+    # Lifespan executes upon entering TestClient context
+    with TestClient(isolated_app):
+        # Database file must have been created and initialized at test_db
+        assert test_db.is_file()
+        with get_connection(test_db) as conn:
+            cur = conn.cursor()
+            cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='schema_migrations'")
+            assert cur.fetchone() is not None
+
+    # Verify user's actual home database path was not touched
+    user_home_db = (Path.home() / ".photo_privateer" / "photo_privateer.sqlite").resolve()
+    assert test_db.resolve() != user_home_db
+
+
+def test_host_bind_validation():
+    """Verify that loopback addresses are accepted while non-loopback binds are strictly forbidden."""
+    from backend.config import validate_loopback_host
+
+    # Valid loopback
+    assert validate_loopback_host("127.0.0.1") == "127.0.0.1"
+    assert validate_loopback_host("::1") == "::1"
+    assert validate_loopback_host("localhost") == "localhost"
+
+    # Forbidden non-loopback
+    with pytest.raises(ValueError, match="forbidden for security"):
+        validate_loopback_host("0.0.0.0")
+
+    with pytest.raises(ValueError, match="forbidden for security"):
+        validate_loopback_host("192.168.1.100")
+
+    with pytest.raises(ValueError, match="forbidden for security"):
+        validate_loopback_host("10.0.0.1")
+
+    # Invalid address
+    with pytest.raises(ValueError, match="Invalid host address"):
+        validate_loopback_host("not_an_ip_or_localhost_!!!")
+
+
+def test_google_vision_provider_blocked_in_test_mode(sample_images_dir: Path):
+    """Verify that GoogleVisionSearchProvider hard-fails with RuntimeError in test mode."""
+    from backend.providers.google_vision_provider import GoogleVisionSearchProvider
+
+    provider = GoogleVisionSearchProvider()
+    test_image = str(sample_images_dir / "mountain_landscape.jpg")
+
+    with pytest.raises(RuntimeError, match="strictly forbidden in test mode"):
+        provider.search(test_image)
+

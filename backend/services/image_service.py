@@ -23,7 +23,7 @@ class ImageService:
         
         is_contained = False
         for lib in libraries:
-            if not lib.enabled:
+            if not lib.enabled or lib.is_archived:
                 continue
             lib_root = str(Path(lib.path).resolve())
             try:

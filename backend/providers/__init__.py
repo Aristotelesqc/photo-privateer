@@ -6,7 +6,15 @@ from backend.providers.base import SearchProvider
 from backend.providers.mock_provider import MockSearchProvider
 from backend.providers.google_vision_provider import GoogleVisionSearchProvider
 
+SUPPORTED_PROVIDERS = {"mock", "google_vision"}
+
 def get_provider(provider_id: str = "mock", credentials_path: Optional[str] = None) -> SearchProvider:
     if provider_id == "google_vision":
         return GoogleVisionSearchProvider(credentials_path=credentials_path)
-    return MockSearchProvider()
+    elif provider_id == "mock":
+        return MockSearchProvider()
+    else:
+        raise ValueError(
+            f"Unknown or unsupported search provider '{provider_id}'. "
+            f"Supported providers: {', '.join(sorted(SUPPORTED_PROVIDERS))}"
+        )

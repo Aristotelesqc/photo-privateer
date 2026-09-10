@@ -65,6 +65,7 @@ class ProviderResult:
     items: list[SearchResultItem]
     units_consumed: int = 1
     error_message: Optional[str] = None
+    error_kind: Optional[str] = None
 
 class SearchProvider(abc.ABC):
     @property

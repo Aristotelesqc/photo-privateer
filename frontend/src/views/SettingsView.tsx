@@ -209,8 +209,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     try {
       await updateSettings({
         active_provider: activeProvider,
-        google_credentials_path: credsPath.trim() || undefined,
+        google_credentials_path: credsPath.trim() === '' ? null : credsPath.trim(),
         free_tier_monthly_units: Number(freeTierUnits),
+
         block_on_free_tier_exceeded: blockOnGuard,
         unit_price_usd: Number(unitPrice),
       });

@@ -42,12 +42,15 @@ def create_library(payload: LibraryCreate, repo: LibraryRepository = Depends(get
     if existing:
         raise HTTPException(status_code=409, detail="A library with this path already exists")
 
-    return repo.create(
-        path=str(p),
-        name=payload.name,
-        recursive=payload.recursive,
-        subfolders_as_projects=payload.subfolders_as_projects,
-    )
+    try:
+        return repo.create(
+            path=str(p),
+            name=payload.name,
+            recursive=payload.recursive,
+            subfolders_as_projects=payload.subfolders_as_projects,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 @router.patch("/{library_id}", response_model=LibraryOut)
 def update_library(library_id: int, payload: LibraryUpdate, repo: LibraryRepository = Depends(get_library_repo)):

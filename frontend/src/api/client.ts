@@ -186,11 +186,12 @@ export const fetchMatches = (params: {
   return request<MatchListResponse>(`/matches?${query.toString()}`);
 };
 
-export const updateMatch = (id: number, updates: { classification?: ClassificationType; notes?: string }) =>
+export const updateMatch = (id: number, updates: { classification?: ClassificationType; notes?: string | null }) =>
   request<MatchItem>(`/matches/${id}`, {
     method: 'PATCH',
     body: JSON.stringify(updates),
   });
+
 
 // --- Domain Rules ---
 export const fetchRules = () => request<DomainRule[]>('/rules');

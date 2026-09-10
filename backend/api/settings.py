@@ -30,8 +30,9 @@ def update_settings(payload: SettingsUpdate, repo: SettingsRepository = Depends(
         if payload.active_provider not in ("mock", "google_vision"):
             raise HTTPException(status_code=400, detail="Invalid provider. Must be 'mock' or 'google_vision'")
         updates["active_provider"] = payload.active_provider
-    if payload.google_credentials_path is not None:
+    if "google_credentials_path" in payload.model_fields_set:
         updates["google_credentials_path"] = payload.google_credentials_path
+
     if payload.free_tier_monthly_units is not None:
         if payload.free_tier_monthly_units < 0:
             raise HTTPException(status_code=400, detail="Free tier units cannot be negative")

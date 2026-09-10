@@ -1,4 +1,6 @@
 import { defineConfig, devices } from '@playwright/test';
+import * as os from 'os';
+import * as path from 'path';
 
 export default defineConfig({
   testDir: './e2e',
@@ -22,5 +24,12 @@ export default defineConfig({
     url: 'http://127.0.0.1:8765/',
     reuseExistingServer: false,
     timeout: 30000,
+    env: {
+      PHOTO_PRIVATEER_DATA_DIR: process.env.PHOTO_PRIVATEER_DATA_DIR || path.join(os.tmpdir(), 'photo_privateer_playwright_' + Date.now()),
+      PHOTO_PRIVATEER_TEST_MODE: '1',
+      PHOTO_PRIVATEER_HOST: '127.0.0.1',
+      PHOTO_PRIVATEER_PORT: '8765',
+      GOOGLE_APPLICATION_CREDENTIALS: '',
+    },
   },
 });

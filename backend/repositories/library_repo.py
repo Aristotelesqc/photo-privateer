@@ -86,7 +86,24 @@ class LibraryRepository:
         recursive: bool = True,
         subfolders_as_projects: bool = True,
     ) -> LibraryOut:
+        import os
         norm_path = str(Path(path).resolve())
+
+        # Forbid overlapping library roots with existing active libraries
+        for existing in self.list_libraries(include_archived=False):
+            existing_root = str(Path(existing.path).resolve())
+            try:
+                common = os.path.commonpath([existing_root, norm_path])
+                if common in (existing_root, norm_path):
+                    raise ValueError(
+                        f"Cannot register library: '{norm_path}' overlaps with existing library '{existing.name}' ({existing_root}). "
+                        f"Overlapping library roots are forbidden to maintain deterministic photo containment."
+                    )
+            except ValueError as err:
+                if "overlaps with" in str(err):
+                    raise
+                pass  # Different drives on Windows cannot overlap
+
         folder_name = name or Path(norm_path).name or norm_path
         now = datetime.now(timezone.utc).isoformat()
         cur = self.conn.cursor()
@@ -144,13 +161,37 @@ class LibraryRepository:
         cur.execute("UPDATE libraries SET is_archived = 0, enabled = 1 WHERE id = ?", (library_id,))
         return cur.rowcount > 0
 
+    def purge(self, library_id: int) -> bool:
+        """Transactionally purges a library and its catalog metadata from SQLite.
+        ORIGINAL SOURCE FILES ON DISK ARE NEVER MODIFIED, RENAMED, OR DELETED.
+        """
+        from backend.utils import chunked
+        cur = self.conn.cursor()
+        # Find all images belonging to this library
+        cur.execute("SELECT id FROM images WHERE library_id = ?", (library_id,))
+        image_ids = [r[0] for r in cur.fetchall()]
+
+        if image_ids:
+            for chunk in chunked(image_ids, 500):
+                placeholders = ",".join("?" for _ in chunk)
+                # Nullify provider_calls image reference so history is preserved without FK collision
+                cur.execute(f"UPDATE provider_calls SET image_id = NULL WHERE image_id IN ({placeholders})", tuple(chunk))
+                # Delete matches associated with these images
+                cur.execute(f"DELETE FROM matches WHERE image_id IN ({placeholders})", tuple(chunk))
+                # Delete scan_items
+                cur.execute(f"DELETE FROM scan_items WHERE image_id IN ({placeholders})", tuple(chunk))
+                # Delete images
+                cur.execute(f"DELETE FROM images WHERE id IN ({placeholders})", tuple(chunk))
+
+        cur.execute("DELETE FROM libraries WHERE id = ?", (library_id,))
+        self.conn.commit()
+        return cur.rowcount > 0
+
     def delete(self, library_id: int, purge_permanently: bool = False) -> bool:
-        """Safely removes folder from monitoring. Defaults to non-destructive archive."""
+        """Removes folder from monitoring. Defaults to non-destructive archive unless purge_permanently is explicitly True."""
         if not purge_permanently:
             return self.archive(library_id)
-        cur = self.conn.cursor()
-        cur.execute("DELETE FROM libraries WHERE id = ?", (library_id,))
-        return cur.rowcount > 0
+        return self.purge(library_id)
 
     def update_last_indexed(self, library_id: int) -> None:
         now = datetime.now(timezone.utc).isoformat()

@@ -72,5 +72,7 @@ def get_scan_engine(
     rule_repo: DomainRuleRepository = Depends(get_domain_rule_repo),
     usage_repo: UsageRepository = Depends(get_usage_repo),
     settings_repo: SettingsRepository = Depends(get_settings_repo),
+    lib_repo: LibraryRepository = Depends(get_library_repo),
 ) -> ScanEngine:
-    return ScanEngine(img_repo, match_repo, rule_repo, usage_repo, settings_repo)
+    return ScanEngine(img_repo, match_repo, rule_repo, usage_repo, settings_repo, lib_repo)
+

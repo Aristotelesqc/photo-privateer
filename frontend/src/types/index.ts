@@ -26,6 +26,7 @@ export interface ImageItem {
   last_seen_on_disk: string;
   is_present_on_disk: boolean;
   project: string | null;
+  project_source?: 'auto' | 'manual';
   last_scanned_at: string | null;
   scan_count: number;
   match_count: number;
@@ -52,7 +53,8 @@ export interface MatchItem {
   domain: string;
   candidate_image_url: string | null;
   match_type: 'FULL' | 'PARTIAL' | 'PAGE' | 'OTHER';
-  source_kind: 'FULL' | 'PARTIAL' | 'ASSET_ONLY';
+  source_kind: 'PAGE' | 'ASSET_ONLY';
+
   provider: string;
   first_seen_at: string;
   last_seen_at: string;

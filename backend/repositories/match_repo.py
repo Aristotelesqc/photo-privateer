@@ -196,6 +196,7 @@ class MatchRepository:
         match_id: int,
         classification: Optional[str] = None,
         notes: Optional[str] = None,
+        clear_notes: bool = False,
         acknowledged: Optional[bool] = None,
     ) -> Optional[MatchOut]:
         cur = self.conn.cursor()
@@ -220,7 +221,9 @@ class MatchRepository:
             fields.append("acknowledged_at = COALESCE(acknowledged_at, ?)")
             params.append(now)
 
-        if notes is not None:
+        if clear_notes:
+            fields.append("notes = NULL")
+        elif notes is not None:
             fields.append("notes = ?")
             params.append(notes)
 
@@ -246,6 +249,7 @@ class MatchRepository:
                 WHERE id = ?
             """, (image_id, image_id, image_id))
 
+        self.conn.commit()
         return self.get_by_id(match_id)
 
     def apply_rule_to_unreviewed_matches(self, domain: str, classification: str, rule_id: int) -> int:
@@ -271,4 +275,30 @@ class MatchRepository:
             )
             WHERE id IN (SELECT DISTINCT image_id FROM matches WHERE domain = ? OR domain LIKE '%.' || ?)
         """, (domain, domain))
+        self.conn.commit()
         return updated_count
+
+    def cascade_rule_update(self, rule_id: int, new_classification: str) -> int:
+        """Updates classification on all matches that were auto-classified by this rule,
+        preserving matches that were manually classified by user (auto_classified_by_rule_id IS NULL)."""
+        now = datetime.now(timezone.utc).isoformat()
+        cur = self.conn.cursor()
+        cur.execute("""
+            UPDATE matches
+            SET classification = ?,
+                classified_at = ?
+            WHERE auto_classified_by_rule_id = ?
+        """, (new_classification, now, rule_id))
+        updated = cur.rowcount
+
+        # Refresh affected images
+        cur.execute("""
+            UPDATE images
+            SET unreviewed_count = (
+                SELECT COUNT(*) FROM matches WHERE matches.image_id = images.id AND classification = 'UNREVIEWED'
+            )
+            WHERE id IN (SELECT DISTINCT image_id FROM matches WHERE auto_classified_by_rule_id = ?)
+        """, (rule_id,))
+        self.conn.commit()
+        return updated
+

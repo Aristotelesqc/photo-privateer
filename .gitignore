@@ -46,7 +46,12 @@ yarn-error.log*
 *.db-wal
 *.db-shm
 *.db-journal
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+*.sqlite-journal
 photoscrub.db*
+
 data/
 thumbnails/
 .thumbnails/

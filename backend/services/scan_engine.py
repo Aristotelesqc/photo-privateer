@@ -2,11 +2,14 @@
 from __future__ import annotations
 
 import logging
+import os
+import sqlite3
 import threading
 from typing import Optional, Callable
 from pathlib import Path
 
 from backend.database import get_connection
+from backend.repositories.library_repo import LibraryRepository
 from backend.repositories.image_repo import ImageRepository
 from backend.repositories.match_repo import MatchRepository
 from backend.repositories.domain_rule_repo import DomainRuleRepository
@@ -30,12 +33,14 @@ class ScanEngine:
         rule_repo: DomainRuleRepository,
         usage_repo: UsageRepository,
         settings_repo: SettingsRepository,
+        library_repo: Optional[LibraryRepository] = None,
     ):
         self.image_repo = image_repo
         self.match_repo = match_repo
         self.rule_repo = rule_repo
         self.usage_repo = usage_repo
         self.settings_repo = settings_repo
+        self.library_repo = library_repo or LibraryRepository(self.image_repo.conn)
         self.db_path: Optional[str] = None
         try:
             cur = self.image_repo.conn.cursor()
@@ -68,7 +73,11 @@ class ScanEngine:
         if not image_ids:
             raise ValueError("No image IDs provided for scan.")
 
-        # 2. Enforce free tier allowance guard first before disk I/O
+        # 2. Enforce active non-archived libraries
+        active_libs = {lib.id: lib for lib in self.library_repo.list_libraries(include_archived=False) if lib.enabled}
+
+
+        # 3. Enforce free tier allowance guard first before disk I/O
         settings = self.settings_repo.get_app_settings()
         provider_id = provider_override or settings.active_provider
 
@@ -83,9 +92,18 @@ class ScanEngine:
                     f"Authorize force override to proceed."
                 )
 
-        # 3. Validate images and filter to those present on disk
+        # 4. Validate images and filter to those present on disk
         images = self.image_repo.get_by_ids(image_ids)
         image_map = {img.id: img for img in images}
+
+        archived_or_disabled_ids = [
+            iid for iid in image_ids
+            if iid in image_map and (image_map[iid].library_id not in active_libs)
+        ]
+        if archived_or_disabled_ids:
+            raise ValueError(
+                f"Cannot scan images belonging to archived or disabled libraries: {archived_or_disabled_ids}"
+            )
         
         usable_images: list[ImageOut] = []
         missing_ids: list[int] = []
@@ -130,10 +148,16 @@ class ScanEngine:
         note_str = f"Skipped {len(missing_ids)} missing files." if missing_ids else None
 
         # Create session and commit
-        session = self.usage_repo.create_scan_session(
-            provider=provider.display_name,
-            total_images=len(usable_images),
-        )
+        try:
+            session = self.usage_repo.create_scan_session(
+                provider=provider.display_name,
+                total_images=len(usable_images),
+            )
+        except sqlite3.IntegrityError as e:
+            raise ScanConflictError(
+                "Another scan session is currently running. Single active scan enforced."
+            ) from e
+
         if note_str:
             self.usage_repo.update_scan_session_progress(
                 session_id=session.id,
@@ -188,6 +212,7 @@ class ScanEngine:
         """
         conn = get_connection(db_path or self.db_path)
         try:
+            library_repo = LibraryRepository(conn)
             image_repo = ImageRepository(conn)
             match_repo = MatchRepository(conn)
             rule_repo = DomainRuleRepository(conn)
@@ -217,6 +242,42 @@ class ScanEngine:
                     conn.commit()
                     continue
 
+                # Verify library active & symlink containment
+                lib = library_repo.get_by_id(img.library_id)
+                if not lib or lib.is_archived or not lib.enabled:
+                    processed += 1
+                    failed += 1
+                    usage_repo.record_scan_item(
+                        session_id=session_id,
+                        image_id=img.id,
+                        status="ERROR",
+                        error_message="Image belongs to an archived or disabled library",
+                        matches_found=0,
+                    )
+                    usage_repo.update_scan_session_progress(session_id, processed, successful, failed)
+                    conn.commit()
+                    continue
+
+                try:
+                    real_file = Path(img.file_path).resolve()
+                    real_root = Path(lib.path).resolve()
+                    if os.path.commonpath([str(real_file), str(real_root)]) != str(real_root):
+                        raise ValueError(f"Path traversal detected: {img.file_path} resolves outside library root {lib.path}")
+                except Exception as p_err:
+
+                    processed += 1
+                    failed += 1
+                    usage_repo.record_scan_item(
+                        session_id=session_id,
+                        image_id=img.id,
+                        status="ERROR",
+                        error_message=f"Containment check failed: {str(p_err)}",
+                        matches_found=0,
+                    )
+                    usage_repo.update_scan_session_progress(session_id, processed, successful, failed)
+                    conn.commit()
+                    continue
+
                 # 2. Call external provider OUTSIDE of any database write transaction
                 try:
                     provider_result = provider.search(
@@ -229,29 +290,34 @@ class ScanEngine:
                         success=False,
                         items=[],
                         units_consumed=0,
+                        error_kind="LOCAL_EXECUTION_ERROR",
                         error_message=f"Local execution error: {str(exc)}",
                     )
 
                 # 3. Categorize request result and determine billing semantics
                 current_period = get_current_billing_period()
+                units_consumed = getattr(provider_result, "units_consumed", 1 if provider_result.success else 0)
+                error_kind = getattr(provider_result, "error_kind", None)
+
                 if provider_result.success:
                     req_status = "SUCCESS"
-                    attempted_units = 1
-                    successful_units = 1
+                    attempted_units = units_consumed
+                    successful_units = units_consumed
                     failed_units = 0
                 else:
-                    err_msg = provider_result.error_message or ""
-                    # If failed remotely via Cloud Vision API call, mark as REMOTE_ERROR
-                    if "API" in err_msg or "Quota" in err_msg or "Google" in err_msg:
+                    if error_kind == "REMOTE_API_ERROR" or units_consumed > 0:
                         req_status = "REMOTE_ERROR"
+                        attempted_units = units_consumed
+                        successful_units = 0
+                        failed_units = units_consumed
                     else:
                         req_status = "LOCAL_ERROR"
-                    attempted_units = 1
-                    successful_units = 0
-                    failed_units = 1
+                        attempted_units = 0
+                        successful_units = 0
+                        failed_units = 1
 
                 unit_cost = 0.0
-                if provider_id == "google_vision" and req_status in ("SUCCESS", "REMOTE_ERROR"):
+                if provider_id == "google_vision" and req_status in ("SUCCESS", "REMOTE_ERROR") and units_consumed > 0:
                     current_units = usage_repo.get_period_units(current_period, provider="google_vision")
                     if current_units >= free_tier_allowance:
                         unit_cost = unit_price_usd

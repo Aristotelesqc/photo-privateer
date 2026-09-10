@@ -28,35 +28,35 @@ class GoogleVisionSearchProvider(SearchProvider):
         return "Google Cloud Vision Web Detection"
 
     def _prepare_image_bytes(self, image_path: str) -> bytes:
-        """Reads local image, transposing EXIF orientation and converting TIFF/large formats to high-quality JPEG in-memory.
-        Source image is never modified.
+        """Reads local image, transposing EXIF orientation, stripping all EXIF/GPS/IPTC/XMP metadata,
+        and producing a clean high-quality JPEG in-memory for reverse image search.
+        Original source image on disk is strictly read-only and never modified.
         """
         path = Path(image_path)
-        ext = path.suffix.lower()
+        with Image.open(path) as raw_img:
+            # 1. Apply EXIF orientation to visual pixel matrix
+            img = ImageOps.exif_transpose(raw_img)
 
-        # If already standard JPEG/PNG/WebP and under 15MB, send directly
-        file_size = path.stat().st_size
-        if ext in {".jpg", ".jpeg", ".png", ".webp"} and file_size <= 15 * 1024 * 1024:
-            with open(path, "rb") as f:
-                return f.read()
-
-        # Otherwise normalize in memory via Pillow
-        with Image.open(path) as img:
-            img = ImageOps.exif_transpose(img)
-            # If CMYK or RGBA, convert to RGB for JPEG
+            # 2. Ensure compatible color mode (convert CMYK, RGBA, etc. to RGB)
             if img.mode not in ("RGB", "L"):
                 img = img.convert("RGB")
             
-            # If massive dimensions, resize conservatively to max 3000px on long edge for Web Detection
-            max_dim = 3000
+            # 3. Resize conservatively if huge (max 2048px on longest edge)
+            max_dim = 2048
             if max(img.width, img.height) > max_dim:
                 img.thumbnail((max_dim, max_dim), Image.Resampling.LANCZOS)
 
+            # 4. Strip ALL metadata: create fresh PIL image without any existing info or EXIF dictionaries
+            clean_img = Image.new("RGB", img.size)
+            clean_img.paste(img)
+
             buffer = io.BytesIO()
-            img.save(buffer, format="JPEG", quality=90, optimize=True)
+            clean_img.save(buffer, format="JPEG", quality=90, optimize=True)
             return buffer.getvalue()
 
     def search(self, image_path: str, **kwargs: Any) -> ProviderResult:
+        if os.environ.get("PHOTO_PRIVATEER_TEST_MODE") == "1":
+            raise RuntimeError("Google Vision network calls are strictly forbidden in test mode.")
         try:
             from google.cloud import vision
             from google.api_core.exceptions import GoogleAPICallError
@@ -65,6 +65,7 @@ class GoogleVisionSearchProvider(SearchProvider):
                 success=False,
                 items=[],
                 units_consumed=0,
+                error_kind="LOCAL_PREP_ERROR",
                 error_message="google-cloud-vision Python package is not installed",
             )
 
@@ -82,6 +83,7 @@ class GoogleVisionSearchProvider(SearchProvider):
                 success=False,
                 items=[],
                 units_consumed=0,
+                error_kind="LOCAL_AUTH_ERROR",
                 error_message=f"Google Cloud authentication failed: {str(e)}",
             )
 
@@ -97,6 +99,7 @@ class GoogleVisionSearchProvider(SearchProvider):
                     success=False,
                     items=[],
                     units_consumed=1,
+                    error_kind="REMOTE_API_ERROR",
                     error_message=f"Google Vision API Error: {response.error.message}",
                 )
 
@@ -194,6 +197,7 @@ class GoogleVisionSearchProvider(SearchProvider):
                 success=False,
                 items=[],
                 units_consumed=1,
+                error_kind="REMOTE_API_ERROR",
                 error_message=f"Google Cloud Vision API call failed: {e.message or str(e)}",
             )
         except Exception as e:
@@ -201,5 +205,6 @@ class GoogleVisionSearchProvider(SearchProvider):
                 success=False,
                 items=[],
                 units_consumed=0,
+                error_kind="LOCAL_PREP_ERROR",
                 error_message=f"Unexpected error executing search: {str(e)}",
             )

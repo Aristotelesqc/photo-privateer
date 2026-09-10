@@ -92,6 +92,12 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
     loadPhotos();
   }, [selectedLibraryId, searchQuery, selectedProject, statusFilter, page, density]);
 
+  // Clear hidden selection on context change (library, filter, search, project, page)
+  useEffect(() => {
+    setSelectedIds(new Set());
+  }, [selectedLibraryId, searchQuery, selectedProject, statusFilter, page]);
+
+
   // Restore active scan progress modal if a scan is already running
   useEffect(() => {
     fetchScanHistory(1)

@@ -67,9 +67,20 @@ def update_match(
     if not m:
         raise HTTPException(status_code=404, detail="Match not found")
 
+    clear_notes = False
+    notes_val = None
+    if "notes" in payload.model_fields_set:
+        if payload.notes is None or payload.notes.strip() == "":
+            clear_notes = True
+        else:
+            notes_val = payload.notes
+
     updated = repo.update_classification_and_notes(
         match_id=match_id,
         classification=payload.classification,
-        notes=payload.notes,
+        notes=notes_val,
+        clear_notes=clear_notes,
+        acknowledged=payload.acknowledged,
     )
     return updated
+
