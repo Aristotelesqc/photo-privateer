@@ -17,6 +17,10 @@ The application version is synchronized across four files:
 
 The frontend header imports and displays `v{APP_VERSION}` dynamically.
 
+## Script Path Resolution Convention
+
+When writing or modifying helper scripts nested within `.agents/skills/<name>/scripts/`, note that the repository workspace root is exactly 5 directory levels above the script (`Path(__file__).resolve().parents[4]`). Always test and dogfood script execution from the repository root to verify cross-directory path resolution.
+
 ## Version Update Workflow
 
 ### 1. Bump the Version

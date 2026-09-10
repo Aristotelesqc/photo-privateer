@@ -151,7 +151,8 @@ class SearchProvider(abc.ABC):
 
 - Google Service Account JSON files must never be committed to git, uploaded to browser storage, or logged.
 - The Settings UI accepts and validates the local file path on disk; the secret payload never leaves the Python backend.
-- Application Default Credentials (ADC) are checked with a local fast-path avoiding slow metadata ping delays.
+- **Fast ADC Check**: In local desktop environments, never invoke `google.auth.default()` blindly without pre-checking local ADC credential file existence (`%APPDATA%/gcloud/application_default_credentials.json` on Windows, `~/.config/gcloud/application_default_credentials.json` on Linux/macOS), preventing 20–30s link-local metadata ping hangs on consumer networks.
+- **Zero-Cost Auth Verification**: Validate Google Cloud credentials strictly via OAuth2 token refresh (`credentials.refresh(Request())`) against Google's token endpoint rather than issuing paid Cloud Vision Web Detection calls. This validates IAM validity and project structure at $0.00 cost with 0 API quota consumed.
 - Remote candidate match images are loaded directly in the user's browser with `referrerpolicy="no-referrer"` upon user opt-in.
 - The server binds strictly to `127.0.0.1`.
 
@@ -172,6 +173,9 @@ Verification follows a strict 4-tier testing hierarchy:
 2. **Tier 2 - Frontend Unit Tests**: `npm test` inside `frontend/` (Vitest component testing for thumbnails, scan modal, confirm dialogs).
 3. **Tier 3 - Frontend Production Build**: `npm run build` inside `frontend/` (TypeScript verification and bundle emission).
 4. **Tier 4 - Playwright End-to-End Suite**: `npm run test:e2e` inside `frontend/` (Full headless browser validation of complete user journeys).
+
+### 10.1 Playwright Server Lifecycle Invariant
+- **Isolated Test Instance**: In `playwright.config.ts`, always configure `reuseExistingServer: false`. Reusing background server processes silently masks backend schema changes, routing updates, or stale frontend bundle artifacts. Every test suite execution must launch a fresh process running current working tree code.
 
 ---
 
