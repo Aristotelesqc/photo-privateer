@@ -17,6 +17,7 @@ class LibraryRepository:
         cur.execute(f"""
             SELECT l.id, l.path, l.name, l.enabled, l.recursive, l.created_at, l.last_indexed_at,
                    COALESCE(l.is_archived, 0) as is_archived,
+                   COALESCE(l.subfolders_as_projects, 1) as subfolders_as_projects,
                    COUNT(i.id) as image_count
             FROM libraries l
             LEFT JOIN images i ON l.id = i.library_id
@@ -33,6 +34,7 @@ class LibraryRepository:
                 enabled=bool(r["enabled"]),
                 recursive=bool(r["recursive"]),
                 is_archived=bool(r["is_archived"]),
+                subfolders_as_projects=bool(r["subfolders_as_projects"]),
                 created_at=r["created_at"],
                 last_indexed_at=r["last_indexed_at"],
                 image_count=r["image_count"],
@@ -45,6 +47,7 @@ class LibraryRepository:
         cur.execute("""
             SELECT l.id, l.path, l.name, l.enabled, l.recursive, l.created_at, l.last_indexed_at,
                    COALESCE(l.is_archived, 0) as is_archived,
+                   COALESCE(l.subfolders_as_projects, 1) as subfolders_as_projects,
                    COUNT(i.id) as image_count
             FROM libraries l
             LEFT JOIN images i ON l.id = i.library_id
@@ -61,6 +64,7 @@ class LibraryRepository:
             enabled=bool(r["enabled"]),
             recursive=bool(r["recursive"]),
             is_archived=bool(r["is_archived"]),
+            subfolders_as_projects=bool(r["subfolders_as_projects"]),
             created_at=r["created_at"],
             last_indexed_at=r["last_indexed_at"],
             image_count=r["image_count"],
@@ -75,15 +79,21 @@ class LibraryRepository:
             return None
         return self.get_by_id(r["id"])
 
-    def create(self, path: str, name: Optional[str] = None, recursive: bool = True) -> LibraryOut:
+    def create(
+        self,
+        path: str,
+        name: Optional[str] = None,
+        recursive: bool = True,
+        subfolders_as_projects: bool = True,
+    ) -> LibraryOut:
         norm_path = str(Path(path).resolve())
         folder_name = name or Path(norm_path).name or norm_path
         now = datetime.now(timezone.utc).isoformat()
         cur = self.conn.cursor()
         cur.execute("""
-            INSERT INTO libraries (path, name, enabled, recursive, is_archived, created_at)
-            VALUES (?, ?, 1, ?, 0, ?)
-        """, (norm_path, folder_name, int(recursive), now))
+            INSERT INTO libraries (path, name, enabled, recursive, is_archived, subfolders_as_projects, created_at)
+            VALUES (?, ?, 1, ?, 0, ?, ?)
+        """, (norm_path, folder_name, int(recursive), int(subfolders_as_projects), now))
         lib_id = cur.lastrowid
         return self.get_by_id(lib_id)  # type: ignore
 
@@ -94,6 +104,7 @@ class LibraryRepository:
         enabled: Optional[bool] = None,
         recursive: Optional[bool] = None,
         is_archived: Optional[bool] = None,
+        subfolders_as_projects: Optional[bool] = None,
     ) -> Optional[LibraryOut]:
         fields = []
         params = []
@@ -109,6 +120,9 @@ class LibraryRepository:
         if is_archived is not None:
             fields.append("is_archived = ?")
             params.append(int(is_archived))
+        if subfolders_as_projects is not None:
+            fields.append("subfolders_as_projects = ?")
+            params.append(int(subfolders_as_projects))
         if not fields:
             return self.get_by_id(library_id)
 

@@ -14,12 +14,14 @@ class LibraryCreate(BaseModel):
     path: str = Field(..., description="Absolute path to directory on local disk")
     name: Optional[str] = Field(None, description="Optional nickname for the library")
     recursive: bool = Field(True, description="Whether to index subfolders recursively")
+    subfolders_as_projects: bool = Field(True, description="Whether to auto-detect subfolders as distinct projects")
 
 class LibraryUpdate(BaseModel):
     name: Optional[str] = None
     enabled: Optional[bool] = None
     recursive: Optional[bool] = None
     is_archived: Optional[bool] = None
+    subfolders_as_projects: Optional[bool] = None
 
 class LibraryOut(BaseModel):
     id: int
@@ -28,6 +30,7 @@ class LibraryOut(BaseModel):
     enabled: bool
     recursive: bool
     is_archived: bool = False
+    subfolders_as_projects: bool = True
     created_at: str
     last_indexed_at: Optional[str] = None
     image_count: int = 0
@@ -47,11 +50,16 @@ class ImageOut(BaseModel):
     indexed_at: str
     last_seen_on_disk: str
     is_present_on_disk: bool = True
+    project: Optional[str] = None
     last_scanned_at: Optional[str] = None
     scan_count: int = 0
     match_count: int = 0
     unreviewed_count: int = 0
     thumbnail_url: str
+
+class BatchProjectUpdate(BaseModel):
+    photo_ids: List[int] = Field(..., description="List of image IDs to assign or clear project")
+    project: Optional[str] = Field(None, description="Project name, or null/empty to clear")
 
 class ImageListResponse(BaseModel):
     images: List[ImageOut]
@@ -86,6 +94,7 @@ class MatchOut(BaseModel):
     # Joined photo details for display
     image_filename: Optional[str] = None
     image_thumbnail_url: Optional[str] = None
+    image_project: Optional[str] = None
 
 class MatchUpdate(BaseModel):
     classification: Optional[ClassificationLiteral] = None

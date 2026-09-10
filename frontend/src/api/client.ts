@@ -45,13 +45,21 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
 // --- Libraries ---
 export const fetchLibraries = () => request<Library[]>('/libraries');
 
-export const createLibrary = (path: string, name?: string, recursive: boolean = true) =>
+export const createLibrary = (
+  path: string,
+  name?: string,
+  recursive: boolean = true,
+  subfolders_as_projects: boolean = true
+) =>
   request<Library>('/libraries', {
     method: 'POST',
-    body: JSON.stringify({ path, name, recursive }),
+    body: JSON.stringify({ path, name, recursive, subfolders_as_projects }),
   });
 
-export const updateLibrary = (id: number, updates: { name?: string; enabled?: boolean; recursive?: boolean }) =>
+export const updateLibrary = (
+  id: number,
+  updates: { name?: string; enabled?: boolean; recursive?: boolean; subfolders_as_projects?: boolean }
+) =>
   request<Library>(`/libraries/${id}`, {
     method: 'PATCH',
     body: JSON.stringify(updates),
@@ -83,10 +91,28 @@ export const indexLibrary = (id: number) =>
     { method: 'POST' }
   );
 
+export const detectLibraryProjects = (id: number) =>
+  request<{ status: string; updated_count: number }>(
+    `/libraries/${id}/detect-projects`,
+    { method: 'POST' }
+  );
+
 // --- Photos ---
+export const fetchProjects = (library_id?: number) => {
+  const query = library_id !== undefined ? `?library_id=${library_id}` : '';
+  return request<string[]>(`/photos/projects${query}`);
+};
+
+export const batchAssignProject = (photo_ids: number[], project: string | null) =>
+  request<{ updated: number; project: string | null }>('/photos/batch-project', {
+    method: 'POST',
+    body: JSON.stringify({ photo_ids, project }),
+  });
+
 export const fetchPhotos = (params: {
   library_id?: number;
   search?: string;
+  project?: string;
   filter_status?: 'all' | 'unscanned' | 'scanned' | 'has_matches' | 'has_unreviewed';
   sort_by?: string;
   sort_dir?: 'asc' | 'desc';
@@ -96,6 +122,7 @@ export const fetchPhotos = (params: {
   const query = new URLSearchParams();
   if (params.library_id !== undefined) query.set('library_id', String(params.library_id));
   if (params.search) query.set('search', params.search);
+  if (params.project) query.set('project', params.project);
   if (params.filter_status) query.set('filter_status', params.filter_status);
   if (params.sort_by) query.set('sort_by', params.sort_by);
   if (params.sort_dir) query.set('sort_dir', params.sort_dir);
@@ -134,6 +161,7 @@ export const cancelScan = (id: number) =>
 // --- Matches ---
 export const fetchMatches = (params: {
   image_id?: number;
+  project?: string;
   classification?: ClassificationType;
   is_new_only?: boolean;
   domain?: string;
@@ -145,6 +173,7 @@ export const fetchMatches = (params: {
 }) => {
   const query = new URLSearchParams();
   if (params.image_id !== undefined) query.set('image_id', String(params.image_id));
+  if (params.project) query.set('project', params.project);
   if (params.classification) query.set('classification', params.classification);
   if (params.is_new_only) query.set('is_new_only', 'true');
   if (params.domain) query.set('domain', params.domain);

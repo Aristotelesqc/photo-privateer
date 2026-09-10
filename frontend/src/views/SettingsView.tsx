@@ -25,6 +25,7 @@ import {
   archiveLibrary,
   unarchiveLibrary,
   indexLibrary,
+  detectLibraryProjects,
   updateSettings,
   validateFolder,
   browseFolder,
@@ -46,6 +47,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const [newFolderPath, setNewFolderPath] = useState('');
   const [newFolderName, setNewFolderName] = useState('');
   const [isRecursive, setIsRecursive] = useState(true);
+  const [subfoldersAsProjects, setSubfoldersAsProjects] = useState(true);
   const [validatingPath, setValidatingPath] = useState(false);
   const [validationResult, setValidationResult] = useState<{
     valid: boolean;
@@ -55,6 +57,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 
   // Indexing in progress per library
   const [indexingLibId, setIndexingLibId] = useState<number | null>(null);
+  const [detectingProjectsLibId, setDetectingProjectsLibId] = useState<number | null>(null);
   const [indexFeedback, setIndexFeedback] = useState<{ [id: number]: string }>({});
 
   // Settings form state
@@ -134,7 +137,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       const lib = await createLibrary(
         newFolderPath.trim(),
         newFolderName.trim() || undefined,
-        isRecursive
+        isRecursive,
+        subfoldersAsProjects
       );
       setNewFolderPath('');
       setNewFolderName('');
@@ -230,6 +234,32 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     }
   };
 
+  const handleToggleSubfoldersAsProjects = async (lib: Library) => {
+    try {
+      await updateLibrary(lib.id, { subfolders_as_projects: !lib.subfolders_as_projects });
+      onRefreshData();
+    } catch (err: any) {
+      alert(`Update failed: ${err.message}`);
+    }
+  };
+
+  const handleDetectProjects = async (libId: number) => {
+    setDetectingProjectsLibId(libId);
+    setIndexFeedback((prev) => ({ ...prev, [libId]: 'Detecting projects...' }));
+    try {
+      const res = await detectLibraryProjects(libId);
+      setIndexFeedback((prev) => ({
+        ...prev,
+        [libId]: `Projects auto-detected: ${res.updated_count} photo(s) assigned`,
+      }));
+      onRefreshData();
+    } catch (err: any) {
+      setIndexFeedback((prev) => ({ ...prev, [libId]: `Error: ${err.message}` }));
+    } finally {
+      setDetectingProjectsLibId(null);
+    }
+  };
+
   const handleSaveSettings = async (e: React.FormEvent) => {
     e.preventDefault();
     setSavingSettings(true);
@@ -295,15 +325,26 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                   </p>
                   <div className="flex items-center gap-3 text-[10px] text-carbon-500 pt-0.5">
                     {!lib.is_archived && (
-                      <label className="flex items-center gap-1 cursor-pointer text-carbon-300">
-                        <input
-                          type="checkbox"
-                          checked={lib.recursive}
-                          onChange={() => handleToggleRecursive(lib)}
-                          className="rounded bg-carbon-900 border-carbon-700 text-accent-600 focus:ring-accent-500 w-3 h-3"
-                        />
-                        <span>Recursive subfolders</span>
-                      </label>
+                      <>
+                        <label className="flex items-center gap-1 cursor-pointer text-carbon-300">
+                          <input
+                            type="checkbox"
+                            checked={lib.recursive}
+                            onChange={() => handleToggleRecursive(lib)}
+                            className="rounded bg-carbon-900 border-carbon-700 text-accent-600 focus:ring-accent-500 w-3 h-3"
+                          />
+                          <span>Recursive subfolders</span>
+                        </label>
+                        <label className="flex items-center gap-1 cursor-pointer text-carbon-300">
+                          <input
+                            type="checkbox"
+                            checked={lib.subfolders_as_projects}
+                            onChange={() => handleToggleSubfoldersAsProjects(lib)}
+                            className="rounded bg-carbon-900 border-carbon-700 text-accent-600 focus:ring-accent-500 w-3 h-3"
+                          />
+                          <span>Subfolders as projects</span>
+                        </label>
+                      </>
                     )}
                     {lib.last_indexed_at && (
                       <span className="tabular-nums">Indexed: {new Date(lib.last_indexed_at).toLocaleDateString()}</span>
@@ -325,6 +366,15 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                       >
                         <RefreshCw className={`w-3 h-3 ${indexingLibId === lib.id ? 'animate-spin' : ''}`} />
                         <span>{indexingLibId === lib.id ? 'Indexing...' : 'Index'}</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleDetectProjects(lib.id)}
+                        disabled={detectingProjectsLibId === lib.id}
+                        className="flex items-center gap-1 px-2.5 py-1 rounded bg-carbon-800 hover:bg-carbon-700 text-carbon-200 hover:text-white transition-colors text-xs"
+                        title="Auto-detect immediate subfolders as project names for all photos in this folder"
+                      >
+                        <span>{detectingProjectsLibId === lib.id ? 'Detecting...' : 'Detect Projects'}</span>
                       </button>
                       <button
                         type="button"
@@ -436,15 +486,26 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           </div>
 
           <div className="flex items-center justify-between gap-2 pt-1">
-            <label className="flex items-center gap-1.5 text-carbon-300 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={isRecursive}
-                onChange={(e) => setIsRecursive(e.target.checked)}
-                className="rounded bg-carbon-900 border-carbon-700 text-accent-600 focus:ring-accent-500 w-3.5 h-3.5"
-              />
-              <span>Include subfolders</span>
-            </label>
+            <div className="flex items-center gap-4">
+              <label className="flex items-center gap-1.5 text-carbon-300 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={isRecursive}
+                  onChange={(e) => setIsRecursive(e.target.checked)}
+                  className="rounded bg-carbon-900 border-carbon-700 text-accent-600 focus:ring-accent-500 w-3.5 h-3.5"
+                />
+                <span>Include subfolders</span>
+              </label>
+              <label className="flex items-center gap-1.5 text-carbon-300 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={subfoldersAsProjects}
+                  onChange={(e) => setSubfoldersAsProjects(e.target.checked)}
+                  className="rounded bg-carbon-900 border-carbon-700 text-accent-600 focus:ring-accent-500 w-3.5 h-3.5"
+                />
+                <span>Subfolders as projects</span>
+              </label>
+            </div>
 
             <button
               type="submit"

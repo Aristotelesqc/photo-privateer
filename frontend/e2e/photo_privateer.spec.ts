@@ -222,4 +222,48 @@ test.describe.serial('Photo Privateer End-to-End Test Suite', () => {
       }
     }
   });
+
+  test('Scenario 6: Project batch assignment and filtering', async ({ page }) => {
+    await page.goto('/');
+
+    // Navigate to Library
+    await page.click('button:has-text("Library")');
+    await selectTestLibrary(page);
+
+    // Select a photo
+    const photoTitle = page.locator('p[title="mountain_landscape.jpg"]').first();
+    await expect(photoTitle).toBeVisible({ timeout: 10000 });
+    await photoTitle.click();
+
+    // Click Assign Project
+    const assignBtn = page.locator('button:has-text("Assign Project")');
+    await expect(assignBtn).toBeVisible();
+    await assignBtn.click();
+
+    // Modal opens
+    await expect(page.locator('text=Assign Project (1 photo)')).toBeVisible();
+
+    // Type project name
+    const projectInput = page.locator('input[placeholder*="Wedding"]');
+    await projectInput.fill('Alpine Expedition');
+
+    // Click Apply Project
+    await page.click('button:has-text("Apply Project")');
+
+    // Verify badge appears on the photo card
+    await expect(page.locator('span[title="Project: Alpine Expedition"]')).toBeVisible({ timeout: 5000 });
+
+    // Filter by project in dropdown
+    const projectSelect = page.locator('select').nth(1);
+    await projectSelect.selectOption('Alpine Expedition');
+    await expect(page.locator('p[title="mountain_landscape.jpg"]')).toBeVisible();
+
+    // Filter by unassigned
+    await projectSelect.selectOption('__unassigned__');
+    await expect(page.locator('p[title="mountain_landscape.jpg"]')).not.toBeVisible();
+
+    // Reset filter
+    await projectSelect.selectOption('');
+  });
 });
+

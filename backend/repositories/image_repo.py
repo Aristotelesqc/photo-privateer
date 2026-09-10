@@ -25,6 +25,7 @@ class ImageRepository:
             indexed_at=r["indexed_at"],
             last_seen_on_disk=r["last_seen_on_disk"],
             is_present_on_disk=bool(r["is_present_on_disk"]) if "is_present_on_disk" in r.keys() else True,
+            project=r["project"] if "project" in r.keys() else None,
             last_scanned_at=r["last_scanned_at"],
             scan_count=r["scan_count"],
             match_count=r["match_count"],
@@ -97,6 +98,7 @@ class ImageRepository:
         library_id: Optional[int] = None,
         search: Optional[str] = None,
         filter_status: Optional[str] = None,  # "all", "unscanned", "scanned", "has_matches", "has_unreviewed", "missing"
+        project: Optional[str] = None,
         sort_by: str = "indexed_at",
         sort_dir: str = "desc",
         limit: int = 50,
@@ -113,6 +115,13 @@ class ImageRepository:
             where_clauses.append("(filename LIKE ? OR file_path LIKE ?)")
             term = f"%{search}%"
             params.extend([term, term])
+
+        if project:
+            if project == "__unassigned__":
+                where_clauses.append("(project IS NULL OR project = '')")
+            else:
+                where_clauses.append("project = ?")
+                params.append(project)
 
         if filter_status == "unscanned":
             where_clauses.append("scan_count = 0 AND is_present_on_disk = 1")
@@ -137,6 +146,7 @@ class ImageRepository:
             "indexed_at": "indexed_at",
             "last_scanned_at": "last_scanned_at",
             "filename": "filename",
+            "project": "project",
             "match_count": "match_count",
             "unreviewed_count": "unreviewed_count",
             "file_size": "file_size",
@@ -165,14 +175,15 @@ class ImageRepository:
         width: Optional[int],
         height: Optional[int],
         format: Optional[str],
+        project: Optional[str] = None,
     ) -> ImageOut:
         now = datetime.now(timezone.utc).isoformat()
         cur = self.conn.cursor()
         cur.execute("""
             INSERT INTO images (
                 library_id, sha256, file_path, filename, file_size, file_modified_at,
-                width, height, format, indexed_at, last_seen_on_disk, is_present_on_disk
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+                width, height, format, project, indexed_at, last_seen_on_disk, is_present_on_disk
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
             ON CONFLICT(file_path) DO UPDATE SET
                 sha256 = excluded.sha256,
                 filename = excluded.filename,
@@ -181,15 +192,47 @@ class ImageRepository:
                 width = excluded.width,
                 height = excluded.height,
                 format = excluded.format,
+                project = COALESCE(images.project, excluded.project),
                 last_seen_on_disk = excluded.last_seen_on_disk,
                 is_present_on_disk = 1
         """, (
             library_id, sha256, file_path, filename, file_size, file_modified_at,
-            width, height, format, now, now
+            width, height, format, project, now, now
         ))
         cur.execute("SELECT * FROM images WHERE file_path = ?", (file_path,))
         r = cur.fetchone()
         return self._row_to_image(r)
+
+    def update_project(self, image_id: int, project: Optional[str]) -> Optional[ImageOut]:
+        val = project.strip() if (project and project.strip()) else None
+        cur = self.conn.cursor()
+        cur.execute("UPDATE images SET project = ? WHERE id = ?", (val, image_id))
+        return self.get_by_id(image_id)
+
+    def batch_update_project(self, image_ids: list[int], project: Optional[str]) -> int:
+        if not image_ids:
+            return 0
+        val = project.strip() if (project and project.strip()) else None
+        placeholders = ",".join("?" for _ in image_ids)
+        cur = self.conn.cursor()
+        cur.execute(f"UPDATE images SET project = ? WHERE id IN ({placeholders})", (val, *image_ids))
+        return cur.rowcount
+
+    def get_distinct_projects(self, library_id: Optional[int] = None) -> list[str]:
+        cur = self.conn.cursor()
+        if library_id is not None:
+            cur.execute("""
+                SELECT DISTINCT project FROM images
+                WHERE library_id = ? AND project IS NOT NULL AND project != ''
+                ORDER BY project ASC
+            """, (library_id,))
+        else:
+            cur.execute("""
+                SELECT DISTINCT project FROM images
+                WHERE project IS NOT NULL AND project != ''
+                ORDER BY project ASC
+            """)
+        return [row[0] for row in cur.fetchall() if row[0]]
 
     def record_scan_completed(self, image_id: int) -> None:
         now = datetime.now(timezone.utc).isoformat()

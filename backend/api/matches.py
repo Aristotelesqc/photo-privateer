@@ -13,6 +13,7 @@ router = APIRouter(prefix="/api/matches", tags=["matches"])
 @router.get("", response_model=MatchListResponse)
 def list_matches(
     image_id: Optional[int] = None,
+    project: Optional[str] = None,
     classification: Optional[str] = None,
     is_new_only: bool = False,
     domain: Optional[str] = None,
@@ -29,6 +30,7 @@ def list_matches(
     offset = (page - 1) * page_size
     matches, total = repo.list_matches(
         image_id=image_id,
+        project=project,
         classification=classification,
         is_new_only=is_new_only,
         domain=domain,

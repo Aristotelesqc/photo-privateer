@@ -5,6 +5,7 @@ export interface Library {
   enabled: boolean;
   recursive: boolean;
   is_archived: boolean;
+  subfolders_as_projects: boolean;
   created_at: string;
   last_indexed_at: string | null;
   image_count: number;
@@ -24,6 +25,7 @@ export interface ImageItem {
   indexed_at: string;
   last_seen_on_disk: string;
   is_present_on_disk: boolean;
+  project: string | null;
   last_scanned_at: string | null;
   scan_count: number;
   match_count: number;
@@ -62,6 +64,7 @@ export interface MatchItem {
   notes: string | null;
   image_filename?: string | null;
   image_thumbnail_url?: string | null;
+  image_project?: string | null;
 }
 
 export interface MatchListResponse {

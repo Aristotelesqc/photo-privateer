@@ -215,12 +215,27 @@ def migration_005_library_fk_safety(conn: sqlite3.Connection) -> None:
             CREATE INDEX IF NOT EXISTS idx_images_sha256 ON images(sha256);
         """)
 
+def migration_006_project_classification(conn: sqlite3.Connection) -> None:
+    """Adds project column to images and subfolders_as_projects to libraries."""
+    cur = conn.cursor()
+    cur.execute("PRAGMA table_info(images)")
+    image_cols = {row[1] for row in cur.fetchall()}
+    if "project" not in image_cols:
+        conn.execute("ALTER TABLE images ADD COLUMN project TEXT;")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_images_project ON images(project);")
+
+    cur.execute("PRAGMA table_info(libraries)")
+    lib_cols = {row[1] for row in cur.fetchall()}
+    if "subfolders_as_projects" not in lib_cols:
+        conn.execute("ALTER TABLE libraries ADD COLUMN subfolders_as_projects INTEGER NOT NULL DEFAULT 1;")
+
 MIGRATIONS: list[Migration] = [
     Migration(1, "001_initial_schema", migration_001_initial_schema),
     Migration(2, "002_library_archiving_and_disk_presence", migration_002_library_archiving_and_disk_presence),
     Migration(3, "003_scan_cancellation_and_recovery", migration_003_scan_cancellation_and_recovery),
     Migration(4, "004_matches_asset_only_and_uniqueness", migration_004_matches_asset_only_and_uniqueness),
     Migration(5, "005_library_fk_safety", migration_005_library_fk_safety),
+    Migration(6, "006_project_classification", migration_006_project_classification),
 ]
 
 def run_migrations(conn: sqlite3.Connection) -> list[int]:

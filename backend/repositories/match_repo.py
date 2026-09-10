@@ -34,12 +34,13 @@ class MatchRepository:
             notes=r["notes"],
             image_filename=r["filename"] if "filename" in r.keys() else None,
             image_thumbnail_url=f"/api/photos/{r['image_id']}/thumbnail" if "image_id" in r.keys() else None,
+            image_project=r["project"] if "project" in r.keys() else None,
         )
 
     def get_by_id(self, match_id: int) -> Optional[MatchOut]:
         cur = self.conn.cursor()
         cur.execute("""
-            SELECT m.*, i.filename
+            SELECT m.*, i.filename, i.project
             FROM matches m
             LEFT JOIN images i ON m.image_id = i.id
             WHERE m.id = ?
@@ -50,6 +51,7 @@ class MatchRepository:
     def list_matches(
         self,
         image_id: Optional[int] = None,
+        project: Optional[str] = None,
         classification: Optional[str] = None,
         is_new_only: bool = False,
         domain: Optional[str] = None,
@@ -65,6 +67,13 @@ class MatchRepository:
         if image_id is not None:
             where_clauses.append("m.image_id = ?")
             params.append(image_id)
+
+        if project:
+            if project == "__unassigned__":
+                where_clauses.append("(i.project IS NULL OR i.project = '')")
+            else:
+                where_clauses.append("i.project = ?")
+                params.append(project)
 
         if classification:
             where_clauses.append("m.classification = ?")
@@ -86,7 +95,12 @@ class MatchRepository:
 
         # Total count
         cur = self.conn.cursor()
-        cur.execute(f"SELECT COUNT(*) FROM matches m {where_sql}", tuple(params))
+        cur.execute(f"""
+            SELECT COUNT(*)
+            FROM matches m
+            LEFT JOIN images i ON m.image_id = i.id
+            {where_sql}
+        """, tuple(params))
         total = cur.fetchone()[0]
 
         # Allowed sorts
@@ -104,7 +118,7 @@ class MatchRepository:
         data_params = list(params)
         data_params.extend([limit, offset])
         cur.execute(f"""
-            SELECT m.*, i.filename
+            SELECT m.*, i.filename, i.project
             FROM matches m
             LEFT JOIN images i ON m.image_id = i.id
             {where_sql}

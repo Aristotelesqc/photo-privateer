@@ -14,7 +14,7 @@ import {
   ImageOff,
 } from 'lucide-react';
 import { MatchItem, ClassificationType } from '../types';
-import { fetchMatches, updateMatch, createRule } from '../api/client';
+import { fetchMatches, updateMatch, createRule, fetchProjects } from '../api/client';
 import { Thumbnail } from '../components/Thumbnail';
 import { DomainRuleModal } from '../components/DomainRuleModal';
 
@@ -38,6 +38,8 @@ export const ReviewView: React.FC<ReviewViewProps> = ({
   const [isNewOnly, setIsNewOnly] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [photoFilterId, setPhotoFilterId] = useState<number | undefined>(initialPhotoId);
+  const [projects, setProjects] = useState<string[]>([]);
+  const [selectedProject, setSelectedProject] = useState<string | undefined>(undefined);
   const [page, setPage] = useState(1);
   const pageSize = 30;
 
@@ -57,11 +59,16 @@ export const ReviewView: React.FC<ReviewViewProps> = ({
   // Notes editing state
   const [editingNotes, setEditingNotes] = useState<{ [matchId: number]: string }>({});
 
+  useEffect(() => {
+    fetchProjects().then(setProjects).catch(() => {});
+  }, []);
+
   const loadMatches = async () => {
     setLoading(true);
     try {
       const res = await fetchMatches({
         image_id: photoFilterId,
+        project: selectedProject,
         classification: activeClassification === 'ALL' ? undefined : activeClassification,
         is_new_only: isNewOnly,
         search: searchQuery.trim() || undefined,
@@ -79,7 +86,7 @@ export const ReviewView: React.FC<ReviewViewProps> = ({
 
   useEffect(() => {
     loadMatches();
-  }, [activeClassification, isNewOnly, searchQuery, photoFilterId, page]);
+  }, [activeClassification, isNewOnly, searchQuery, photoFilterId, selectedProject, page]);
 
   // Handle classification click
   const handleClassify = async (matchId: number, classification: ClassificationType) => {
@@ -173,9 +180,28 @@ export const ReviewView: React.FC<ReviewViewProps> = ({
           ))}
         </div>
 
-        {/* Search & New Discovery Toggle */}
-        <div className="flex items-center gap-3">
-          <div className="relative w-48 sm:w-64">
+        {/* Search & Filters */}
+        <div className="flex flex-wrap items-center gap-2.5">
+          {/* Project Select */}
+          <select
+            value={selectedProject ?? ''}
+            onChange={(e) => {
+              const val = e.target.value;
+              setSelectedProject(val || undefined);
+              setPage(1);
+            }}
+            className="bg-carbon-950 border border-carbon-800 rounded-md px-2.5 py-1 text-xs text-carbon-200 focus:outline-none focus:border-accent-500 shrink-0 font-medium"
+          >
+            <option value="">All Projects</option>
+            <option value="__unassigned__">No Project (Unassigned)</option>
+            {projects.map((proj) => (
+              <option key={proj} value={proj}>
+                📁 {proj}
+              </option>
+            ))}
+          </select>
+
+          <div className="relative w-44 sm:w-56">
             <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-carbon-500" />
             <input
               type="text"
@@ -184,7 +210,7 @@ export const ReviewView: React.FC<ReviewViewProps> = ({
                 setSearchQuery(e.target.value);
                 setPage(1);
               }}
-              placeholder="Search domain or page title..."
+              placeholder="Search domain or title..."
               className="w-full bg-carbon-950 border border-carbon-800 rounded-md pl-8 pr-2.5 py-1 text-xs text-white placeholder-carbon-500 focus:outline-none focus:border-accent-500"
             />
           </div>
@@ -346,6 +372,11 @@ export const ReviewView: React.FC<ReviewViewProps> = ({
                     <span>First: {new Date(m.first_seen_at).toLocaleDateString()}</span>
                     <span>Last: {new Date(m.last_seen_at).toLocaleDateString()}</span>
                     {m.image_filename && <span className="truncate">Photo: {m.image_filename}</span>}
+                    {m.image_project && (
+                      <span className="truncate px-1.5 py-0.2 rounded bg-carbon-800 text-carbon-300 border border-carbon-700">
+                        📁 {m.image_project}
+                      </span>
+                    )}
                   </div>
 
                   {/* Inline Note */}
@@ -519,9 +550,14 @@ export const ReviewView: React.FC<ReviewViewProps> = ({
                   <span className="font-mono text-carbon-400 font-semibold tracking-wide uppercase text-[10px]">
                     Original Photograph
                   </span>
-                  <span className="font-mono text-carbon-500 text-[10px] truncate max-w-[200px]">
-                    {inspectingMatch.image_filename}
-                  </span>
+                  <div className="flex items-center gap-1.5 font-mono text-[10px] truncate max-w-[240px]">
+                    {inspectingMatch.image_project && (
+                      <span className="px-1.5 py-0.2 rounded bg-carbon-800 text-carbon-300 border border-carbon-700 truncate">
+                        📁 {inspectingMatch.image_project}
+                      </span>
+                    )}
+                    <span className="text-carbon-500 truncate">{inspectingMatch.image_filename}</span>
+                  </div>
                 </div>
                 <div className="flex-1 min-h-[280px] max-h-[50vh] flex items-center justify-center overflow-hidden rounded bg-carbon-900/60 border border-carbon-800/80">
                   <img

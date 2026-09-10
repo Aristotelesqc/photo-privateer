@@ -67,10 +67,23 @@ class LibraryIndexer:
             file_size = stat.st_size
             mtime = stat.st_mtime
 
+            # Determine project if subfolders_as_projects is enabled
+            detected_project = None
+            if getattr(lib, "subfolders_as_projects", True):
+                try:
+                    rel_p = file_path.resolve().relative_to(root)
+                    if len(rel_p.parts) > 1:
+                        detected_project = rel_p.parts[0]
+                except Exception:
+                    pass
+
             # Check if file exists in database with identical mtime and size
             existing = self.image_repo.get_by_path(norm_path)
             if existing and abs(existing.file_modified_at - mtime) < 0.001 and existing.file_size == file_size:
                 unchanged += 1
+                # Auto-assign detected project if photo currently has no project
+                if getattr(lib, "subfolders_as_projects", True) and not existing.project and detected_project:
+                    self.image_repo.update_project(existing.id, detected_project)
                 # If marked missing previously, mark back present on disk
                 if not existing.is_present_on_disk:
                     self.image_repo.reconcile_image_location(
@@ -108,6 +121,8 @@ class LibraryIndexer:
                             new_size=file_size,
                             new_mtime=mtime,
                         )
+                        if detected_project and not candidate.project:
+                            self.image_repo.update_project(candidate.id, detected_project)
                         # Ensure thumbnail cached
                         if not self.thumbnail_cache.has_thumbnail(sha256):
                             try:
@@ -149,6 +164,7 @@ class LibraryIndexer:
                 width=width,
                 height=height,
                 format=img_format,
+                project=detected_project,
             )
             added_or_updated += 1
 
@@ -164,3 +180,30 @@ class LibraryIndexer:
             "unchanged": unchanged,
             "missing": missing_count,
         }
+
+    def detect_and_apply_subfolder_projects(self, library_id: int) -> int:
+        """Retroactively detects and sets project names for all images in a library based on subfolders."""
+        lib = self.library_repo.get_by_id(library_id)
+        if not lib:
+            raise ValueError(f"Library {library_id} not found")
+        root = Path(lib.path).resolve()
+        cur = self.image_repo.conn.cursor()
+        cur.execute("SELECT id, file_path FROM images WHERE library_id = ?", (library_id,))
+        rows = cur.fetchall()
+        updated = 0
+        for r in rows:
+            img_id = r["id"]
+            img_path = Path(r["file_path"]).resolve()
+            try:
+                rel = img_path.relative_to(root)
+                if len(rel.parts) > 1:
+                    proj = rel.parts[0]
+                    self.image_repo.update_project(img_id, proj)
+                    updated += 1
+                else:
+                    self.image_repo.update_project(img_id, None)
+                    updated += 1
+            except Exception:
+                pass
+        self.image_repo.conn.commit()
+        return updated

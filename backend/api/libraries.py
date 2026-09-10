@@ -42,14 +42,25 @@ def create_library(payload: LibraryCreate, repo: LibraryRepository = Depends(get
     if existing:
         raise HTTPException(status_code=409, detail="A library with this path already exists")
 
-    return repo.create(path=str(p), name=payload.name, recursive=payload.recursive)
+    return repo.create(
+        path=str(p),
+        name=payload.name,
+        recursive=payload.recursive,
+        subfolders_as_projects=payload.subfolders_as_projects,
+    )
 
 @router.patch("/{library_id}", response_model=LibraryOut)
 def update_library(library_id: int, payload: LibraryUpdate, repo: LibraryRepository = Depends(get_library_repo)):
     lib = repo.get_by_id(library_id)
     if not lib:
         raise HTTPException(status_code=404, detail="Library not found")
-    return repo.update(library_id, name=payload.name, enabled=payload.enabled, recursive=payload.recursive)
+    return repo.update(
+        library_id,
+        name=payload.name,
+        enabled=payload.enabled,
+        recursive=payload.recursive,
+        subfolders_as_projects=payload.subfolders_as_projects,
+    )
 
 @router.post("/{library_id}/archive", response_model=LibraryOut)
 def archive_library(library_id: int, repo: LibraryRepository = Depends(get_library_repo)):
@@ -86,3 +97,13 @@ def index_library(library_id: int, indexer: LibraryIndexer = Depends(get_library
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Indexing failed: {str(e)}")
+
+@router.post("/{library_id}/detect-projects")
+def detect_projects(library_id: int, indexer: LibraryIndexer = Depends(get_library_indexer)):
+    try:
+        updated = indexer.detect_and_apply_subfolder_projects(library_id)
+        return {"status": "success", "updated_count": updated}
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Project detection failed: {str(e)}")
