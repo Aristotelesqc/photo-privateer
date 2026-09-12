@@ -46,6 +46,7 @@ class ImageOut(BaseModel):
     filename: str
     file_size: int
     file_modified_at: float
+    file_modified_at_ns: Optional[int] = None
     width: Optional[int] = None
     height: Optional[int] = None
     format: Optional[str] = None

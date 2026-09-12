@@ -88,12 +88,22 @@ def assert_not_on_main() -> None:
             cwd=str(WORKSPACE_ROOT),
             text=True,
         ).strip()
-        if branch in {"main", "master"}:
+        if not branch:
+            # Detached HEAD - check against main
+            rev_head = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=str(WORKSPACE_ROOT), text=True).strip()
+            rev_main = subprocess.check_output(["git", "rev-parse", "main"], cwd=str(WORKSPACE_ROOT), text=True).strip()
+            if rev_head == rev_main:
+                print("Error: Version bump cannot be executed directly on protected branch 'main' (HEAD is detached on main).", file=sys.stderr)
+                sys.exit(1)
+        elif branch in {"main", "master"}:
             print(f"Error: Version bump cannot be executed directly on protected branch '{branch}'.", file=sys.stderr)
             print("Per repository governance (AGENTS.md §0 and §13), development and version bumps must occur in an isolated worktree/branch.", file=sys.stderr)
             sys.exit(1)
+    except SystemExit:
+        raise
     except Exception as e:
-        print(f"Warning: Could not verify git branch: {e}", file=sys.stderr)
+        print(f"Error: Could not verify git branch (fail-closed): {e}", file=sys.stderr)
+        sys.exit(1)
 
 
 def assert_clean_working_tree(allow_dirty: bool = False) -> None:
@@ -110,8 +120,11 @@ def assert_clean_working_tree(allow_dirty: bool = False) -> None:
             print("Error: Working tree has uncommitted modifications. Please commit or stash changes before bumping version, or pass --allow-dirty.", file=sys.stderr)
             print(status, file=sys.stderr)
             sys.exit(1)
+    except SystemExit:
+        raise
     except Exception as e:
-        print(f"Warning: Could not verify working tree status: {e}", file=sys.stderr)
+        print(f"Error: Could not verify working tree status (fail-closed): {e}", file=sys.stderr)
+        sys.exit(1)
 
 
 def main() -> int:

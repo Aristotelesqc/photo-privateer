@@ -20,13 +20,13 @@ if "%PYTHON_EXE%"=="python" (
     if errorlevel 1 (
         echo [ERROR] Python is not found on your PATH.
         echo Please install Python 3.14 or Python 3.11+ fallback, or run setup.ps1.
-        pause
+        if not defined CI pause
         exit /b 1
     )
 ) else (
     if not exist "%PYTHON_EXE%" (
         echo [ERROR] Virtual environment python executable not found: %PYTHON_EXE%
-        pause
+        if not defined CI pause
         exit /b 1
     )
 )
@@ -35,5 +35,5 @@ if "%PYTHON_EXE%"=="python" (
 if %ERRORLEVEL% NEQ 0 (
     echo.
     echo [ERROR] Application exited with an error.
-    pause
+    if not defined CI pause
 )

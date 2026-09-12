@@ -138,7 +138,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       return;
     }
     try {
-      await deleteLibrary(libId);
+      await deleteLibrary(libId, true);
       onRefreshData();
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);

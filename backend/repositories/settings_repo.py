@@ -73,6 +73,8 @@ class SettingsRepository:
         )
 
     def _check_adc(self) -> tuple[bool, Optional[str]]:
+        if os.environ.get("PHOTO_PRIVATEER_TEST_MODE") == "1":
+            return False, None
         env_adc = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
         appdata = os.environ.get("APPDATA")
         gcloud_win = Path(appdata) / "gcloud" / "application_default_credentials.json" if appdata else None

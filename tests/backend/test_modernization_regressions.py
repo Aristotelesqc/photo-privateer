@@ -660,8 +660,8 @@ def test_unarchive_rejects_overlapping_active_library(repos, sample_images_dir: 
         lib_repo.unarchive(lib_a_id)
 
 
-def test_migration_007_defaults_project_source_to_auto(temp_dir: Path):
-    """Verifies that migration 007 defaults legacy project records to project_source = 'auto'."""
+def test_migration_007_preserves_non_empty_legacy_projects_as_manual(temp_dir: Path):
+    """Verifies that migration 007 preserves legacy non-empty project records as project_source = 'manual'."""
     from backend.migrations.runner import run_migrations, MIGRATIONS
 
     db_file = temp_dir / "migration_007_test.sqlite"
@@ -677,7 +677,7 @@ def test_migration_007_defaults_project_source_to_auto(temp_dir: Path):
         conn.execute("INSERT INTO schema_migrations (version, name, applied_at) VALUES (?, ?, datetime('now'));", (v, desc))
     conn.commit()
 
-    # Insert test library and image with a legacy project
+    # Insert test library and images: one with non-empty legacy project, one with NULL project
     conn.execute(
         "INSERT INTO libraries (id, path, name, created_at) "
         "VALUES (1, 'C:/photos', 'TestLib', datetime('now'));"
@@ -686,17 +686,26 @@ def test_migration_007_defaults_project_source_to_auto(temp_dir: Path):
         "INSERT INTO images (id, library_id, file_path, filename, file_size, file_modified_at, sha256, indexed_at, last_seen_on_disk, project) "
         "VALUES (1, 1, 'C:/photos/portrait.jpg', 'portrait.jpg', 1024, 0.0, 'hash123', datetime('now'), datetime('now'), 'Summer Wedding');"
     )
+    conn.execute(
+        "INSERT INTO images (id, library_id, file_path, filename, file_size, file_modified_at, sha256, indexed_at, last_seen_on_disk, project) "
+        "VALUES (2, 1, 'C:/photos/landscape.jpg', 'landscape.jpg', 2048, 0.0, 'hash456', datetime('now'), datetime('now'), NULL);"
+    )
     conn.commit()
 
     # Now run all migrations through runner
     run_migrations(conn)
 
-    # Check that image 1 now has project_source = 'auto'
+    # Check that image 1 now has project_source = 'manual' and image 2 has 'auto'
     cur = conn.cursor()
     cur.execute("SELECT project, project_source FROM images WHERE id = 1")
-    row = cur.fetchone()
-    assert row["project"] == "Summer Wedding"
-    assert row["project_source"] == "auto"
+    row1 = cur.fetchone()
+    assert row1["project"] == "Summer Wedding"
+    assert row1["project_source"] == "manual"
+
+    cur.execute("SELECT project, project_source FROM images WHERE id = 2")
+    row2 = cur.fetchone()
+    assert row2["project"] is None
+    assert row2["project_source"] == "auto"
     conn.close()
 
 
@@ -825,3 +834,73 @@ def test_zombie_recovery_skips_recent_sessions(repos, sample_images_dir: Path):
     # Verify session was NOT transitioned to FAILED
     session_after = usage_repo.get_scan_session(fresh_session.id)
     assert session_after.status == "RUNNING"
+
+
+def test_submillisecond_modification_triggers_rehash(repos, temp_dir: Path):
+    """Verifies that sub-millisecond modifications with identical file size trigger a rehash under nanosecond precision."""
+    import os
+    indexer = repos["indexer"]
+    img_repo = repos["img_repo"]
+    lib_repo = repos["lib_repo"]
+
+    # 1. Setup library with 1KB dummy file
+    folder = temp_dir / "mtime_test"
+    folder.mkdir()
+    img_path = folder / "test.jpg"
+    img_path.write_bytes(b"A" * 1024)
+
+    lib = lib_repo.create(path=str(folder), name="MtimeLib")
+    res1 = indexer.index_library(lib.id)
+    assert res1["added_or_updated"] == 1
+
+    img1 = img_repo.get_by_path(str(img_path.resolve()))
+    assert img1 is not None
+    assert img1.file_modified_at_ns is not None
+
+    # 2. Modify contents with same length (1024 bytes of 'B')
+    img_path.write_bytes(b"B" * 1024)
+
+    # 3. Advance mtime by only 50 microseconds (50,000 ns = 0.00005s)
+    new_mtime_ns = img1.file_modified_at_ns + 50_000
+    os.utime(img_path, ns=(new_mtime_ns, new_mtime_ns))
+
+    # Prove old float epsilon would have failed:
+    delta_sec = abs((new_mtime_ns / 1e9) - img1.file_modified_at)
+    assert delta_sec < 0.0001, "Test premise: delta must be sub-millisecond"
+
+    # 4. Re-index under nanosecond precision
+    res2 = indexer.index_library(lib.id)
+    assert res2["unchanged"] == 0
+    assert res2["added_or_updated"] == 1
+
+    img2 = img_repo.get_by_path(str(img_path.resolve()))
+    assert img2.sha256 != img1.sha256
+    assert img2.file_modified_at_ns == new_mtime_ns
+
+
+def test_google_auth_test_mode_never_touches_real_adc(repos, monkeypatch):
+    """Verifies that in test mode, settings_repo never touches google.auth.default or real ADC paths."""
+    import google.auth
+
+    def poisoned_default(*args, **kwargs):
+        raise RuntimeError("CRITICAL ISOLATION BREACH: google.auth.default was invoked in test mode!")
+
+    monkeypatch.setattr(google.auth, "default", poisoned_default)
+    monkeypatch.setenv("PHOTO_PRIVATEER_TEST_MODE", "1")
+
+    settings_repo = repos["settings_repo"]
+
+    # 1. Calling _check_adc directly must return (False, None) and not trigger poisoned_default
+    has_adc, project = settings_repo._check_adc()
+    assert has_adc is False
+    assert project is None
+
+    # 2. Calling get_app_settings must succeed without triggering poisoned_default
+    settings = settings_repo.get_app_settings()
+    assert settings.adc_available is False
+    assert settings.auth_mode == "none"
+
+    # 3. Calling test_google_auth with no credentials configured must return auth_mode 'none'
+    res = settings_repo.test_google_auth()
+    assert res["valid"] is False
+    assert res["auth_mode"] == "none"

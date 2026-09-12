@@ -304,6 +304,7 @@ def migration_007_project_source_and_atomic_running_scan(conn: sqlite3.Connectio
     image_cols = {row[1] for row in cur.fetchall()}
     if "project_source" not in image_cols:
         conn.execute("ALTER TABLE images ADD COLUMN project_source TEXT NOT NULL DEFAULT 'auto';")
+        conn.execute("UPDATE images SET project_source = 'manual' WHERE project IS NOT NULL AND TRIM(project) != '';")
 
     # Clean orphaned running sessions before indexing
     conn.execute("UPDATE scan_sessions SET status = 'INTERRUPTED' WHERE status = 'RUNNING';")
@@ -315,6 +316,14 @@ def migration_007_project_source_and_atomic_running_scan(conn: sqlite3.Connectio
         WHERE status = 'RUNNING';
     """)
 
+def migration_008_image_mtime_ns(conn: sqlite3.Connection) -> None:
+    """Adds file_modified_at_ns column to images table without lossy float backfill."""
+    cur = conn.cursor()
+    cur.execute("PRAGMA table_info(images)")
+    image_cols = {row[1] for row in cur.fetchall()}
+    if "file_modified_at_ns" not in image_cols:
+        conn.execute("ALTER TABLE images ADD COLUMN file_modified_at_ns INTEGER;")
+
 MIGRATIONS: list[Migration] = [
     Migration(1, "001_initial_schema", migration_001_initial_schema),
     Migration(2, "002_library_archiving_and_disk_presence", migration_002_library_archiving_and_disk_presence),
@@ -323,6 +332,7 @@ MIGRATIONS: list[Migration] = [
     Migration(5, "005_library_fk_safety", migration_005_library_fk_safety),
     Migration(6, "006_project_classification", migration_006_project_classification),
     Migration(7, "007_project_source_and_atomic_running_scan", migration_007_project_source_and_atomic_running_scan),
+    Migration(8, "008_image_mtime_ns", migration_008_image_mtime_ns),
 ]
 
 def run_migrations(conn: sqlite3.Connection) -> list[int]:
