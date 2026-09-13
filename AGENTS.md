@@ -15,7 +15,7 @@ Photo Privateer is a local desktop web application for professional photographer
 7. **Zero Scope Erosion**: Do not omit requirements, weaken safety constraints, or leave unfulfilled TODOs.
 8. **Non-Destructive Archiving**: Archiving a library retains all indexed photo metadata and review match triage records. Photos and matches are never deleted unless explicitly purged.
 9. **Cooperative Scan Cancellation & Crash Recovery**: In-progress scans can be cooperatively cancelled via flag checks between images. Any sessions left `RUNNING` due to an unexpected process termination are recovered to `INTERRUPTED` on startup.
-10. **Isolated Worktree & Pull Request Workflow**: Never commit directly to `main` or push directly to `main`. All modernization passes, bug fixes, feature additions, and audit remediations must be developed inside an isolated Git worktree on a dedicated feature branch and submitted as an open GitHub Pull Request targeting `main`.
+10. **Isolated Worktree & Synchronized PR Head Description**: Never commit directly to `main` or push directly to `main`. All modernization passes, bug fixes, feature additions, and audit remediations must be developed inside an isolated Git worktree on a dedicated feature branch and submitted as an open GitHub Pull Request targeting `main`. Every subsequent push or modification to a PR branch must synchronously update the PR's head description (`gh pr edit`) to document the current commit state, test metrics, and resolved audit findings.
 
 ---
 
@@ -219,5 +219,6 @@ Verification follows a strict 4-tier testing hierarchy:
 1. **Protected Main**: `main` is strictly protected against direct pushes and direct commits.
 2. **Worktree Isolation**: All development work must be executed in a dedicated worktree under `../photo-privateer-worktrees/<branch-name>` on a dedicated branch (e.g., `git worktree add ../photo-privateer-worktrees/<branch-name> -b <branch-name> origin/main`).
 3. **Pull Request Delivery**: Changes are submitted via `gh pr create --base main --head <branch>` and left OPEN for independent review. Never merge automatically.
+4. **Synchronized PR Head Description Invariant**: Every push or modification made to a PR branch must synchronously update the PR's head description (`gh pr edit <pr-number> --body ...`) so that the PR summary on GitHub always reflects the latest commits, architectural changes, and updated verification metrics.
 
 

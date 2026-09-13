@@ -115,6 +115,21 @@ git push -u origin <branch-name>
 gh pr create --base main --head <branch-name> --title "<type>: <title>" --body "<summary and verification evidence>"
 ```
 
+### Step 5b: Update Existing Pull Request (Synchronized PR Head Description)
+
+Whenever subsequent commits, review remediations, or audit fixes are pushed to an existing PR branch:
+
+```powershell
+# 1. Push commits to feature branch
+git push origin <branch-name>
+
+# 2. Synchronously update the PR's head description on GitHub
+gh pr edit <pr-number> --body "<updated summary, new commits, architecture decisions, and latest test metrics>"
+
+# 3. Monitor GitHub Actions CI execution
+gh run watch <run-id>
+```
+
 ### Step 6: Cleanup (Post-Review & Post-Merge)
 
 Once the PR has been reviewed and merged on GitHub:
