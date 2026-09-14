@@ -68,7 +68,7 @@ photo-privateer/
 │   ├── database.py                # SQLite connection, WAL mode, migration initialization
 │   ├── models.py                  # Pydantic schemas and dataclasses
 │   ├── migrations/                # Versioned schema migrations
-│   │   └── runner.py              # Idempotent migration runner & applied tracker (001 through 007)
+│   │   └── runner.py              # Idempotent migration runner & applied tracker (001 through 008)
 │   ├── repositories/              # Data access layer (libraries, images, matches, rules, usage, settings)
 │   ├── services/                  # Indexer, thumbnail cache, image service, rules, scan engine
 │   ├── providers/                 # Base provider interface, Mock provider, Google Vision provider

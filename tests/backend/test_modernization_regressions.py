@@ -620,7 +620,20 @@ def test_library_purge_cleans_empty_scan_sessions_and_thumbnails(repos, temp_dir
     )
     assert active_unrelated.status == "RUNNING"
 
-    # Purge the library
+    # Purge while scan is active MUST fail
+    with pytest.raises(ValueError, match="while a scan session is running"):
+        lib_repo.purge(lib.id)
+
+    # Transition active_unrelated to INTERRUPTED
+    usage_repo.update_scan_session_progress(
+        session_id=active_unrelated.id,
+        processed=0,
+        successful=0,
+        failed=0,
+        status="INTERRUPTED",
+    )
+
+    # Purge the library now succeeds
     lib_repo.purge(lib.id)
 
     # Invariant 1: Image deleted
@@ -660,8 +673,10 @@ def test_unarchive_rejects_overlapping_active_library(repos, sample_images_dir: 
         lib_repo.unarchive(lib_a_id)
 
 
-def test_migration_007_preserves_non_empty_legacy_projects_as_manual(temp_dir: Path):
-    """Verifies that migration 007 preserves legacy non-empty project records as project_source = 'manual'."""
+def test_migration_007_restores_published_semantics_and_atomic_running_scan(temp_dir: Path):
+    """Verifies that migration 007 restores exact published v1.2.0 semantics:
+    adds project_source with default 'auto', transitions active running scans to INTERRUPTED,
+    and establishes partial unique index idx_single_running_scan."""
     from backend.migrations.runner import run_migrations, MIGRATIONS
 
     db_file = temp_dir / "migration_007_test.sqlite"
@@ -677,7 +692,7 @@ def test_migration_007_preserves_non_empty_legacy_projects_as_manual(temp_dir: P
         conn.execute("INSERT INTO schema_migrations (version, name, applied_at) VALUES (?, ?, datetime('now'));", (v, desc))
     conn.commit()
 
-    # Insert test library and images: one with non-empty legacy project, one with NULL project
+    # Insert test library, image, and orphaned running scan session
     conn.execute(
         "INSERT INTO libraries (id, path, name, created_at) "
         "VALUES (1, 'C:/photos', 'TestLib', datetime('now'));"
@@ -687,25 +702,65 @@ def test_migration_007_preserves_non_empty_legacy_projects_as_manual(temp_dir: P
         "VALUES (1, 1, 'C:/photos/portrait.jpg', 'portrait.jpg', 1024, 0.0, 'hash123', datetime('now'), datetime('now'), 'Summer Wedding');"
     )
     conn.execute(
-        "INSERT INTO images (id, library_id, file_path, filename, file_size, file_modified_at, sha256, indexed_at, last_seen_on_disk, project) "
-        "VALUES (2, 1, 'C:/photos/landscape.jpg', 'landscape.jpg', 2048, 0.0, 'hash456', datetime('now'), datetime('now'), NULL);"
+        "INSERT INTO scan_sessions (id, started_at, provider, total_images, processed_images, successful_images, failed_images, status) "
+        "VALUES (1, datetime('now'), 'mock', 10, 5, 5, 0, 'RUNNING');"
     )
     conn.commit()
 
     # Now run all migrations through runner
     run_migrations(conn)
 
-    # Check that image 1 now has project_source = 'manual' and image 2 has 'auto'
+    # Check published v1.2.0 semantics: project_source defaults to 'auto'
     cur = conn.cursor()
     cur.execute("SELECT project, project_source FROM images WHERE id = 1")
     row1 = cur.fetchone()
     assert row1["project"] == "Summer Wedding"
-    assert row1["project_source"] == "manual"
+    assert row1["project_source"] == "auto"
 
-    cur.execute("SELECT project, project_source FROM images WHERE id = 2")
-    row2 = cur.fetchone()
-    assert row2["project"] is None
-    assert row2["project_source"] == "auto"
+    # Check that legacy running session was recovered to INTERRUPTED
+    cur.execute("SELECT status FROM scan_sessions WHERE id = 1")
+    assert cur.fetchone()["status"] == "INTERRUPTED"
+
+    # Check that atomic partial unique index exists and is enforced
+    cur.execute("PRAGMA index_list('scan_sessions')")
+    indexes = {row["name"] for row in cur.fetchall()}
+    assert "idx_single_running_scan" in indexes
+
+    conn.close()
+
+
+def test_migration_chain_idempotence_and_path_independence(temp_dir: Path):
+    """Verifies that running migrations on a database that already has migration 007 and 008 recorded
+    is path-independent, deterministic, and does not alter existing data or fail."""
+    from backend.migrations.runner import run_migrations
+
+    db_file = temp_dir / "migration_chain_test.sqlite"
+    conn = sqlite3.connect(str(db_file))
+    conn.row_factory = sqlite3.Row
+
+    # Initial migration run
+    run_migrations(conn)
+
+    # Insert test data
+    conn.execute(
+        "INSERT INTO libraries (id, path, name, created_at) "
+        "VALUES (1, 'C:/photos', 'IdempotentLib', datetime('now'));"
+    )
+    conn.execute(
+        "INSERT INTO images (id, library_id, file_path, filename, file_size, file_modified_at, file_modified_at_ns, sha256, indexed_at, last_seen_on_disk, project_source) "
+        "VALUES (1, 1, 'C:/photos/test.jpg', 'test.jpg', 2048, 100.0, 100000000000, 'hash999', datetime('now'), datetime('now'), 'manual');"
+    )
+    conn.commit()
+
+    # Secondary run on already-migrated database
+    run_migrations(conn)
+
+    cur = conn.cursor()
+    cur.execute("SELECT project_source, file_modified_at_ns FROM images WHERE id = 1")
+    row = cur.fetchone()
+    assert row["project_source"] == "manual"
+    assert row["file_modified_at_ns"] == 100000000000
+
     conn.close()
 
 
@@ -904,3 +959,84 @@ def test_google_auth_test_mode_never_touches_real_adc(repos, monkeypatch):
     res = settings_repo.test_google_auth()
     assert res["valid"] is False
     assert res["auth_mode"] == "none"
+
+
+def test_permanent_purge_blocked_while_scan_running(repos, temp_dir: Path):
+    """Verifies that permanent library purge is blocked with ValueError/409 while a scan session is RUNNING,
+    while normal non-destructive archive remains permitted, and permanent purge succeeds once scan finishes,
+    never deleting original source photos on disk."""
+    from fastapi.testclient import TestClient
+    from backend.main import app
+    from backend.database import get_db
+
+    lib_repo = repos["lib_repo"]
+    img_repo = repos["img_repo"]
+    indexer = repos["indexer"]
+    usage_repo = repos["usage_repo"]
+
+    # 1. Setup library with test image on disk
+    folder = temp_dir / "purge_scan_test"
+    folder.mkdir()
+    photo_file = folder / "photo.jpg"
+    photo_file.write_bytes(b"TEST_PHOTO_CONTENT")
+
+    lib = lib_repo.create(path=str(folder), name="PurgeScanLib")
+    indexer.index_library(lib.id)
+    images, _ = img_repo.list_images(library_id=lib.id)
+    assert len(images) == 1
+    image_id = images[0].id
+
+    # 2. Create an active RUNNING scan session
+    session = usage_repo.create_scan_session(
+        provider="mock",
+        total_images=1,
+    )
+    assert session.status == "RUNNING"
+
+    # 3. Attempt direct repo purge -> must raise ValueError
+    with pytest.raises(ValueError, match="while a scan session is running"):
+        lib_repo.purge(lib.id)
+
+    # 4. Attempt repo delete with purge_permanently=True -> must raise ValueError
+    with pytest.raises(ValueError, match="while a scan session is running"):
+        lib_repo.delete(lib.id, purge_permanently=True)
+
+    # 5. Non-destructive archive MUST succeed even while scan is running
+    archived = lib_repo.delete(lib.id, purge_permanently=False)
+    assert archived is True
+    refreshed_lib = lib_repo.get_by_id(lib.id)
+    assert refreshed_lib.is_archived == 1
+    assert refreshed_lib.enabled == 0
+
+    # 6. Test API delete endpoint with FastAPI TestClient
+    app.dependency_overrides[get_db] = lambda: repos["db_conn"]
+    try:
+        client = TestClient(app)
+        # Attempt permanent purge via API while scan is RUNNING -> must return 409 Conflict
+        resp = client.delete(f"/api/libraries/{lib.id}?purge_permanently=true")
+        assert resp.status_code == 409
+        assert "while a scan session is running" in resp.json()["detail"]
+
+        # 7. Complete the running scan session
+        usage_repo.update_scan_session_progress(
+            session_id=session.id,
+            processed=1,
+            successful=1,
+            failed=0,
+            status="COMPLETED",
+        )
+
+        # 8. Now permanent purge via API must succeed
+        resp2 = client.delete(f"/api/libraries/{lib.id}?purge_permanently=true")
+        assert resp2.status_code == 200
+        assert resp2.json()["status"] == "success"
+
+        # Verify DB records deleted
+        assert lib_repo.get_by_id(lib.id) is None
+        assert img_repo.get_by_id(image_id) is None
+
+        # Source image on disk MUST remain untouched (Zero source photo modification invariant)
+        assert photo_file.exists() is True
+        assert photo_file.read_bytes() == b"TEST_PHOTO_CONTENT"
+    finally:
+        app.dependency_overrides.pop(get_db, None)

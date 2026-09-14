@@ -88,7 +88,10 @@ def delete_library(
     purge_permanently: bool = False,
     repo: LibraryRepository = Depends(get_library_repo),
 ):
-    success = repo.delete(library_id, purge_permanently=purge_permanently)
+    try:
+        success = repo.delete(library_id, purge_permanently=purge_permanently)
+    except ValueError as err:
+        raise HTTPException(status_code=409, detail=str(err))
     if not success:
         raise HTTPException(status_code=404, detail="Library not found")
     action = "purged permanently" if purge_permanently else "archived (monitoring stopped)"

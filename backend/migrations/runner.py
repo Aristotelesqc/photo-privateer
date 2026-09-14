@@ -304,7 +304,6 @@ def migration_007_project_source_and_atomic_running_scan(conn: sqlite3.Connectio
     image_cols = {row[1] for row in cur.fetchall()}
     if "project_source" not in image_cols:
         conn.execute("ALTER TABLE images ADD COLUMN project_source TEXT NOT NULL DEFAULT 'auto';")
-        conn.execute("UPDATE images SET project_source = 'manual' WHERE project IS NOT NULL AND TRIM(project) != '';")
 
     # Clean orphaned running sessions before indexing
     conn.execute("UPDATE scan_sessions SET status = 'INTERRUPTED' WHERE status = 'RUNNING';")

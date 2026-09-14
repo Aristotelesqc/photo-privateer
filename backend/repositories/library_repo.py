@@ -191,6 +191,11 @@ class LibraryRepository:
         from backend.utils import chunked
         from backend.config import get_thumbnails_dir
         cur = self.conn.cursor()
+        # Concurrency safety: block permanent purge if any scan is actively running
+        cur.execute("SELECT 1 FROM scan_sessions WHERE status = 'RUNNING' LIMIT 1")
+        if cur.fetchone():
+            raise ValueError("Cannot permanently purge library while a scan session is running.")
+
         try:
             # Find all images and their content hashes belonging to this library
             cur.execute("SELECT id, sha256 FROM images WHERE library_id = ?", (library_id,))
