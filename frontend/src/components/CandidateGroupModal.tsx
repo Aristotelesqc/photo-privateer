@@ -144,6 +144,7 @@ export const CandidateGroupModal: React.FC<CandidateGroupModalProps> = ({
           {/* Card A */}
           <div
             onClick={() => setSelectedPreferred('A')}
+            data-testid={`candidate-card-${image_a.filename}`}
             className={`border rounded-lg p-3 bg-carbon-950 cursor-pointer transition-all ${
               selectedPreferred === 'A'
                 ? 'border-accent-500 ring-1 ring-accent-500/30'
@@ -205,6 +206,7 @@ export const CandidateGroupModal: React.FC<CandidateGroupModalProps> = ({
           {/* Card B */}
           <div
             onClick={() => setSelectedPreferred('B')}
+            data-testid={`candidate-card-${image_b.filename}`}
             className={`border rounded-lg p-3 bg-carbon-950 cursor-pointer transition-all ${
               selectedPreferred === 'B'
                 ? 'border-accent-500 ring-1 ring-accent-500/30'

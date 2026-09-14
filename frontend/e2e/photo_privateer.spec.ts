@@ -12,43 +12,37 @@ test.describe.serial('Photo Privateer End-to-End Test Suite', () => {
     // Create a temporary fixture folder with mock images (resolving symlinks)
     testPhotoDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pp_e2e_photos_')));
 
-    // Create a minimal valid 1x1 JPEG
-    const minimalJpeg = Buffer.from([
-      0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01,
-      0x01, 0x01, 0x00, 0x48, 0x00, 0x48, 0x00, 0x00, 0xff, 0xdb, 0x00, 0x43,
-      0x00, 0x08, 0x06, 0x06, 0x07, 0x06, 0x05, 0x08, 0x07, 0x07, 0x07, 0x09,
-      0x09, 0x08, 0x0a, 0x0c, 0x14, 0x0d, 0x0c, 0x0b, 0x0b, 0x0c, 0x19, 0x12,
-      0x13, 0x0f, 0x14, 0x1d, 0x1a, 0x1f, 0x1e, 0x1d, 0x1a, 0x1c, 0x1c, 0x20,
-      0x24, 0x2e, 0x27, 0x20, 0x22, 0x2c, 0x23, 0x1c, 0x1c, 0x28, 0x37, 0x29,
-      0x2c, 0x30, 0x31, 0x34, 0x34, 0x34, 0x1f, 0x27, 0x39, 0x3d, 0x38, 0x32,
-      0x3c, 0x2e, 0x33, 0x34, 0x32, 0xff, 0xc0, 0x00, 0x0b, 0x08, 0x00, 0x01,
-      0x00, 0x01, 0x01, 0x01, 0x11, 0x00, 0xff, 0xc4, 0x00, 0x1f, 0x00, 0x00,
-      0x01, 0x05, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00,
-      0x00, 0x00, 0x00, 0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
-      0x09, 0x0a, 0x0b, 0xff, 0xda, 0x00, 0x08, 0x01, 0x01, 0x00, 0x00, 0x3f,
-      0x00, 0xbf, 0x00, 0xff, 0xd9,
-    ]);
+    // Pre-computed distinct 16x16 JPEGs with separated dHash values:
+    // coastal_sunset.jpg and coastal_sunset_variant.jpg have Hamming distance = 1 (perceptual match <= 10).
+    // All other pairs have Hamming distance >= 25.
+    const jpegFixtures = {
+      mountain: Buffer.from(
+        '/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/2wBDAQkJCQwLDBgNDRgyIRwhMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjL/wAARCAAQABADASIAAhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwD5/r7f8Cf8k88Nf9gq1/8ARS18QV9v+BP+SeeGv+wVa/8AopaAP//Z',
+        'base64'
+      ),
+      multi: Buffer.from(
+        '/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/2wBDAQkJCQwLDBgNDRgyIRwhMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjL/wAARCAAQABADASIAAhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwD5/or7f/4QTwf/ANCpof8A4Lof/iaP+EE8H/8AQqaH/wCC6H/4mgD/2Q==',
+        'base64'
+      ),
+      coastal: Buffer.from(
+        '/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/2wBDAQkJCQwLDBgNDRgyIRwhMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjL/wAARCAAQABADASIAAhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwCv/wAT34A+KP8AlvqfgvUZfbcjY/ALMAPZZFHYj5Pe9K1Wx1zS7fU9MuY7mzuE3xSp0YfzBByCDyCCDgijVdKsdc0u40zU7aO5s7hNksT9GH8wQcEEcggEYIrwT/ie/AHxR/y31PwXqMvtuRsfgFmAHssijsR8gB//2Q==',
+        'base64'
+      ),
+      coastal_var: Buffer.from(
+        '/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/2wBDAQkJCQwLDBgNDRgyIRwhMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjL/wAARCAAQABADASIAAhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwCv/wAT34A+KP8AlvqfgvUZfbcjY/ALMAPZZFHYj5Pd7G+0vxNocd1ayQX+mX0RAJXckqHIZWU/iCpHHIIqTVdKsdc0u40zU7aO5s7hNksT9GH8wQcEEcggEYIrwT/ie/AHxR/y31PwXqMvtuRsfgFmAHssijsR8gB//9k=',
+        'base64'
+      ),
+      slow: Buffer.from(
+        '/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/2wBDAQkJCQwLDBgNDRgyIRwhMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjL/wAARCAAQABADASIAAhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwDX+MHxguPDF43hzw43l6smx7q7eMMIAQGCKGBDMQQSSCADgZJ+XH+Fnxt1G/1yPQ/Fk32lr6VY7S8SFVKSNgCNlQAFScYbGQTzkHKnxt+FmqX+sS+LNDinv2uPLS7s403yIVUIroAMsuAMjkg88gnbifCT4Sa1e+JbbXNctbvSrPTLhJo454jHLcSqQygKwyEBxlsc9BzkqAf/2Q==',
+        'base64'
+      ),
+    };
 
-    function createUniqueJpeg(tag: string): Buffer {
-      const comment = Buffer.from(tag, 'utf-8');
-      const comMarker = Buffer.from([
-        0xff, 0xfe,
-        ((comment.length + 2) >> 8) & 0xff,
-        (comment.length + 2) & 0xff,
-        ...comment,
-      ]);
-      return Buffer.concat([
-        minimalJpeg.subarray(0, 2),
-        comMarker,
-        minimalJpeg.subarray(2),
-      ]);
-    }
-
-    fs.writeFileSync(path.join(testPhotoDir, 'mountain_landscape.jpg'), createUniqueJpeg('mountain_photo'));
-    fs.writeFileSync(path.join(testPhotoDir, 'multi_domain_photo.jpg'), createUniqueJpeg('multi_domain_photo'));
-    fs.writeFileSync(path.join(testPhotoDir, 'coastal_sunset.jpg'), createUniqueJpeg('coastal_sunset_photo'));
-    fs.writeFileSync(path.join(testPhotoDir, 'coastal_sunset_variant.jpg'), createUniqueJpeg('coastal_sunset_photo'));
-    fs.writeFileSync(path.join(testPhotoDir, 'slow_landscape.jpg'), createUniqueJpeg('slow_cancellation_photo'));
+    fs.writeFileSync(path.join(testPhotoDir, 'mountain_landscape.jpg'), jpegFixtures.mountain);
+    fs.writeFileSync(path.join(testPhotoDir, 'multi_domain_photo.jpg'), jpegFixtures.multi);
+    fs.writeFileSync(path.join(testPhotoDir, 'coastal_sunset.jpg'), jpegFixtures.coastal);
+    fs.writeFileSync(path.join(testPhotoDir, 'coastal_sunset_variant.jpg'), jpegFixtures.coastal_var);
+    fs.writeFileSync(path.join(testPhotoDir, 'slow_landscape.jpg'), jpegFixtures.slow);
   });
 
 
@@ -303,26 +297,28 @@ test.describe.serial('Photo Privateer End-to-End Test Suite', () => {
     await expect(modal.getByText('coastal_sunset.jpg')).toBeVisible();
     await expect(modal.getByText('coastal_sunset_variant.jpg')).toBeVisible();
 
+    // Select coastal_sunset.jpg as the preferred representation regardless of Candidate A / Candidate B order
+    const coastalCandidateCard = modal.locator('[data-testid="candidate-card-coastal_sunset.jpg"]');
+    await expect(coastalCandidateCard).toBeVisible();
+    await coastalCandidateCard.click();
+
     // Click "Group as Representations"
     const groupBtn = modal.locator('[data-testid="btn-group-representations"]');
     await expect(groupBtn).toBeVisible();
     await groupBtn.click();
 
-    // If additional candidate pairs exist, close the modal via close button
-    const closeBtn = modal.locator('[data-testid="btn-close-candidate-modal"]');
-    try {
-      await expect(modal).not.toBeVisible({ timeout: 3000 });
-    } catch {
-      await closeBtn.click();
-      await expect(modal).not.toBeVisible({ timeout: 5000 });
-    }
-
-    // Verify modal closes
+    // Because exactly 1 candidate pair was detected, modal auto-closes upon grouping
     await expect(modal).not.toBeVisible({ timeout: 5000 });
 
     // Verify Primary badge is visible on coastal_sunset.jpg
-    const coastalCard = page.locator('div.group').filter({ hasText: 'coastal_sunset.jpg' }).first();
-    await expect(coastalCard.locator('text=Primary')).toBeVisible({ timeout: 5000 });
+    const coastalCard = page.locator('[data-testid="photo-card-coastal_sunset.jpg"]');
+    await expect(coastalCard).toBeVisible({ timeout: 5000 });
+    await expect(coastalCard.locator('[data-testid="badge-primary"]')).toBeVisible({ timeout: 5000 });
+
+    // Verify Variant badge is visible on coastal_sunset_variant.jpg
+    const variantCard = page.locator('[data-testid="photo-card-coastal_sunset_variant.jpg"]');
+    await expect(variantCard).toBeVisible({ timeout: 5000 });
+    await expect(variantCard.locator('[data-testid="badge-variant"]')).toBeVisible({ timeout: 5000 });
   });
 
   test('Scenario 8: Permanent library purge removes DB records while preserving original photos on disk', async ({ page }) => {

@@ -24,6 +24,7 @@ export const PhotoCard: React.FC<PhotoCardProps> = ({
   return (
     <div
       onClick={() => onToggleSelect(photo.id)}
+      data-testid={`photo-card-${photo.filename}`}
       className={`group relative bg-carbon-900 border rounded-lg overflow-hidden cursor-pointer transition-all duration-100 select-none flex flex-col ${
         isSelected
           ? 'border-accent-500 ring-1 ring-accent-500 bg-carbon-850 shadow-xs'
@@ -52,6 +53,7 @@ export const PhotoCard: React.FC<PhotoCardProps> = ({
           </span>
           {photo.photo_group_id && (
             <span
+              data-testid={photo.is_primary_representation === 1 ? 'badge-primary' : 'badge-variant'}
               className={`text-[9px] font-mono px-1 py-0.2 rounded backdrop-blur-xs ${
                 photo.is_primary_representation === 1
                   ? 'bg-accent-950/90 text-accent-300 border border-accent-800/80'
