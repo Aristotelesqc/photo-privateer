@@ -38,7 +38,7 @@ def list_photos(
     search: Optional[str] = None,
     project: Optional[str] = None,
     group_id: Optional[int] = None,
-    filter_status: Optional[str] = Query(None, pattern="^(all|unscanned|scanned|has_matches|has_unreviewed|grouped)$"),
+    filter_status: Optional[str] = Query(None, pattern="^(all|unscanned|scanned|has_matches|has_unreviewed|grouped|ungrouped)$"),
     sort_by: str = Query("indexed_at", pattern="^(indexed_at|last_scanned_at|filename|project|match_count|unreviewed_count|file_size)$"),
     sort_dir: str = Query("desc", pattern="^(asc|desc)$"),
     page: int = Query(1, ge=1),

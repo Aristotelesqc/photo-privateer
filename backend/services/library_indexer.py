@@ -229,6 +229,7 @@ class LibraryIndexer:
 
         # Update library last indexed timestamp
         self.library_repo.update_last_indexed(library_id)
+        self.image_repo.conn.commit()
 
         return {
             "scanned": scanned,

@@ -167,8 +167,22 @@ def test_photo_group_lifecycle_and_candidate_discovery(temp_dir: Path):
         assert upd_web.is_primary_representation == 1
         assert upd_master.is_primary_representation == 0
 
-        # 5. Remove image from group dissolves group when <= 1 remains
-        dissolved = group_repo.remove_image_from_group(img_web.id)
+        # 5. Validation guards
+        import pytest
+        # Setting preferred on non-existent group raises KeyError
+        with pytest.raises(KeyError):
+            group_repo.set_preferred_image(99999, img_web.id)
+
+        # Setting preferred to non-member raises ValueError
+        with pytest.raises(ValueError):
+            group_repo.set_preferred_image(group.id, 99999)
+
+        # Dismissing identical IDs raises ValueError
+        with pytest.raises(ValueError):
+            group_repo.dismiss_candidate_pair(img_web.id, img_web.id)
+
+        # 6. Remove image from group dissolves group when <= 1 remains
+        dissolved = group_repo.remove_image_from_group(group.id, img_web.id)
         assert dissolved is None
         final_master = img_repo.get_by_id(img_master.id)
         assert final_master.photo_group_id is None

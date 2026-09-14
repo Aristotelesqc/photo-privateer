@@ -112,6 +112,7 @@ class LibraryRepository:
             VALUES (?, ?, 1, ?, 0, ?, ?)
         """, (norm_path, folder_name, int(recursive), int(subfolders_as_projects), now))
         lib_id = cur.lastrowid
+        self.conn.commit()
         return self.get_by_id(lib_id)  # type: ignore
 
     def update(
@@ -260,3 +261,4 @@ class LibraryRepository:
         now = datetime.now(timezone.utc).isoformat()
         cur = self.conn.cursor()
         cur.execute("UPDATE libraries SET last_indexed_at = ? WHERE id = ?", (now, library_id))
+        self.conn.commit()

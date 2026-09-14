@@ -310,8 +310,11 @@ test.describe.serial('Photo Privateer End-to-End Test Suite', () => {
 
     // If additional candidate pairs exist, close the modal via close button
     const closeBtn = modal.locator('[data-testid="btn-close-candidate-modal"]');
-    if (await closeBtn.isVisible()) {
+    try {
+      await expect(modal).not.toBeVisible({ timeout: 3000 });
+    } catch {
       await closeBtn.click();
+      await expect(modal).not.toBeVisible({ timeout: 5000 });
     }
 
     // Verify modal closes

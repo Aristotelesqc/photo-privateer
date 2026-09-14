@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Layers, CheckCircle2, XCircle, ArrowLeft, ArrowRight, X, Sparkles, Check } from 'lucide-react';
 import { GroupCandidatePair } from '../types';
 
@@ -19,6 +19,13 @@ export const CandidateGroupModal: React.FC<CandidateGroupModalProps> = ({
   const [selectedPreferred, setSelectedPreferred] = useState<'A' | 'B'>('A');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
+  const currentPair = candidates[currentIndex] || candidates[0];
+
+  // Reset preferred selection to Candidate A when navigating or advancing pairs
+  useEffect(() => {
+    setSelectedPreferred('A');
+  }, [currentIndex, currentPair?.image_a?.id, currentPair?.image_b?.id]);
+
   if (!candidates || candidates.length === 0) {
     return (
       <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-xs animate-fade-in">
@@ -37,9 +44,9 @@ export const CandidateGroupModal: React.FC<CandidateGroupModalProps> = ({
     );
   }
 
-  const currentPair = candidates[currentIndex] || candidates[0];
   const { image_a, image_b, hamming_distance, is_exact_duplicate } = currentPair;
   const total = candidates.length;
+  const similarityPct = is_exact_duplicate ? 100 : Math.round(((64 - hamming_distance) / 64) * 100);
 
   const handleGroup = async () => {
     setIsSubmitting(true);
@@ -105,8 +112,9 @@ export const CandidateGroupModal: React.FC<CandidateGroupModalProps> = ({
             </button>
             <button
               onClick={onClose}
+              disabled={isSubmitting}
               data-testid="btn-close-candidate-modal"
-              className="p-1 rounded text-carbon-400 hover:text-white hover:bg-carbon-800 transition-colors ml-2"
+              className="p-1 rounded text-carbon-400 hover:text-white hover:bg-carbon-800 disabled:opacity-30 transition-colors ml-2"
             >
               <X className="w-4 h-4" />
             </button>
@@ -118,11 +126,11 @@ export const CandidateGroupModal: React.FC<CandidateGroupModalProps> = ({
           <div className="flex items-center gap-2">
             {is_exact_duplicate ? (
               <span className="px-2 py-0.5 rounded text-[11px] font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 flex items-center gap-1">
-                <Sparkles className="w-3 h-3" /> Exact Duplicate (Identical SHA-256)
+                <Sparkles className="w-3 h-3" /> Exact Duplicate (100% Match)
               </span>
             ) : (
               <span className="px-2 py-0.5 rounded text-[11px] font-medium bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 flex items-center gap-1">
-                <Layers className="w-3 h-3" /> Perceptual Match ({hamming_distance}/64 bits difference)
+                <Layers className="w-3 h-3" /> Perceptual Match ({similarityPct}% — {hamming_distance}/64 bits difference)
               </span>
             )}
           </div>

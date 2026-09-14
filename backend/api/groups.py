@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from typing import List, Optional
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from backend.models import (
     PhotoGroupOut,
@@ -19,12 +19,16 @@ router = APIRouter(prefix="/api/groups", tags=["groups"])
 
 @router.get("/candidates", response_model=List[GroupCandidatePairOut])
 def get_group_candidates(
-    threshold: int = 10,
-    limit: int = 50,
+    threshold: int = Query(default=10, ge=0, le=64),
+    limit: int = Query(default=50, ge=1, le=500),
+    library_id: Optional[int] = Query(default=None),
     repo: PhotoGroupRepository = Depends(get_group_repo),
 ):
     """Returns candidate photo representation pairs (perceptual distance <= threshold or exact SHA)."""
-    return repo.find_candidate_pairs(threshold=threshold, limit=limit)
+    try:
+        return repo.find_candidate_pairs(threshold=threshold, limit=limit, library_id=library_id)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed finding candidate pairs: {str(e)}")
 
 
 @router.post("/candidates/dismiss")
@@ -33,8 +37,13 @@ def dismiss_candidate_pair(
     repo: PhotoGroupRepository = Depends(get_group_repo),
 ):
     """Dismisses a candidate pair so they are kept separate in future reviews."""
-    repo.dismiss_candidate_pair(payload.image_a_id, payload.image_b_id)
-    return {"status": "dismissed", "image_a_id": payload.image_a_id, "image_b_id": payload.image_b_id}
+    try:
+        repo.dismiss_candidate_pair(payload.image_a_id, payload.image_b_id)
+        return {"status": "dismissed", "image_a_id": payload.image_a_id, "image_b_id": payload.image_b_id}
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 @router.post("", response_model=PhotoGroupOut, status_code=status.HTTP_201_CREATED)
@@ -83,6 +92,8 @@ def set_preferred_image(
     """Sets the preferred (primary) image representation for a photo group."""
     try:
         return repo.set_preferred_image(group_id, payload.preferred_image_id)
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail=str(e))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -106,4 +117,9 @@ def remove_image_from_group(
     repo: PhotoGroupRepository = Depends(get_group_repo),
 ):
     """Removes an image representation from a group. Dissolves group if <= 1 member remains."""
-    return repo.remove_image_from_group(image_id)
+    try:
+        return repo.remove_image_from_group(group_id, image_id)
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))

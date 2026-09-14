@@ -137,14 +137,15 @@ describe('CandidateGroupModal Component', () => {
     expect(onGroupMock).toHaveBeenCalledWith(101, 102, 102);
   });
 
-  it('triggers onDismiss when clicking Keep Separate', async () => {
+  it('triggers onDismiss and closes modal when resolving the last pair', async () => {
     const onDismissMock = vi.fn().mockResolvedValue(undefined);
+    const onCloseMock = vi.fn();
     render(
       <CandidateGroupModal
         candidates={[mockCandidate]}
         onGroup={vi.fn()}
         onDismiss={onDismissMock}
-        onClose={vi.fn()}
+        onClose={onCloseMock}
       />
     );
 
@@ -154,5 +155,83 @@ describe('CandidateGroupModal Component', () => {
     });
 
     expect(onDismissMock).toHaveBeenCalledWith(101, 102);
+    expect(onCloseMock).toHaveBeenCalled();
+  });
+
+  it('triggers onClose when clicking header close button', async () => {
+    const onCloseMock = vi.fn();
+    render(
+      <CandidateGroupModal
+        candidates={[mockCandidate]}
+        onGroup={vi.fn()}
+        onDismiss={vi.fn()}
+        onClose={onCloseMock}
+      />
+    );
+
+    const closeBtn = screen.getByTestId('btn-close-candidate-modal');
+    await act(async () => {
+      fireEvent.click(closeBtn);
+    });
+
+    expect(onCloseMock).toHaveBeenCalled();
+  });
+
+  it('renders exact duplicate badge with 100% match', () => {
+    const exactCandidate: GroupCandidatePair = {
+      ...mockCandidate,
+      hamming_distance: 0,
+      is_exact_duplicate: true,
+    };
+    render(
+      <CandidateGroupModal
+        candidates={[exactCandidate]}
+        onGroup={vi.fn()}
+        onDismiss={vi.fn()}
+        onClose={vi.fn()}
+      />
+    );
+
+    expect(screen.getByText(/Exact Duplicate \(100% Match\)/i)).toBeInTheDocument();
+  });
+
+  it('resets selected preferred representation to Candidate A when advancing to next pair', async () => {
+    const pair2: GroupCandidatePair = {
+      image_a: { ...mockImageA, id: 201, filename: 'photo2_a.jpg' },
+      image_b: { ...mockImageB, id: 202, filename: 'photo2_b.jpg' },
+      hamming_distance: 2,
+      is_exact_duplicate: false,
+    };
+    const onGroupMock = vi.fn().mockResolvedValue(undefined);
+    render(
+      <CandidateGroupModal
+        candidates={[mockCandidate, pair2]}
+        onGroup={onGroupMock}
+        onDismiss={vi.fn()}
+        onClose={vi.fn()}
+      />
+    );
+
+    // Select Candidate B on pair 1
+    const candidateBCard = screen.getByText('Candidate B').closest('div');
+    if (candidateBCard) {
+      await act(async () => {
+        fireEvent.click(candidateBCard);
+      });
+    }
+
+    // Advance to pair 2
+    const nextBtn = screen.getByTitle('Next candidate');
+    await act(async () => {
+      fireEvent.click(nextBtn);
+    });
+
+    // Group pair 2 - should default to Candidate A (id 201) because of state reset
+    const groupBtn = screen.getByTestId('btn-group-representations');
+    await act(async () => {
+      fireEvent.click(groupBtn);
+    });
+
+    expect(onGroupMock).toHaveBeenCalledWith(201, 202, 201);
   });
 });
