@@ -44,8 +44,11 @@ def get_db(db_path: Path | str | None = None) -> Generator[sqlite3.Connection, N
 def init_db(db_path: Path | str | None = None) -> list[int]:
     target_path = Path(db_path).resolve() if db_path is not None else get_db_path()
     target_path.parent.mkdir(parents=True, exist_ok=True)
-    with get_connection(target_path) as conn:
+    conn = get_connection(target_path)
+    try:
         from backend.migrations.runner import run_migrations
         applied = run_migrations(conn)
         return applied
+    finally:
+        conn.close()
 

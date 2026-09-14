@@ -3,7 +3,7 @@ import { Search, Sparkles, ShieldAlert, Grid, LayoutGrid } from 'lucide-react';
 import { Library } from '../../types';
 import { FilterSelect } from '../../components/blocks/FilterSelect';
 
-export type StatusFilterType = 'all' | 'unscanned' | 'scanned' | 'has_matches' | 'has_unreviewed';
+export type StatusFilterType = 'all' | 'unscanned' | 'scanned' | 'has_matches' | 'has_unreviewed' | 'grouped';
 
 export interface LibraryFilterBarProps {
   libraries: Library[];
@@ -102,6 +102,7 @@ export const LibraryFilterBar: React.FC<LibraryFilterBarProps> = ({
               ['scanned', 'Scanned'],
               ['has_matches', 'Matches'],
               ['has_unreviewed', 'Needs Review'],
+              ['grouped', 'Grouped'],
             ] as const
           ).map(([key, label]) => (
             <button

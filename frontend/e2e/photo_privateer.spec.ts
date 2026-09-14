@@ -47,6 +47,7 @@ test.describe.serial('Photo Privateer End-to-End Test Suite', () => {
     fs.writeFileSync(path.join(testPhotoDir, 'mountain_landscape.jpg'), createUniqueJpeg('mountain_photo'));
     fs.writeFileSync(path.join(testPhotoDir, 'multi_domain_photo.jpg'), createUniqueJpeg('multi_domain_photo'));
     fs.writeFileSync(path.join(testPhotoDir, 'coastal_sunset.jpg'), createUniqueJpeg('coastal_sunset_photo'));
+    fs.writeFileSync(path.join(testPhotoDir, 'coastal_sunset_variant.jpg'), createUniqueJpeg('coastal_sunset_photo'));
     fs.writeFileSync(path.join(testPhotoDir, 'slow_landscape.jpg'), createUniqueJpeg('slow_cancellation_photo'));
   });
 
@@ -286,7 +287,42 @@ test.describe.serial('Photo Privateer End-to-End Test Suite', () => {
     await projectSelect.selectOption('');
   });
 
-  test('Scenario 7: Permanent library purge removes DB records while preserving original photos on disk', async ({ page }) => {
+  test('Scenario 7: Perceptual grouping candidate review and representation consolidation', async ({ page }) => {
+    await page.goto('/');
+    await page.locator('[data-testid="nav-library"]').click();
+    await selectTestLibrary(page);
+
+    // Verify candidate variants banner is visible
+    const reviewBtn = page.locator('[data-testid="btn-review-candidates"]');
+    await expect(reviewBtn).toBeVisible({ timeout: 10000 });
+    await reviewBtn.click();
+
+    // Verify CandidateGroupModal opens
+    const modal = page.locator('div.bg-carbon-900').filter({ hasText: 'Perceptual Source Representations' });
+    await expect(modal).toBeVisible({ timeout: 5000 });
+    await expect(modal.getByText('coastal_sunset.jpg')).toBeVisible();
+    await expect(modal.getByText('coastal_sunset_variant.jpg')).toBeVisible();
+
+    // Click "Group as Representations"
+    const groupBtn = modal.locator('[data-testid="btn-group-representations"]');
+    await expect(groupBtn).toBeVisible();
+    await groupBtn.click();
+
+    // If additional candidate pairs exist, close the modal via close button
+    const closeBtn = modal.locator('[data-testid="btn-close-candidate-modal"]');
+    if (await closeBtn.isVisible()) {
+      await closeBtn.click();
+    }
+
+    // Verify modal closes
+    await expect(modal).not.toBeVisible({ timeout: 5000 });
+
+    // Verify Primary badge is visible on coastal_sunset.jpg
+    const coastalCard = page.locator('div.group').filter({ hasText: 'coastal_sunset.jpg' }).first();
+    await expect(coastalCard.locator('text=Primary')).toBeVisible({ timeout: 5000 });
+  });
+
+  test('Scenario 8: Permanent library purge removes DB records while preserving original photos on disk', async ({ page }) => {
     await page.goto('/');
     await page.locator('[data-testid="nav-settings"]').click();
     await expect(page.getByText('Monitored Photograph Folders')).toBeVisible({ timeout: 10000 });

@@ -42,6 +42,9 @@ class ImageOut(BaseModel):
     id: int
     library_id: int
     sha256: str
+    dhash: Optional[str] = None
+    photo_group_id: Optional[int] = None
+    is_primary_representation: int = 1
     file_path: str
     filename: str
     file_size: int
@@ -70,6 +73,35 @@ class ImageListResponse(BaseModel):
     total: int
     page: int
     page_size: int
+
+# --- Photo Groups ---
+class PhotoGroupOut(BaseModel):
+    id: int
+    name: Optional[str] = None
+    created_at: str
+    updated_at: str
+    preferred_image_id: Optional[int] = None
+    notes: Optional[str] = None
+    images: List[ImageOut] = Field(default_factory=list)
+
+class PhotoGroupCreate(BaseModel):
+    name: Optional[str] = None
+    image_ids: List[int] = Field(..., min_length=2, description="At least two image IDs to group")
+    preferred_image_id: Optional[int] = None
+    notes: Optional[str] = None
+
+class GroupCandidatePairOut(BaseModel):
+    image_a: ImageOut
+    image_b: ImageOut
+    hamming_distance: int
+    is_exact_duplicate: bool
+
+class DismissCandidateRequest(BaseModel):
+    image_a_id: int
+    image_b_id: int
+
+class SetPreferredRequest(BaseModel):
+    preferred_image_id: int
 
 # --- Matches ---
 ClassificationLiteral = Literal["UNREVIEWED", "APPROVED", "UNAUTHORIZED", "IRRELEVANT"]

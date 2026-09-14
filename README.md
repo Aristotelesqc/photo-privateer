@@ -39,6 +39,7 @@ Key Features:
 - **Transparent Local Accounting**: Local tracker counts Google Vision units, projects pending scan costs, and enforces a conservative free-tier safety guard.
 - **Asynchronous Cooperative Scanning**: Background thread execution with live polling, instant cooperative cancellation, and automatic recovery of interrupted sessions on startup.
 - **Zero-Cost Google Auth Validation**: Test credentials and Application Default Credentials (ADC) token generation without consuming Cloud Vision quota (validates OAuth2 token refresh at $0.00 cost; does not assert Vision API enablement or billing status).
+- **Perceptual Source Grouping & Deduplication**: Lightweight 64-bit dHash fingerprinting detects visually identical/near-identical candidate representations (crops, resized versions, re-exports) and lets you group them. Grouped representations share a single search call per scan, drastically cutting Google Vision quota while retaining distinct local photo files.
 - **Privacy-First Remote Previews**: Candidate match images require user opt-in to fetch and are loaded with `referrerpolicy="no-referrer"`.
 - **No Background Daemons**: Scanning occurs solely when explicitly requested by you.
 
@@ -257,7 +258,7 @@ npm run build
 ```
 
 ### Tier 4: Playwright End-to-End Browser Tests
-Launches an automated headless browser test against a live backend instance verifying real user journeys across 6 scenarios (library indexing, mock scanning with live polling, review queue triage with privacy opt-in, ADC auth testing and library archiving, cooperative scan cancellation, and project batch assignment with filtering):
+Launches an automated headless browser test against a live backend instance verifying real user journeys across 8 scenarios (library indexing, mock scanning with live polling, review queue triage with privacy opt-in, ADC auth testing and library archiving, cooperative scan cancellation, project batch assignment with filtering, perceptual grouping candidate review and representation consolidation, and permanent library purge with source photo preservation):
 ```powershell
 cd frontend
 npm run test:e2e

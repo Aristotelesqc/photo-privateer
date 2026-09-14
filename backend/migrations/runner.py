@@ -323,6 +323,47 @@ def migration_008_image_mtime_ns(conn: sqlite3.Connection) -> None:
     if "file_modified_at_ns" not in image_cols:
         conn.execute("ALTER TABLE images ADD COLUMN file_modified_at_ns INTEGER;")
 
+def migration_009_perceptual_grouping(conn: sqlite3.Connection) -> None:
+    """Creates photo_groups and dismissed_group_candidates tables, adds dhash, photo_group_id,
+    and is_primary_representation to images table.
+    """
+    # 1. Create photo_groups table
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS photo_groups (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            preferred_image_id INTEGER REFERENCES images(id) ON DELETE SET NULL,
+            notes TEXT
+        );
+    """)
+
+    # 2. Create dismissed_group_candidates table
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS dismissed_group_candidates (
+            image_a_id INTEGER NOT NULL REFERENCES images(id) ON DELETE CASCADE,
+            image_b_id INTEGER NOT NULL REFERENCES images(id) ON DELETE CASCADE,
+            created_at TEXT NOT NULL,
+            PRIMARY KEY (image_a_id, image_b_id)
+        );
+    """)
+
+    # 3. Add columns to images table
+    cur = conn.cursor()
+    cur.execute("PRAGMA table_info(images)")
+    image_cols = {row[1] for row in cur.fetchall()}
+    if "dhash" not in image_cols:
+        conn.execute("ALTER TABLE images ADD COLUMN dhash TEXT;")
+    if "photo_group_id" not in image_cols:
+        conn.execute("ALTER TABLE images ADD COLUMN photo_group_id INTEGER REFERENCES photo_groups(id) ON DELETE SET NULL;")
+    if "is_primary_representation" not in image_cols:
+        conn.execute("ALTER TABLE images ADD COLUMN is_primary_representation INTEGER NOT NULL DEFAULT 1;")
+
+    # 4. Create indexes
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_images_group ON images(photo_group_id);")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_images_dhash ON images(dhash);")
+
 MIGRATIONS: list[Migration] = [
     Migration(1, "001_initial_schema", migration_001_initial_schema),
     Migration(2, "002_library_archiving_and_disk_presence", migration_002_library_archiving_and_disk_presence),
@@ -332,6 +373,7 @@ MIGRATIONS: list[Migration] = [
     Migration(6, "006_project_classification", migration_006_project_classification),
     Migration(7, "007_project_source_and_atomic_running_scan", migration_007_project_source_and_atomic_running_scan),
     Migration(8, "008_image_mtime_ns", migration_008_image_mtime_ns),
+    Migration(9, "009_perceptual_grouping", migration_009_perceptual_grouping),
 ]
 
 def run_migrations(conn: sqlite3.Connection) -> list[int]:

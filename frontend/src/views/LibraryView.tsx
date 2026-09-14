@@ -4,11 +4,23 @@ import {
   AlertCircle,
   X,
   Tag,
+  Layers,
 } from 'lucide-react';
-import { Library, ImageItem, AppSettings, ScanPrepareResponse, ScanSession } from '../types';
-import { fetchPhotos, prepareScan, startScan, fetchScanHistory, fetchProjects, batchAssignProject } from '../api/client';
+import { Library, ImageItem, AppSettings, ScanPrepareResponse, ScanSession, GroupCandidatePair } from '../types';
+import {
+  fetchPhotos,
+  prepareScan,
+  startScan,
+  fetchScanHistory,
+  fetchProjects,
+  batchAssignProject,
+  fetchGroupCandidates,
+  createPhotoGroup,
+  dismissGroupCandidate,
+} from '../api/client';
 import { ScanConfirmModal } from '../components/ScanConfirmModal';
 import { ScanProgressModal } from '../components/ScanProgressModal';
+import { CandidateGroupModal } from '../components/CandidateGroupModal';
 import { LibraryFilterBar, StatusFilterType } from '../engines/library/LibraryFilterBar';
 import { PhotoCard } from '../engines/library/PhotoCard';
 import { ProjectAssignModal } from '../engines/library/ProjectAssignModal';
@@ -48,12 +60,25 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
   // Project modal state
   const [projectModalOpen, setProjectModalOpen] = useState(false);
 
+  // Candidate variants state
+  const [candidates, setCandidates] = useState<GroupCandidatePair[]>([]);
+  const [candidateModalOpen, setCandidateModalOpen] = useState(false);
+
   // Scan workflow state
   const [scanProjection, setScanProjection] = useState<ScanPrepareResponse | null>(null);
   const [preparingScan, setPreparingScan] = useState(false);
   const [scanSession, setScanSession] = useState<ScanSession | null>(null);
   const [scanning, setScanning] = useState(false);
   const [scanModalOpen, setScanModalOpen] = useState(false);
+
+  const loadCandidates = async () => {
+    try {
+      const pairs = await fetchGroupCandidates();
+      setCandidates(pairs);
+    } catch (err) {
+      console.error('Failed loading candidate variants', err);
+    }
+  };
 
   const loadProjects = async () => {
     try {
@@ -84,8 +109,23 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
     }
   };
 
+  const handleGroupPair = async (imageAId: number, imageBId: number, preferredId: number) => {
+    await createPhotoGroup({
+      image_ids: [imageAId, imageBId],
+      preferred_image_id: preferredId,
+    });
+    await loadCandidates();
+    await loadPhotos();
+  };
+
+  const handleDismissPair = async (imageAId: number, imageBId: number) => {
+    await dismissGroupCandidate(imageAId, imageBId);
+    await loadCandidates();
+  };
+
   useEffect(() => {
     loadProjects();
+    loadCandidates();
   }, [selectedLibraryId]);
 
   useEffect(() => {
@@ -198,6 +238,25 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
 
   return (
     <div className="max-w-[1600px] mx-auto px-4 sm:px-6 py-4 space-y-4">
+      {/* Candidate Variants Banner */}
+      {candidates.length > 0 && (
+        <div className="flex items-center justify-between px-3.5 py-2.5 bg-accent-950/40 border border-accent-800/60 rounded-lg text-xs animate-fade-in">
+          <div className="flex items-center gap-2 text-carbon-200">
+            <Layers className="w-4 h-4 text-accent-400 shrink-0" />
+            <span>
+              <strong className="text-white font-medium">{candidates.length} candidate representation {candidates.length === 1 ? 'pair' : 'pairs'}</strong> detected (exact duplicates or perceptual variants). Grouping saves search credits by scanning 1 representation per photo.
+            </span>
+          </div>
+          <button
+            onClick={() => setCandidateModalOpen(true)}
+            data-testid="btn-review-candidates"
+            className="px-3 py-1 bg-accent-600 hover:bg-accent-500 text-white rounded font-medium text-xs shadow-xs transition-colors shrink-0 flex items-center gap-1.5"
+          >
+            <span>Review Candidates ({candidates.length})</span>
+          </button>
+        </div>
+      )}
+
       {/* Control Strip Filter Bar */}
       <LibraryFilterBar
         libraries={libraries}
@@ -375,6 +434,19 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
         onClose={() => setProjectModalOpen(false)}
         onAssign={handleAssignProject}
       />
+
+      {/* Candidate Grouping Modal */}
+      {candidateModalOpen && (
+        <CandidateGroupModal
+          candidates={candidates}
+          onGroup={handleGroupPair}
+          onDismiss={handleDismissPair}
+          onClose={() => {
+            setCandidateModalOpen(false);
+            loadPhotos();
+          }}
+        />
+      )}
     </div>
   );
 };

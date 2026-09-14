@@ -15,6 +15,9 @@ export interface ImageItem {
   id: number;
   library_id: number;
   sha256: string;
+  dhash?: string | null;
+  photo_group_id?: number | null;
+  is_primary_representation?: number;
   file_path: string;
   filename: string;
   file_size: number;
@@ -32,6 +35,30 @@ export interface ImageItem {
   match_count: number;
   unreviewed_count: number;
   thumbnail_url: string;
+}
+
+export interface PhotoGroup {
+  id: number;
+  name?: string | null;
+  created_at: string;
+  updated_at: string;
+  preferred_image_id?: number | null;
+  notes?: string | null;
+  images: ImageItem[];
+}
+
+export interface GroupCandidatePair {
+  image_a: ImageItem;
+  image_b: ImageItem;
+  hamming_distance: number;
+  is_exact_duplicate: boolean;
+}
+
+export interface PhotoGroupCreatePayload {
+  name?: string;
+  image_ids: number[];
+  preferred_image_id?: number;
+  notes?: string;
 }
 
 export interface ImageListResponse {

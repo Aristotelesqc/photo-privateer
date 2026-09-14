@@ -15,6 +15,9 @@ class ImageRepository:
             id=r["id"],
             library_id=r["library_id"],
             sha256=r["sha256"],
+            dhash=r["dhash"] if "dhash" in r.keys() else None,
+            photo_group_id=r["photo_group_id"] if "photo_group_id" in r.keys() else None,
+            is_primary_representation=int(r["is_primary_representation"]) if ("is_primary_representation" in r.keys() and r["is_primary_representation"] is not None) else 1,
             file_path=r["file_path"],
             filename=r["filename"],
             file_size=r["file_size"],
@@ -124,8 +127,9 @@ class ImageRepository:
         self,
         library_id: Optional[int] = None,
         search: Optional[str] = None,
-        filter_status: Optional[str] = None,  # "all", "unscanned", "scanned", "has_matches", "has_unreviewed", "missing"
+        filter_status: Optional[str] = None,  # "all", "unscanned", "scanned", "has_matches", "has_unreviewed", "missing", "grouped", "ungrouped"
         project: Optional[str] = None,
+        group_id: Optional[int] = None,
         sort_by: str = "indexed_at",
         sort_dir: str = "desc",
         limit: int = 50,
@@ -137,6 +141,10 @@ class ImageRepository:
         if library_id is not None:
             where_clauses.append("library_id = ?")
             params.append(library_id)
+
+        if group_id is not None:
+            where_clauses.append("photo_group_id = ?")
+            params.append(group_id)
 
         if search:
             where_clauses.append("(filename LIKE ? OR file_path LIKE ?)")
@@ -160,6 +168,10 @@ class ImageRepository:
             where_clauses.append("unreviewed_count > 0")
         elif filter_status == "missing":
             where_clauses.append("is_present_on_disk = 0")
+        elif filter_status == "grouped":
+            where_clauses.append("photo_group_id IS NOT NULL")
+        elif filter_status == "ungrouped":
+            where_clauses.append("photo_group_id IS NULL")
 
         where_sql = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
 
@@ -212,16 +224,18 @@ class ImageRepository:
         project: Optional[str] = None,
         project_source: str = "auto",
         file_modified_at_ns: Optional[int] = None,
+        dhash: Optional[str] = None,
     ) -> ImageOut:
         now = datetime.now(timezone.utc).isoformat()
         cur = self.conn.cursor()
         cur.execute("""
             INSERT INTO images (
-                library_id, sha256, file_path, filename, file_size, file_modified_at, file_modified_at_ns,
+                library_id, sha256, dhash, file_path, filename, file_size, file_modified_at, file_modified_at_ns,
                 width, height, format, project, project_source, indexed_at, last_seen_on_disk, is_present_on_disk
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
             ON CONFLICT(file_path) DO UPDATE SET
                 sha256 = excluded.sha256,
+                dhash = COALESCE(excluded.dhash, images.dhash),
                 filename = excluded.filename,
                 file_size = excluded.file_size,
                 file_modified_at = excluded.file_modified_at,
@@ -240,12 +254,26 @@ class ImageRepository:
                 last_seen_on_disk = excluded.last_seen_on_disk,
                 is_present_on_disk = 1
         """, (
-            library_id, sha256, file_path, filename, file_size, file_modified_at, file_modified_at_ns,
+            library_id, sha256, dhash, file_path, filename, file_size, file_modified_at, file_modified_at_ns,
             width, height, format, project, project_source, now, now
         ))
         cur.execute("SELECT * FROM images WHERE file_path = ?", (file_path,))
         r = cur.fetchone()
         return self._row_to_image(r)
+
+    def update_dhash(self, image_id: int, dhash: str) -> None:
+        """Sets the perceptual dHash for an image."""
+        cur = self.conn.cursor()
+        cur.execute("UPDATE images SET dhash = ? WHERE id = ?", (dhash, image_id))
+
+    def get_images_for_group(self, group_id: int) -> list[ImageOut]:
+        """Returns all images belonging to a group, ordered with the primary representation first."""
+        cur = self.conn.cursor()
+        cur.execute(
+            "SELECT * FROM images WHERE photo_group_id = ? ORDER BY is_primary_representation DESC, id ASC",
+            (group_id,),
+        )
+        return [self._row_to_image(r) for r in cur.fetchall()]
 
     def update_mtime_ns(self, image_id: int, mtime_ns: int) -> None:
         """Opportunistically upgrades legacy image rows to store exact nanosecond mtime."""

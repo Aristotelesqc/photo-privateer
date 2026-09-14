@@ -11,6 +11,7 @@ from backend.config import SUPPORTED_EXTENSIONS
 from backend.repositories.library_repo import LibraryRepository
 from backend.repositories.image_repo import ImageRepository
 from backend.services.thumbnail_cache import ThumbnailCache
+from backend.services.perceptual import compute_dhash, _dhash_from_pil
 
 def calculate_sha256(file_path: Path) -> str:
     hasher = hashlib.sha256()
@@ -105,6 +106,13 @@ class LibraryIndexer:
                 # Opportunistic upgrade for legacy rows
                 if existing.file_modified_at_ns is None:
                     self.image_repo.update_mtime_ns(existing.id, mtime_ns)
+                if existing.dhash is None:
+                    try:
+                        computed_hash = compute_dhash(file_path)
+                        if computed_hash:
+                            self.image_repo.update_dhash(existing.id, computed_hash)
+                    except Exception:
+                        pass
                 if len(unchanged_ids) >= 500:
                     self.image_repo.touch_observed_images(unchanged_ids)
                     unchanged_ids.clear()
@@ -177,11 +185,13 @@ class LibraryIndexer:
             height: int | None = None
             img_format: str | None = None
 
+            dhash: str | None = None
             try:
                 with Image.open(file_path) as img:
                     img = ImageOps.exif_transpose(img)
                     width, height = img.size
                     img_format = img.format or file_path.suffix.lstrip(".").upper()
+                    dhash = _dhash_from_pil(img)
             except Exception:
                 img_format = file_path.suffix.lstrip(".").upper()
 
@@ -205,6 +215,7 @@ class LibraryIndexer:
                 project=detected_project,
                 project_source="auto",
                 file_modified_at_ns=mtime_ns,
+                dhash=dhash,
             )
             added_or_updated += 1
 

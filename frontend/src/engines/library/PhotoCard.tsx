@@ -50,6 +50,22 @@ export const PhotoCard: React.FC<PhotoCardProps> = ({
           <span className="text-[9px] font-mono px-1 py-0.2 rounded bg-black/70 text-carbon-300 backdrop-blur-xs">
             {formatStr}
           </span>
+          {photo.photo_group_id && (
+            <span
+              className={`text-[9px] font-mono px-1 py-0.2 rounded backdrop-blur-xs ${
+                photo.is_primary_representation === 1
+                  ? 'bg-accent-950/90 text-accent-300 border border-accent-800/80'
+                  : 'bg-carbon-950/90 text-carbon-400 border border-carbon-700/80'
+              }`}
+              title={
+                photo.is_primary_representation === 1
+                  ? 'Primary representation (searched on web)'
+                  : 'Secondary grouped representation'
+              }
+            >
+              {photo.is_primary_representation === 1 ? 'Primary' : 'Variant'}
+            </span>
+          )}
           {!photo.is_present_on_disk && (
             <span
               className="text-[9px] font-medium px-1 py-0.2 rounded bg-amber-950/90 text-amber-300 border border-amber-800/80 backdrop-blur-xs shadow-xs"

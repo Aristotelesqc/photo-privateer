@@ -16,6 +16,7 @@ from backend.repositories.match_repo import MatchRepository
 from backend.repositories.domain_rule_repo import DomainRuleRepository
 from backend.repositories.usage_repo import UsageRepository, get_current_billing_period
 from backend.repositories.settings_repo import SettingsRepository
+from backend.repositories.group_repo import PhotoGroupRepository
 from backend.providers import get_provider
 from backend.models import ScanSessionOut, ImageOut
 from backend.config import CLASS_UNREVIEWED
@@ -37,6 +38,7 @@ class ScanEngine:
         usage_repo: UsageRepository,
         settings_repo: SettingsRepository,
         library_repo: Optional[LibraryRepository] = None,
+        group_repo: Optional[PhotoGroupRepository] = None,
     ):
         self.image_repo = image_repo
         self.match_repo = match_repo
@@ -44,6 +46,7 @@ class ScanEngine:
         self.usage_repo = usage_repo
         self.settings_repo = settings_repo
         self.library_repo = library_repo or LibraryRepository(self.image_repo.conn)
+        self.group_repo = group_repo or PhotoGroupRepository(self.image_repo.conn)
         self.db_path: Optional[str] = None
         try:
             cur = self.image_repo.conn.cursor()
@@ -149,14 +152,41 @@ class ScanEngine:
                 f"Check that files have not been moved or unmounted."
             )
 
-        # 4. Enforce free tier allowance guard on the actual usable scannable image count
+        # 4. Collapse grouped photo representations to 1 search call per group
+        grouped_reps: dict[int, ImageOut] = {}
+        scannable_images: list[ImageOut] = []
+        seen_scannable_ids: set[int] = set()
+
+        for img in usable_images:
+            if img.photo_group_id is None:
+                if img.id not in seen_scannable_ids:
+                    scannable_images.append(img)
+                    seen_scannable_ids.add(img.id)
+            else:
+                gid = img.photo_group_id
+                if gid not in grouped_reps:
+                    canonical = img
+                    try:
+                        grp = self.group_repo.get_group(gid)
+                        if grp and grp.preferred_image_id:
+                            pref_img = self.image_repo.get_by_id(grp.preferred_image_id)
+                            if pref_img and pref_img.is_present_on_disk and Path(pref_img.file_path).exists():
+                                canonical = pref_img
+                    except Exception:
+                        pass
+                    grouped_reps[gid] = canonical
+                    if canonical.id not in seen_scannable_ids:
+                        scannable_images.append(canonical)
+                        seen_scannable_ids.add(canonical.id)
+
+        # 5. Enforce free tier allowance guard on the actual usable scannable image count
         settings = self.settings_repo.get_app_settings()
         provider_id = provider_override or settings.active_provider
 
         if provider_id == "google_vision" and not force_override_guard:
             current_period = get_current_billing_period()
             current_units = self.usage_repo.get_period_units(current_period, provider="google_vision")
-            projected = current_units + len(usable_images)
+            projected = current_units + len(scannable_images)
             if projected > settings.free_tier_monthly_units and settings.block_on_free_tier_exceeded:
                 raise ValueError(
                     f"Scan blocked by free tier allowance guard: projected usage ({projected}) "
@@ -164,7 +194,7 @@ class ScanEngine:
                     f"Authorize force override to proceed."
                 )
 
-        return usable_images, missing_ids
+        return scannable_images, missing_ids
 
 
     def start_background_scan(

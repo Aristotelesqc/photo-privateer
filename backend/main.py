@@ -22,6 +22,7 @@ from backend.api import (
     rules,
     usage,
     settings,
+    groups,
 )
 
 # Configure logging
@@ -137,6 +138,7 @@ app.include_router(matches.router)
 app.include_router(rules.router)
 app.include_router(usage.router)
 app.include_router(settings.router)
+app.include_router(groups.router)
 
 # Serve compiled frontend if available
 if FRONTEND_DIST_DIR.is_dir():
