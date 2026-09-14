@@ -38,7 +38,7 @@ Key Features:
 - **Domain Rules**: Automatically whitelist portfolio sites or blacklist scrapers across subdomains.
 - **Transparent Local Accounting**: Local tracker counts Google Vision units, projects pending scan costs, and enforces a conservative free-tier safety guard.
 - **Asynchronous Cooperative Scanning**: Background thread execution with live polling, instant cooperative cancellation, and automatic recovery of interrupted sessions on startup.
-- **Zero-Cost Google Auth Validation**: Test credentials and Application Default Credentials (ADC) token generation without consuming Cloud Vision quota.
+- **Zero-Cost Google Auth Validation**: Test credentials and Application Default Credentials (ADC) token generation without consuming Cloud Vision quota (validates OAuth2 token refresh at $0.00 cost; does not assert Vision API enablement or billing status).
 - **Privacy-First Remote Previews**: Candidate match images require user opt-in to fetch and are loaded with `referrerpolicy="no-referrer"`.
 - **No Background Daemons**: Scanning occurs solely when explicitly requested by you.
 
@@ -73,7 +73,7 @@ The application is served as a single local process: FastAPI binds strictly to `
 ## 3. Prerequisites
 
 - **Operating System**: Windows 10/11 (or macOS / Linux).
-- **Python**: Version 3.14 (canonical maintenance baseline).
+- **Python**: Version 3.14 (canonical supported runtime; Python 3.11+ supported on a compatibility fallback basis).
 - **Node.js**: Version 24 LTS (only needed for first-time frontend build, test execution, or frontend development; not needed during normal launch after the frontend is compiled).
 
 ---
@@ -181,6 +181,7 @@ For local personal desktop use, Google Cloud's official and recommended client-l
 5. Ensure the **Cloud Vision API** is enabled in your project ([GCP Console](https://console.cloud.google.com/apis/library/vision.googleapis.com) or `gcloud services enable vision.googleapis.com`).
 
 Photo Privateer automatically detects local ADC credentials on Windows (`%APPDATA%\gcloud\application_default_credentials.json`) and Linux/macOS (`~/.config/gcloud/application_default_credentials.json`). No file path configuration is necessary in Settings—leave the credentials path empty and click **Test Authentication**.
+*(Note: The "Test Authentication" button validates OAuth2 credential token refresh at $0.00 cost; it verifies your credentials can authenticate with Google's token endpoint, but does not assert that the Cloud Vision API is enabled or billed in your GCP project).*
 
 ### Alternative Method: Service Account JSON Key
 If you prefer to isolate access with a dedicated Service Account:
@@ -256,7 +257,7 @@ npm run build
 ```
 
 ### Tier 4: Playwright End-to-End Browser Tests
-Launches an automated headless browser test against a live backend instance verifying real user journeys (library indexing, mock scanning with live polling, review queue triage with privacy opt-in, ADC auth testing, and library archiving):
+Launches an automated headless browser test against a live backend instance verifying real user journeys across 6 scenarios (library indexing, mock scanning with live polling, review queue triage with privacy opt-in, ADC auth testing and library archiving, cooperative scan cancellation, and project batch assignment with filtering):
 ```powershell
 cd frontend
 npm run test:e2e

@@ -111,3 +111,7 @@ jobs:
       - name: Server launcher CLI smoke
         run: |
           python start.py --help
+      - name: Launcher batch file execution smoke
+        shell: cmd
+        run: |
+          START_PHOTO_PRIVATEER.bat --help < nul

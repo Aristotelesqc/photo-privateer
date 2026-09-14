@@ -103,7 +103,7 @@ export const UsageView: React.FC<UsageViewProps> = ({ settings, onNavigateToSett
             ${summary?.estimated_total_cost_usd.toFixed(2) ?? '0.00'}
           </p>
           <div className="text-[10px] text-carbon-500">
-            ${(settings?.unit_price_usd ?? 0.0035).toFixed(4)}/unit ($3.50/1k) beyond free tier
+            ${(settings?.unit_price_usd ?? 0.0035).toFixed(4)}/unit ($${((settings?.unit_price_usd ?? 0.0035) * 1000).toFixed(2)}/1k) beyond free tier
           </div>
         </div>
       </div>
@@ -196,7 +196,7 @@ export const UsageView: React.FC<UsageViewProps> = ({ settings, onNavigateToSett
                       )}
                     </td>
                     <td className="py-2 px-2.5 text-carbon-400">{call.billing_period}</td>
-                    <td className="py-2 px-2.5 text-center text-white tabular-nums">{call.successful_units}</td>
+                    <td className="py-2 px-2.5 text-center text-white tabular-nums">{call.attempted_units}</td>
                     <td className="py-2 px-2.5 text-center font-sans">
                       {call.request_status === 'SUCCESS' ? (
                         <span className="inline-flex items-center gap-1 text-[11px] text-emerald-400">

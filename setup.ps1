@@ -5,7 +5,7 @@ Write-Host "===================================================" -ForegroundColo
 Write-Host "  Photo Privateer First-Time Setup and Bootstrap" -ForegroundColor Cyan
 Write-Host "===================================================" -ForegroundColor Cyan
 
-# 1. Verify Python (Python 3.11+ supported, Python 3.14 canonical)
+# 1. Verify Python (Python 3.14 canonical supported runtime, Python 3.11+ compatibility fallback)
 Write-Host "[1/5] Checking Python environment..." -ForegroundColor Yellow
 $pythonVersion = python --version 2>&1
 if ($LASTEXITCODE -ne 0) {
@@ -14,11 +14,11 @@ if ($LASTEXITCODE -ne 0) {
 Write-Host "  Found: $pythonVersion" -ForegroundColor Green
 python -c "import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)"
 if ($LASTEXITCODE -ne 0) {
-    Write-Error "Photo Privateer requires Python 3.11 or higher (Python 3.14 canonical recommended). Found: $pythonVersion"
+    Write-Error "Photo Privateer requires Python 3.14 (canonical) or Python 3.11+ (compatibility fallback). Found: $pythonVersion"
 }
 python -c "import sys; sys.exit(0 if sys.version_info >= (3, 14) else 1)"
 if ($LASTEXITCODE -ne 0) {
-    Write-Host "  [NOTE] Python 3.14 is the canonical target. Running in backwards-compatible mode with $pythonVersion." -ForegroundColor Yellow
+    Write-Host "  [NOTE] Python 3.14 is the canonical supported runtime. Running in backwards-compatible mode with $pythonVersion." -ForegroundColor Yellow
 }
 
 # 2. Virtual Environment (.venv)

@@ -315,6 +315,14 @@ def migration_007_project_source_and_atomic_running_scan(conn: sqlite3.Connectio
         WHERE status = 'RUNNING';
     """)
 
+def migration_008_image_mtime_ns(conn: sqlite3.Connection) -> None:
+    """Adds file_modified_at_ns column to images table without lossy float backfill."""
+    cur = conn.cursor()
+    cur.execute("PRAGMA table_info(images)")
+    image_cols = {row[1] for row in cur.fetchall()}
+    if "file_modified_at_ns" not in image_cols:
+        conn.execute("ALTER TABLE images ADD COLUMN file_modified_at_ns INTEGER;")
+
 MIGRATIONS: list[Migration] = [
     Migration(1, "001_initial_schema", migration_001_initial_schema),
     Migration(2, "002_library_archiving_and_disk_presence", migration_002_library_archiving_and_disk_presence),
@@ -323,6 +331,7 @@ MIGRATIONS: list[Migration] = [
     Migration(5, "005_library_fk_safety", migration_005_library_fk_safety),
     Migration(6, "006_project_classification", migration_006_project_classification),
     Migration(7, "007_project_source_and_atomic_running_scan", migration_007_project_source_and_atomic_running_scan),
+    Migration(8, "008_image_mtime_ns", migration_008_image_mtime_ns),
 ]
 
 def run_migrations(conn: sqlite3.Connection) -> list[int]:
@@ -377,7 +386,6 @@ def run_migrations(conn: sqlite3.Connection) -> list[int]:
                     "INSERT INTO schema_migrations (version, name, applied_at) VALUES (?, ?, ?)",
                     (migration.version, migration.name, now),
                 )
-                conn.execute("PRAGMA foreign_keys = ON;")
                 fk_cur = conn.cursor()
                 fk_cur.execute("PRAGMA foreign_key_check;")
                 violations = fk_cur.fetchall()
@@ -388,6 +396,14 @@ def run_migrations(conn: sqlite3.Connection) -> list[int]:
                         f"{'; '.join(summary)}"
                     )
                 conn.commit()
+
+                # Re-enable foreign keys after transaction commit and verify pragma state
+                conn.execute("PRAGMA foreign_keys = ON;")
+                fk_cur.execute("PRAGMA foreign_keys;")
+                fk_state = fk_cur.fetchone()[0]
+                if fk_state != 1:
+                    raise sqlite3.IntegrityError(f"Failed to re-enable PRAGMA foreign_keys after migration {migration.version:03d}")
+
                 applied_now.append(migration.version)
                 logger.info(f"Migration {migration.version:03d}_{migration.name} applied successfully.")
             except Exception as e:

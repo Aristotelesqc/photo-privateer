@@ -15,7 +15,7 @@ Ensure dev dependencies are installed from `requirements-dev.txt` (Python 3.14 c
 pip install -r requirements-dev.txt
 pytest -v tests/backend
 ```
-Ensure 100% of tests pass with 0 failures and 0 regressions (indexing, hashing immutability, versioned SQLite migrations with post-migration foreign key checks, migration 004 review preservation, rescan history preservation, domain rules, cost estimation with boundary crossing, cooperative scan cancellation, crash recovery, rename reconciliation, hermetic test isolation, server-side protection of archived libraries, transactional purge, scan worker persistence isolation, and zero-cost authentication).
+Ensure 100% of tests pass with 0 failures and 0 regressions (indexing, hashing immutability, versioned SQLite migrations with post-migration foreign key checks, migration 004 review preservation, rescan history preservation, domain rules, cost estimation with boundary crossing, cooperative scan cancellation, crash recovery, rename reconciliation, hermetic test isolation, server-side protection of archived libraries, transactional purge, scan worker persistence isolation, fail-closed provider accounting on persistence failure, duplicate image ID deduplication, and zero-cost authentication).
 
 ### 2. Frontend Unit Tests (Vitest)
 Run Vitest component unit tests:
@@ -25,7 +25,6 @@ npm test
 Pop-Location
 ```
 Ensure 100% of frontend unit tests pass with 0 failures (Thumbnail privacy opt-in, ScanProgressModal polling, ScanConfirmModal usable photo breakdown).
-
 
 ### 3. Frontend Production Build
 Run TypeScript checking and Vite production bundling:
@@ -37,7 +36,7 @@ Pop-Location
 Verify `frontend/dist/index.html` and bundled assets compile cleanly with zero TypeScript errors.
 
 ### 4. End-to-End Browser Tests (Playwright)
-Run the automated Playwright browser test suite covering all 5 core user journeys:
+Run the automated Playwright browser test suite covering all 6 core user journeys:
 ```powershell
 Push-Location frontend
 npm run test:e2e
@@ -49,6 +48,7 @@ Scenarios verified:
 - Scenario 3: Review Queue triage, privacy opt-in, and inspection modal.
 - Scenario 4: Settings authentication status and non-destructive library archive.
 - Scenario 5: Cooperative scan cancellation workflow.
+- Scenario 6: Project batch assignment and filtering.
 
 ### 5. Launcher & Port Integrity Check
 Verify that `start.py` can bind cleanly to localhost `127.0.0.1:8765`:

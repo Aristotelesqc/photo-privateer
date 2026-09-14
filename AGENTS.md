@@ -15,6 +15,7 @@ Photo Privateer is a local desktop web application for professional photographer
 7. **Zero Scope Erosion**: Do not omit requirements, weaken safety constraints, or leave unfulfilled TODOs.
 8. **Non-Destructive Archiving**: Archiving a library retains all indexed photo metadata and review match triage records. Photos and matches are never deleted unless explicitly purged.
 9. **Cooperative Scan Cancellation & Crash Recovery**: In-progress scans can be cooperatively cancelled via flag checks between images. Any sessions left `RUNNING` due to an unexpected process termination are recovered to `INTERRUPTED` on startup.
+10. **Isolated Worktree & Synchronized PR Head Description**: Never commit directly to `main` or push directly to `main`. All modernization passes, bug fixes, feature additions, and audit remediations must be developed inside an isolated Git worktree on a dedicated feature branch and submitted as an open GitHub Pull Request targeting `main`. Every subsequent push or modification to a PR branch must synchronously update the PR's head description (`gh pr edit`) to document the current commit state, test metrics, and resolved audit findings.
 
 ---
 
@@ -67,8 +68,7 @@ photo-privateer/
 │   ├── database.py                # SQLite connection, WAL mode, migration initialization
 │   ├── models.py                  # Pydantic schemas and dataclasses
 │   ├── migrations/                # Versioned schema migrations
-│   │   ├── runner.py              # Idempotent migration runner & applied tracker
-│   │   └── versions/              # 001_initial_schema through 006_project_classification
+│   │   └── runner.py              # Idempotent migration runner & applied tracker (001 through 008)
 │   ├── repositories/              # Data access layer (libraries, images, matches, rules, usage, settings)
 │   ├── services/                  # Indexer, thumbnail cache, image service, rules, scan engine
 │   ├── providers/                 # Base provider interface, Mock provider, Google Vision provider
@@ -99,7 +99,8 @@ photo-privateer/
 └── .agents/
     └── skills/
         ├── verify-photo-privateer/# Reusable quality audit skill
-        └── bump-version/          # Automated version bump and release workflow skill
+        ├── bump-version/          # Automated version bump and release workflow skill
+        └── worktree-pr/           # Isolated Git worktree and Pull Request workflow skill
 ```
 
 ---
@@ -161,7 +162,7 @@ class SearchProvider(abc.ABC):
 - Google Service Account JSON files must never be committed to git, uploaded to browser storage, or logged.
 - The Settings UI accepts and validates the local file path on disk; the secret payload never leaves the Python backend.
 - **Fast ADC Check**: In local desktop environments, never invoke `google.auth.default()` blindly without pre-checking local ADC credential file existence (`%APPDATA%/gcloud/application_default_credentials.json` on Windows, `~/.config/gcloud/application_default_credentials.json` on Linux/macOS), preventing 20–30s link-local metadata ping hangs on consumer networks.
-- **Zero-Cost Auth Verification**: Validate Google Cloud credentials strictly via OAuth2 token refresh (`credentials.refresh(Request())`) against Google's token endpoint rather than issuing paid Cloud Vision Web Detection calls. This validates IAM validity and project structure at $0.00 cost with 0 API quota consumed.
+- **Zero-Cost Auth Verification**: Validate Google Cloud credentials strictly via OAuth2 token refresh (`credentials.refresh(Request())`) against Google's token endpoint rather than issuing paid Cloud Vision Web Detection calls. This validates OAuth2 credential validity and token retrieval at $0.00 cost with 0 API quota consumed (note: this verifies credentials and token refresh against Google's auth endpoint; it does not assert that the Cloud Vision API is enabled, Web Detection is authorized, or Cloud Billing is active).
 - Remote candidate match images are loaded directly in the user's browser with `referrerpolicy="no-referrer"` upon user opt-in.
 - The server binds strictly to `127.0.0.1`.
 
@@ -207,7 +208,17 @@ Verification follows a strict 4-tier testing hierarchy:
 
 ## 12. Dependency & Runtime Modernization Policy
 
-1. **Canonical Runtimes**: The supported canonical runtime baseline is **Python 3.14** and **Node.js 24 LTS** (build/test/dev). Node is not required at runtime after production frontend assets are compiled.
+1. **Canonical Runtimes**: The supported canonical runtime baseline is **Python 3.14** and **Node.js 24 LTS** (build/test/dev). Python 3.11+ is supported on a best-effort compatibility fallback basis. Node is not required at runtime after production frontend assets are compiled.
 2. **Current Stable Baseline**: Prefer the current stable release line for direct runtimes, frameworks, libraries, build tools, and test tooling. Do not retain an older major solely for conservatism or historical compatibility. A deliberate stable-version holdback requires a concrete demonstrated incompatibility, upstream regression, unsupported runtime, or failing project test and must be documented. Pre-release, beta, RC, canary, and nightly versions are excluded by default.
 3. **Exact Direct Declarations**: Direct dependencies are declared as explicit verified versions in `requirements.txt` / `requirements-dev.txt` and `frontend/package.json` to guarantee local and CI reproducibility.
+
+---
+
+## 13. Isolated Worktree & Pull Request Workflow Invariant
+
+1. **Protected Main**: `main` is strictly protected against direct pushes and direct commits.
+2. **Worktree Isolation**: All development work must be executed in a dedicated worktree under `../photo-privateer-worktrees/<branch-name>` on a dedicated branch (e.g., `git worktree add ../photo-privateer-worktrees/<branch-name> -b <branch-name> origin/main`).
+3. **Pull Request Delivery**: Changes are submitted via `gh pr create --base main --head <branch>` and left OPEN for independent review. Never merge automatically.
+4. **Synchronized PR Head Description Invariant**: Every push or modification made to a PR branch must synchronously update the PR's head description (`gh pr edit <pr-number> --body ...`) so that the PR summary on GitHub always reflects the latest commits, architectural changes, and updated verification metrics.
+
 

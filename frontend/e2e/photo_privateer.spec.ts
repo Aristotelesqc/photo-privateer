@@ -92,7 +92,9 @@ test.describe.serial('Photo Privateer End-to-End Test Suite', () => {
     await page.click('button:has-text("Add & Index")');
 
     // Confirm folder is listed in monitored folders
-    await expect(page.getByText(testPhotoDir, { exact: true })).toBeVisible({ timeout: 10000 });
+    await expect(
+      page.locator('[data-testid="library-item"]').filter({ hasText: testLibraryName })
+    ).toBeVisible({ timeout: 10000 });
 
 
     // Navigate to Library View
@@ -282,6 +284,34 @@ test.describe.serial('Photo Privateer End-to-End Test Suite', () => {
 
     // Reset filter
     await projectSelect.selectOption('');
+  });
+
+  test('Scenario 7: Permanent library purge removes DB records while preserving original photos on disk', async ({ page }) => {
+    await page.goto('/');
+    await page.locator('[data-testid="nav-settings"]').click();
+    await expect(page.getByText('Monitored Photograph Folders')).toBeVisible({ timeout: 10000 });
+
+    const libCard = page.locator('[data-testid="library-item"]').filter({ hasText: testLibraryName }).first();
+    await expect(libCard).toBeVisible({ timeout: 5000 });
+
+    // 1. Archive the library first if not already archived
+    const stopMonitoringBtn = libCard.locator('[data-testid="btn-stop-monitoring"]');
+    if (await stopMonitoringBtn.isVisible()) {
+      await stopMonitoringBtn.click();
+      await expect(libCard.locator('[data-testid="badge-archived"]')).toBeVisible({ timeout: 10000 });
+    }
+
+    // 2. Permanently remove folder via btn-permanent-remove
+    const removeBtn = libCard.locator('[data-testid="btn-permanent-remove"]');
+    await expect(removeBtn).toBeVisible({ timeout: 5000 });
+    await removeBtn.click();
+
+    // 3. Verify library is gone from UI
+    await expect(page.locator('[data-testid="library-item"]').filter({ hasText: testLibraryName })).toHaveCount(0, { timeout: 10000 });
+
+    // 4. Verify original image file remains intact on disk
+    const samplePhotoPath = path.join(testPhotoDir, 'mountain_landscape.jpg');
+    expect(fs.existsSync(samplePhotoPath)).toBe(true);
   });
 });
 

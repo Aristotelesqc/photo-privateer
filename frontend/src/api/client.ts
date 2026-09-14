@@ -65,10 +65,13 @@ export const updateLibrary = (
     body: JSON.stringify(updates),
   });
 
-export const deleteLibrary = (id: number) =>
-  request<{ status: string; message: string }>(`/libraries/${id}`, {
-    method: 'DELETE',
-  });
+export const deleteLibrary = (id: number, purgePermanently: boolean = false) =>
+  request<{ status: string; message: string }>(
+    purgePermanently ? `/libraries/${id}?purge_permanently=true` : `/libraries/${id}`,
+    {
+      method: 'DELETE',
+    }
+  );
 
 export const archiveLibrary = (id: number) =>
   request<Library>(`/libraries/${id}/archive`, {

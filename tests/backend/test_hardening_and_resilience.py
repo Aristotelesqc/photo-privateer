@@ -92,22 +92,32 @@ def test_concurrent_scan_conflict_409(client, repos, sample_images_dir: Path):
     )
     assert running_session.status == "RUNNING"
 
-    # Attempt to start another scan session via API
-    res = client.post("/api/scans/start", json={
-        "image_ids": img_ids,
-        "provider": "mock",
-    })
-    assert res.status_code == 409
-    assert "currently running" in res.json()["detail"]
+    # Simulate an active scan worker thread
+    import threading
+    stop_event = threading.Event()
+    worker = threading.Thread(target=stop_event.wait, name=f"scan-worker-{running_session.id}")
+    worker.daemon = True
+    worker.start()
 
-    # Clean up session
-    usage_repo.update_scan_session_progress(
-        session_id=running_session.id,
-        processed=2,
-        successful=2,
-        failed=0,
-        status="COMPLETED",
-    )
+    try:
+        # Attempt to start another scan session via API
+        res = client.post("/api/scans/start", json={
+            "image_ids": img_ids,
+            "provider": "mock",
+        })
+        assert res.status_code == 409
+        assert "currently running" in res.json()["detail"]
+    finally:
+        stop_event.set()
+        worker.join(timeout=2.0)
+        # Clean up session
+        usage_repo.update_scan_session_progress(
+            session_id=running_session.id,
+            processed=2,
+            successful=2,
+            failed=0,
+            status="COMPLETED",
+        )
 
 
 def test_startup_recovery_of_interrupted_sessions(repos):

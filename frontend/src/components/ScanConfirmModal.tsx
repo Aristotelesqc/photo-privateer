@@ -15,7 +15,7 @@ export const ScanConfirmModal: React.FC<ScanConfirmModalProps> = ({
 }) => {
   const [forceOverride, setForceOverride] = useState(false);
   const isMock = projection.provider === 'mock';
-  const isBlocked = projection.blocked_by_guard && !forceOverride;
+  const isBlocked = (projection.blocked_by_guard && !forceOverride) || projection.usable_count === 0;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-xs animate-fade-in">
@@ -139,7 +139,7 @@ export const ScanConfirmModal: React.FC<ScanConfirmModalProps> = ({
                 : 'bg-accent-600 hover:bg-accent-500 text-white shadow-accent-600/20 active:scale-98'
             }`}
           >
-            <span>Start Scan ({projection.selected_count})</span>
+            <span>Start Scan ({projection.usable_count})</span>
             <ArrowRight className="w-3.5 h-3.5" />
           </button>
         </div>

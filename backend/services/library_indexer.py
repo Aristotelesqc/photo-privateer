@@ -78,6 +78,7 @@ class LibraryIndexer:
             stat = file_path.stat()
             file_size = stat.st_size
             mtime = stat.st_mtime
+            mtime_ns = stat.st_mtime_ns
 
             # Determine project based on immediate parent folder
             detected_project = None
@@ -91,9 +92,19 @@ class LibraryIndexer:
 
             # Check if file exists in database with identical mtime and size
             existing = self.image_repo.get_by_path(norm_path)
-            if existing and abs(existing.file_modified_at - mtime) < 0.001 and existing.file_size == file_size:
+            is_mtime_match = False
+            if existing:
+                if existing.file_modified_at_ns is not None and existing.file_modified_at_ns > 0:
+                    is_mtime_match = (existing.file_modified_at_ns == mtime_ns)
+                else:
+                    is_mtime_match = (abs(existing.file_modified_at - mtime) < 0.0001)
+
+            if existing and is_mtime_match and existing.file_size == file_size:
                 unchanged += 1
                 unchanged_ids.append(existing.id)
+                # Opportunistic upgrade for legacy rows
+                if existing.file_modified_at_ns is None:
+                    self.image_repo.update_mtime_ns(existing.id, mtime_ns)
                 if len(unchanged_ids) >= 500:
                     self.image_repo.touch_observed_images(unchanged_ids)
                     unchanged_ids.clear()
@@ -109,6 +120,7 @@ class LibraryIndexer:
                         new_filename=file_path.name,
                         new_size=file_size,
                         new_mtime=mtime,
+                        new_mtime_ns=mtime_ns,
                     )
                 # Ensure thumbnail exists in cache
                 if not self.thumbnail_cache.has_thumbnail(existing.sha256):
@@ -133,30 +145,31 @@ class LibraryIndexer:
             # Check if this is a renamed or moved file with identical content hash
             if not existing:
                 candidates = self.image_repo.get_all_by_sha256(sha256)
-                # An unambiguous rename is when an existing record with identical SHA-256 no longer exists at its old path
+                # An unambiguous rename is when EXACTLY ONE existing record with identical SHA-256 no longer exists at its old path
+                missing_candidates = [c for c in candidates if not Path(c.file_path).exists()]
                 reconciled = False
-                for candidate in candidates:
-                    if not Path(candidate.file_path).exists():
-                        # Old path is gone -> reconcile existing image ID to new path
-                        self.image_repo.reconcile_image_location(
-                            image_id=candidate.id,
-                            library_id=library_id,
-                            new_path=norm_path,
-                            new_filename=file_path.name,
-                            new_size=file_size,
-                            new_mtime=mtime,
-                        )
-                        if detected_project and not candidate.project:
-                            self.image_repo.update_project_auto(candidate.id, detected_project)
-                        # Ensure thumbnail cached
-                        if not self.thumbnail_cache.has_thumbnail(sha256):
-                            try:
-                                self.thumbnail_cache.get_or_create_thumbnail(file_path, sha256)
-                            except Exception:
-                                pass
-                        added_or_updated += 1
-                        reconciled = True
-                        break
+                if len(missing_candidates) == 1:
+                    candidate = missing_candidates[0]
+                    # Old path is gone -> reconcile existing image ID to new path
+                    self.image_repo.reconcile_image_location(
+                        image_id=candidate.id,
+                        library_id=library_id,
+                        new_path=norm_path,
+                        new_filename=file_path.name,
+                        new_size=file_size,
+                        new_mtime=mtime,
+                        new_mtime_ns=mtime_ns,
+                    )
+                    if detected_project and not candidate.project:
+                        self.image_repo.update_project_auto(candidate.id, detected_project)
+                    # Ensure thumbnail cached
+                    if not self.thumbnail_cache.has_thumbnail(sha256):
+                        try:
+                            self.thumbnail_cache.get_or_create_thumbnail(file_path, sha256)
+                        except Exception:
+                            pass
+                    added_or_updated += 1
+                    reconciled = True
                 if reconciled:
                     continue
 
@@ -191,6 +204,7 @@ class LibraryIndexer:
                 format=img_format,
                 project=detected_project,
                 project_source="auto",
+                file_modified_at_ns=mtime_ns,
             )
             added_or_updated += 1
 

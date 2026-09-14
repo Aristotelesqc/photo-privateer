@@ -28,7 +28,7 @@ class MockSearchProvider(SearchProvider):
         # Simulated slow search for deterministic cancellation testing
         if "slow" in name_lower:
             import time
-            time.sleep(1.0)
+            time.sleep(2.5)
 
         # Simulated provider failure test case
         if "fail" in name_lower or "error" in name_lower:

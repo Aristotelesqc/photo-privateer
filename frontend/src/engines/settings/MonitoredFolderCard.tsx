@@ -125,6 +125,8 @@ export const MonitoredFolderCard: React.FC<MonitoredFolderCardProps> = ({
             </button>
             <button
               type="button"
+              data-testid="btn-permanent-remove"
+              aria-label="Permanently remove folder from database"
               onClick={() => onDelete(lib.id, true)}
               className="p-1 rounded text-carbon-500 hover:text-rose-400 hover:bg-carbon-800 transition-colors"
               title="Permanently remove from database (original files on disk are never touched)"

@@ -15,17 +15,25 @@ if exist ".venv\Scripts\python.exe" (
     echo   [INFO] Using virtual environment: venv
 )
 
-where %PYTHON_EXE% >nul 2>nul
-if %ERRORLEVEL% NEQ 0 (
-    echo [ERROR] Python is not found on your PATH or in .venv.
-    echo Please install Python 3.14+ (or 3.11+) or run setup.ps1.
-    pause
-    exit /b 1
+if "%PYTHON_EXE%"=="python" (
+    where python >nul 2>nul
+    if errorlevel 1 (
+        echo [ERROR] Python is not found on your PATH.
+        echo Please install Python 3.14 or Python 3.11+ fallback, or run setup.ps1.
+        if not defined CI pause
+        exit /b 1
+    )
+) else (
+    if not exist "%PYTHON_EXE%" (
+        echo [ERROR] Virtual environment python executable not found: %PYTHON_EXE%
+        if not defined CI pause
+        exit /b 1
+    )
 )
 
-%PYTHON_EXE% start.py %*
+"%PYTHON_EXE%" start.py %*
 if %ERRORLEVEL% NEQ 0 (
     echo.
     echo [ERROR] Application exited with an error.
-    pause
+    if not defined CI pause
 )

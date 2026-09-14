@@ -13,9 +13,9 @@ from pathlib import Path
 WORKSPACE_ROOT = Path(__file__).resolve().parent
 
 def check_environment():
-    # 1. Verify Python version (strictly Python 3.11+, canonical 3.14+)
+    # 1. Verify Python version (canonical 3.14+, backwards compatibility fallback 3.11+)
     if sys.version_info < (3, 11):
-        print(f"ERROR: Photo Privateer requires Python 3.11 or higher (Python 3.14 recommended). Running: {sys.version}")
+        print(f"ERROR: Photo Privateer canonical supported runtime is Python 3.14 (Python 3.11+ compatibility fallback). Running: {sys.version}")
         sys.exit(1)
 
     # 2. Verify backend dependencies

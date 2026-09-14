@@ -5,6 +5,7 @@ import logging
 import os
 import sqlite3
 import threading
+from datetime import datetime, timezone
 from typing import Optional, Callable
 from pathlib import Path
 
@@ -20,6 +21,8 @@ from backend.models import ScanSessionOut, ImageOut
 from backend.config import CLASS_UNREVIEWED
 
 logger = logging.getLogger(__name__)
+
+_scan_start_lock = threading.Lock()
 
 class ScanConflictError(ValueError):
     """Raised when an attempt is made to start a scan while another is already running."""
@@ -62,26 +65,65 @@ class ScanEngine:
         and verifies that selected images exist and are present on disk.
         Returns: (usable_images, missing_image_ids)
         """
-        # 1. Enforce single active scan invariant
+        # 1. Enforce single active scan invariant with worker thread liveness check
         active = self.usage_repo.get_active_running_session()
         if active:
-            raise ScanConflictError(
-                f"Another scan session (#{active.id}) is currently running ({active.processed_images}/{active.total_images} photos). "
-                f"Photo Privateer enforces a single active scan at a time to prevent quota races."
-            )
+            worker_name = f"scan-worker-{active.id}"
+            is_alive = any(t.name == worker_name and t.is_alive() for t in threading.enumerate())
+            if not is_alive:
+                # Guard against race conditions with freshly launched sessions:
+                # Only auto-recover if the session was started more than 5 seconds ago
+                is_stale = True
+                if active.started_at:
+                    try:
+                        started = datetime.fromisoformat(active.started_at)
+                        if started.tzinfo is None:
+                            started = started.replace(tzinfo=timezone.utc)
+                        age_sec = (datetime.now(timezone.utc) - started).total_seconds()
+                        if age_sec < 5.0:
+                            is_stale = False
+                    except Exception:
+                        pass
+
+                if is_stale:
+                    logger.warning(
+                        f"Dangling RUNNING scan session #{active.id} detected without active worker thread. Auto-recovering to FAILED."
+                    )
+                    try:
+                        self.usage_repo.update_scan_session_progress(
+                            session_id=active.id,
+                            processed=active.processed_images,
+                            successful=active.successful_images,
+                            failed=active.failed_images,
+                            status="FAILED",
+                            notes="Auto-recovered from crashed worker thread.",
+                        )
+                        self.usage_repo.conn.commit()
+                        active = None
+                    except Exception as exc:
+                        logger.error(f"Failed to auto-recover dangling session #{active.id}: {exc}")
+
+            if active:
+                raise ScanConflictError(
+                    f"Another scan session (#{active.id}) is currently running ({active.processed_images}/{active.total_images} photos). "
+                    f"Photo Privateer enforces a single active scan at a time to prevent quota races."
+                )
 
         if not image_ids:
             raise ValueError("No image IDs provided for scan.")
+
+        # Deduplicate image IDs server-side while preserving original request order
+        unique_image_ids = list(dict.fromkeys(image_ids))
 
         # 2. Enforce active non-archived libraries
         active_libs = {lib.id: lib for lib in self.library_repo.list_libraries(include_archived=False) if lib.enabled}
 
         # 3. Validate images and filter to those present on disk
-        images = self.image_repo.get_by_ids(image_ids)
+        images = self.image_repo.get_by_ids(unique_image_ids)
         image_map = {img.id: img for img in images}
 
         archived_or_disabled_ids = [
-            iid for iid in image_ids
+            iid for iid in unique_image_ids
             if iid in image_map and (image_map[iid].library_id not in active_libs)
         ]
         if archived_or_disabled_ids:
@@ -92,7 +134,7 @@ class ScanEngine:
         usable_images: list[ImageOut] = []
         missing_ids: list[int] = []
 
-        for iid in image_ids:
+        for iid in unique_image_ids:
             img = image_map.get(iid)
             if img is None:
                 missing_ids.append(iid)
@@ -103,7 +145,7 @@ class ScanEngine:
 
         if not usable_images:
             raise ValueError(
-                f"None of the {len(image_ids)} selected images are currently available on disk. "
+                f"None of the {len(unique_image_ids)} selected images are currently available on disk. "
                 f"Check that files have not been moved or unmounted."
             )
 
@@ -132,59 +174,60 @@ class ScanEngine:
         force_override_guard: bool = False,
     ) -> ScanSessionOut:
         """Validates request, commits ScanSession to SQLite immediately, and spawns the local background worker."""
-        usable_images, missing_ids = self.validate_scan_request(
-            image_ids=image_ids,
-            provider_override=provider_override,
-            force_override_guard=force_override_guard,
-        )
-
-        settings = self.settings_repo.get_app_settings()
-        provider_id = provider_override or settings.active_provider
-        provider = get_provider(
-            provider_id=provider_id,
-            credentials_path=settings.google_credentials_path,
-        )
-
-        note_str = f"Skipped {len(missing_ids)} missing files." if missing_ids else None
-
-        # Create session and commit
-        try:
-            session = self.usage_repo.create_scan_session(
-                provider=provider.display_name,
-                total_images=len(usable_images),
-            )
-        except sqlite3.IntegrityError as e:
-            raise ScanConflictError(
-                "Another scan session is currently running. Single active scan enforced."
-            ) from e
-
-        if note_str:
-            self.usage_repo.update_scan_session_progress(
-                session_id=session.id,
-                processed=0,
-                successful=0,
-                failed=0,
-                notes=note_str,
+        with _scan_start_lock:
+            usable_images, missing_ids = self.validate_scan_request(
+                image_ids=image_ids,
+                provider_override=provider_override,
+                force_override_guard=force_override_guard,
             )
 
-        # Spawn local daemon thread worker with isolated DB connection
-        worker_thread = threading.Thread(
-            target=self._run_scan_worker,
-            kwargs={
-                "session_id": session.id,
-                "ordered_image_ids": [img.id for img in usable_images],
-                "provider_id": provider_id,
-                "credentials_path": settings.google_credentials_path,
-                "free_tier_allowance": settings.free_tier_monthly_units,
-                "unit_price_usd": settings.unit_price_usd,
-                "db_path": self.db_path,
-            },
-            daemon=True,
-            name=f"scan-worker-{session.id}",
-        )
-        worker_thread.start()
+            settings = self.settings_repo.get_app_settings()
+            provider_id = provider_override or settings.active_provider
+            provider = get_provider(
+                provider_id=provider_id,
+                credentials_path=settings.google_credentials_path,
+            )
 
-        return self.usage_repo.get_scan_session(session.id)  # type: ignore
+            note_str = f"Skipped {len(missing_ids)} missing files." if missing_ids else None
+
+            # Create session and commit
+            try:
+                session = self.usage_repo.create_scan_session(
+                    provider=provider.display_name,
+                    total_images=len(usable_images),
+                )
+            except sqlite3.IntegrityError as e:
+                raise ScanConflictError(
+                    "Another scan session is currently running. Single active scan enforced."
+                ) from e
+
+            if note_str:
+                self.usage_repo.update_scan_session_progress(
+                    session_id=session.id,
+                    processed=0,
+                    successful=0,
+                    failed=0,
+                    notes=note_str,
+                )
+
+            # Spawn local daemon thread worker with isolated DB connection
+            worker_thread = threading.Thread(
+                target=self._run_scan_worker,
+                kwargs={
+                    "session_id": session.id,
+                    "ordered_image_ids": [img.id for img in usable_images],
+                    "provider_id": provider_id,
+                    "credentials_path": settings.google_credentials_path,
+                    "free_tier_allowance": settings.free_tier_monthly_units,
+                    "unit_price_usd": settings.unit_price_usd,
+                    "db_path": self.db_path,
+                },
+                daemon=True,
+                name=f"scan-worker-{session.id}",
+            )
+            worker_thread.start()
+
+            return self.usage_repo.get_scan_session(session.id)  # type: ignore
 
     def cancel_scan(self, session_id: int) -> ScanSessionOut:
         """Signals cooperative cancellation for a running scan session."""
@@ -227,6 +270,7 @@ class ScanEngine:
             successful = 0
             failed = 0
             cancelled = False
+            aborted_due_to_accounting_failure = False
 
             for img_id in ordered_image_ids:
                 # 1. Check cooperative cancellation before initiating next external request
@@ -259,9 +303,9 @@ class ScanEngine:
                     continue
 
                 try:
-                    real_file = Path(img.file_path).resolve()
-                    real_root = Path(lib.path).resolve()
-                    if os.path.commonpath([str(real_file), str(real_root)]) != str(real_root):
+                    norm_file = os.path.normcase(str(Path(img.file_path).resolve()))
+                    norm_root = os.path.normcase(str(Path(lib.path).resolve()))
+                    if os.path.commonpath([norm_file, norm_root]) != norm_root:
                         raise ValueError(f"Path traversal detected: {img.file_path} resolves outside library root {lib.path}")
                 except Exception as p_err:
 
@@ -326,6 +370,7 @@ class ScanEngine:
 
                 # 4. Immediate short SQLite write transaction:
                 # Phase A: Durably record provider call accounting in its own immediate transaction
+                accounting_persisted = False
                 try:
                     usage_repo.record_call(
                         provider=provider_id,
@@ -340,9 +385,50 @@ class ScanEngine:
                         error_message=provider_result.error_message,
                     )
                     conn.commit()
+                    accounting_persisted = True
                 except Exception as acc_exc:
-                    logger.error(f"Error persisting call accounting for image {img.id}: {acc_exc}", exc_info=True)
-                    conn.rollback()
+                    logger.critical(
+                        f"CRITICAL: Failed to durably record provider call accounting for image {img.id} "
+                        f"in session {session_id}: {acc_exc}. Failing closed to prevent unmetered external calls.",
+                        exc_info=True,
+                    )
+                    try:
+                        conn.rollback()
+                    except Exception:
+                        pass
+
+                    # Invariant: If a potentially billable external provider call occurred (or provider is google_vision),
+                    # failure to persist accounting locally MUST fail closed immediately.
+                    if attempted_units > 0 or provider_id == "google_vision" or req_status in ("SUCCESS", "REMOTE_ERROR"):
+                        aborted_due_to_accounting_failure = True
+                        failed += 1
+                        processed += 1
+                        try:
+                            usage_repo.record_scan_item(
+                                session_id=session_id,
+                                image_id=img.id,
+                                status="ERROR",
+                                error_message=f"Durable accounting persistence failed after provider request: {str(acc_exc)}",
+                                matches_found=0,
+                            )
+                            usage_repo.update_scan_session_progress(
+                                session_id=session_id,
+                                processed=processed,
+                                successful=successful,
+                                failed=failed,
+                                status="FAILED",
+                                notes=(
+                                    f"Scan aborted: local SQLite write failed while persisting provider call accounting "
+                                    f"for photo #{img.id}. Halted to prevent unmetered external API calls."
+                                ),
+                            )
+                            conn.commit()
+                        except Exception as log_exc:
+                            logger.error(f"Could not persist session failure state: {log_exc}")
+                        break
+
+                if not accounting_persisted:
+                    continue
 
                 # Phase B: Persist discoveries, item outcome, and session progress
                 try:
@@ -419,6 +505,9 @@ class ScanEngine:
                         pass
 
             # 5. Final session status update (re-check cancellation for in-flight final image)
+            if aborted_due_to_accounting_failure:
+                return
+
             cancelled = cancelled or usage_repo.is_cancel_requested(session_id)
             final_status = (
                 "CANCELLED"

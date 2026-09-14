@@ -19,6 +19,7 @@ class ImageRepository:
             filename=r["filename"],
             file_size=r["file_size"],
             file_modified_at=r["file_modified_at"],
+            file_modified_at_ns=r["file_modified_at_ns"] if "file_modified_at_ns" in r.keys() else None,
             width=r["width"],
             height=r["height"],
             format=r["format"],
@@ -65,6 +66,7 @@ class ImageRepository:
         new_filename: str,
         new_size: int,
         new_mtime: float,
+        new_mtime_ns: Optional[int] = None,
     ) -> ImageOut:
         """Reconciles a renamed or moved image file, preserving ID and historical matches."""
         now = datetime.now(timezone.utc).isoformat()
@@ -76,10 +78,11 @@ class ImageRepository:
                 filename = ?,
                 file_size = ?,
                 file_modified_at = ?,
+                file_modified_at_ns = ?,
                 last_seen_on_disk = ?,
                 is_present_on_disk = 1
             WHERE id = ?
-        """, (library_id, new_path, new_filename, new_size, new_mtime, now, image_id))
+        """, (library_id, new_path, new_filename, new_size, new_mtime, new_mtime_ns, now, image_id))
         return self.get_by_id(image_id)  # type: ignore
 
     def mark_missing_images_in_library(self, library_id: int, observed_paths: set[str]) -> int:
@@ -208,19 +211,21 @@ class ImageRepository:
         format: Optional[str],
         project: Optional[str] = None,
         project_source: str = "auto",
+        file_modified_at_ns: Optional[int] = None,
     ) -> ImageOut:
         now = datetime.now(timezone.utc).isoformat()
         cur = self.conn.cursor()
         cur.execute("""
             INSERT INTO images (
-                library_id, sha256, file_path, filename, file_size, file_modified_at,
+                library_id, sha256, file_path, filename, file_size, file_modified_at, file_modified_at_ns,
                 width, height, format, project, project_source, indexed_at, last_seen_on_disk, is_present_on_disk
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
             ON CONFLICT(file_path) DO UPDATE SET
                 sha256 = excluded.sha256,
                 filename = excluded.filename,
                 file_size = excluded.file_size,
                 file_modified_at = excluded.file_modified_at,
+                file_modified_at_ns = excluded.file_modified_at_ns,
                 width = excluded.width,
                 height = excluded.height,
                 format = excluded.format,
@@ -235,12 +240,17 @@ class ImageRepository:
                 last_seen_on_disk = excluded.last_seen_on_disk,
                 is_present_on_disk = 1
         """, (
-            library_id, sha256, file_path, filename, file_size, file_modified_at,
+            library_id, sha256, file_path, filename, file_size, file_modified_at, file_modified_at_ns,
             width, height, format, project, project_source, now, now
         ))
         cur.execute("SELECT * FROM images WHERE file_path = ?", (file_path,))
         r = cur.fetchone()
         return self._row_to_image(r)
+
+    def update_mtime_ns(self, image_id: int, mtime_ns: int) -> None:
+        """Opportunistically upgrades legacy image rows to store exact nanosecond mtime."""
+        cur = self.conn.cursor()
+        cur.execute("UPDATE images SET file_modified_at_ns = ? WHERE id = ?", (mtime_ns, image_id))
 
     def update_project(self, image_id: int, project: Optional[str], source: str = "manual") -> Optional[ImageOut]:
         val = project.strip() if (project and project.strip()) else None

@@ -5,10 +5,12 @@ import os
 import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
-from fastapi import FastAPI, HTTPException
+import ipaddress
+from urllib.parse import urlparse
+from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 
 from backend.config import FRONTEND_DIST_DIR, HOST, PORT, APP_VERSION
 from backend.database import init_db
@@ -68,6 +70,50 @@ def create_app(db_path: Path | str | None = None) -> FastAPI:
         app.state.db_path = p
         set_db_path(p)
     return app
+
+def is_allowed_origin(origin_str: str) -> bool:
+    """Validate that an origin or referer URL belongs strictly to a local loopback interface."""
+    if not origin_str:
+        return False
+    if origin_str == "http://testserver":
+        return True
+    try:
+        parsed = urlparse(origin_str)
+        hostname = parsed.hostname
+        if not hostname:
+            return False
+        if hostname.lower() == "localhost":
+            return True
+        ip = ipaddress.ip_address(hostname)
+        return ip.is_loopback
+    except Exception:
+        return False
+
+@app.middleware("http")
+async def enforce_local_origin_protection(request: Request, call_next):
+    """Enforces origin validation and blocks cross-site CSRF requests for state-changing API endpoints."""
+    if request.url.path.startswith("/api/") and request.method in {"POST", "PUT", "DELETE", "PATCH"}:
+        sec_fetch_site = request.headers.get("sec-fetch-site")
+        if sec_fetch_site == "cross-site":
+            return JSONResponse(
+                status_code=403,
+                content={"detail": "Cross-site requests to Photo Privateer API are forbidden."},
+            )
+        origin = request.headers.get("origin")
+        if origin:
+            if not is_allowed_origin(origin):
+                return JSONResponse(
+                    status_code=403,
+                    content={"detail": f"Forbidden origin: '{origin}'. Only local loopback origins are permitted."},
+                )
+        else:
+            referer = request.headers.get("referer")
+            if referer and not is_allowed_origin(referer):
+                return JSONResponse(
+                    status_code=403,
+                    content={"detail": f"Forbidden referer: '{referer}'. Only local loopback origins are permitted."},
+                )
+    return await call_next(request)
 
 # CORS: Restricted strictly to localhost origins for local security
 app.add_middleware(

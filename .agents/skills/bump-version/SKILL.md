@@ -78,8 +78,14 @@ git add .
 git commit -m "chore(release): bump version to v<new_version>"
 ```
 
-### 5. Push to Remote
-Push the release commit to the upstream branch:
+### 5. Push to Feature Branch & Open Pull Request
+Push the release commit to the upstream feature branch (NEVER push directly to `main`):
 ```powershell
-git push origin main
+git push -u origin <feature-branch>
 ```
+
+Open a GitHub Pull Request targeting `main` (remains OPEN for independent review):
+```powershell
+gh pr create --base main --head <feature-branch> --title "chore(release): bump version to v<new_version>" --body "Automated release bump and verification suite confirmation."
+```
+
