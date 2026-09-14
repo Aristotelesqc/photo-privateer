@@ -147,12 +147,14 @@ class LibraryRepository:
         sql = f"UPDATE libraries SET {', '.join(fields)} WHERE id = ?"
         cur = self.conn.cursor()
         cur.execute(sql, tuple(params))
+        self.conn.commit()
         return self.get_by_id(library_id)
 
     def archive(self, library_id: int) -> bool:
         """Non-destructively archives a library (stops monitoring without deleting images or matches)."""
         cur = self.conn.cursor()
         cur.execute("UPDATE libraries SET is_archived = 1, enabled = 0 WHERE id = ?", (library_id,))
+        self.conn.commit()
         return cur.rowcount > 0
 
     def unarchive(self, library_id: int) -> bool:

@@ -107,7 +107,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const handleArchiveLibrary = async (libId: number) => {
     try {
       await archiveLibrary(libId);
-      onRefreshData();
+      await onRefreshData();
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       alert(`Failed to stop monitoring folder: ${msg}`);
@@ -117,7 +117,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const handleUnarchiveLibrary = async (libId: number) => {
     try {
       await unarchiveLibrary(libId);
-      onRefreshData();
+      await onRefreshData();
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       alert(`Failed to resume monitoring folder: ${msg}`);
