@@ -11,7 +11,7 @@ from backend.config import SUPPORTED_EXTENSIONS
 from backend.repositories.library_repo import LibraryRepository
 from backend.repositories.image_repo import ImageRepository
 from backend.services.thumbnail_cache import ThumbnailCache
-from backend.services.perceptual import compute_dhash, _dhash_from_pil
+from backend.services.perceptual import compute_dhash, _dhash_from_pil, DHASH_UNAVAILABLE
 
 def calculate_sha256(file_path: Path) -> str:
     hasher = hashlib.sha256()
@@ -71,6 +71,7 @@ class LibraryIndexer:
         unchanged = 0
         observed_paths: set[str] = set()
         unchanged_ids: list[int] = []
+        pending_dhashes: list[tuple[str, int]] = []
 
         for file_path in self._discover_files(root, lib.recursive):
             scanned += 1
@@ -107,12 +108,16 @@ class LibraryIndexer:
                 if existing.file_modified_at_ns is None:
                     self.image_repo.update_mtime_ns(existing.id, mtime_ns)
                 if existing.dhash is None:
+                    if self.image_repo.conn.in_transaction:
+                        self.image_repo.conn.commit()
                     try:
                         computed_hash = compute_dhash(file_path)
-                        if computed_hash:
-                            self.image_repo.update_dhash(existing.id, computed_hash)
                     except Exception:
-                        pass
+                        computed_hash = None
+                    pending_dhashes.append((computed_hash or DHASH_UNAVAILABLE, existing.id))
+                    if len(pending_dhashes) >= 100:
+                        self.image_repo.update_dhashes(pending_dhashes)
+                        pending_dhashes.clear()
                 if len(unchanged_ids) >= 500:
                     self.image_repo.touch_observed_images(unchanged_ids)
                     unchanged_ids.clear()
@@ -188,12 +193,13 @@ class LibraryIndexer:
             dhash: str | None = None
             try:
                 with Image.open(file_path) as img:
+                    img_format = img.format or file_path.suffix.lstrip(".").upper()
                     img = ImageOps.exif_transpose(img)
                     width, height = img.size
-                    img_format = img.format or file_path.suffix.lstrip(".").upper()
                     dhash = _dhash_from_pil(img)
             except Exception:
                 img_format = file_path.suffix.lstrip(".").upper()
+                dhash = DHASH_UNAVAILABLE
 
             # Pre-generate thumbnail
             try:
@@ -218,6 +224,10 @@ class LibraryIndexer:
                 dhash=dhash,
             )
             added_or_updated += 1
+
+        if pending_dhashes:
+            self.image_repo.update_dhashes(pending_dhashes)
+            pending_dhashes.clear()
 
         if unchanged_ids:
             self.image_repo.touch_observed_images(unchanged_ids)

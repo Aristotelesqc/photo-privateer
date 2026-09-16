@@ -10,8 +10,9 @@ from backend.models import (
     GroupCandidatePairOut,
     DismissCandidateRequest,
     SetPreferredRequest,
+    AddImageToGroupRequest,
 )
-from backend.repositories.group_repo import PhotoGroupRepository
+from backend.repositories.group_repo import PhotoGroupRepository, PhotoGroupNotFoundError
 from backend.api.deps import get_group_repo
 
 router = APIRouter(prefix="/api/groups", tags=["groups"])
@@ -19,7 +20,7 @@ router = APIRouter(prefix="/api/groups", tags=["groups"])
 
 @router.get("/candidates", response_model=List[GroupCandidatePairOut])
 def get_group_candidates(
-    threshold: int = Query(default=10, ge=0, le=64),
+    threshold: int = Query(default=10, ge=0, le=16),
     limit: int = Query(default=50, ge=1, le=500),
     library_id: Optional[int] = Query(default=None),
     repo: PhotoGroupRepository = Depends(get_group_repo),
@@ -40,7 +41,7 @@ def dismiss_candidate_pair(
     try:
         repo.dismiss_candidate_pair(payload.image_a_id, payload.image_b_id)
         return {"status": "dismissed", "image_a_id": payload.image_a_id, "image_b_id": payload.image_b_id}
-    except KeyError as e:
+    except (PhotoGroupNotFoundError, KeyError) as e:
         raise HTTPException(status_code=404, detail=str(e))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -92,7 +93,26 @@ def set_preferred_image(
     """Sets the preferred (primary) image representation for a photo group."""
     try:
         return repo.set_preferred_image(group_id, payload.preferred_image_id)
-    except KeyError as e:
+    except (PhotoGroupNotFoundError, KeyError) as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post("/{group_id}/images", response_model=PhotoGroupOut)
+def add_image_to_group(
+    group_id: int,
+    payload: AddImageToGroupRequest,
+    repo: PhotoGroupRepository = Depends(get_group_repo),
+):
+    """Adds an image representation to an existing photo group."""
+    try:
+        return repo.add_image_to_group(
+            group_id=group_id,
+            image_id=payload.image_id,
+            set_preferred=payload.set_preferred,
+        )
+    except (PhotoGroupNotFoundError, KeyError) as e:
         raise HTTPException(status_code=404, detail=str(e))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -119,7 +139,8 @@ def remove_image_from_group(
     """Removes an image representation from a group. Dissolves group if <= 1 member remains."""
     try:
         return repo.remove_image_from_group(group_id, image_id)
-    except KeyError as e:
+    except (PhotoGroupNotFoundError, KeyError) as e:
         raise HTTPException(status_code=404, detail=str(e))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+

@@ -4,7 +4,6 @@ import {
   AlertCircle,
   X,
   Tag,
-  Layers,
 } from 'lucide-react';
 import { Library, ImageItem, AppSettings, ScanPrepareResponse, ScanSession, GroupCandidatePair } from '../types';
 import {
@@ -16,6 +15,7 @@ import {
   batchAssignProject,
   fetchGroupCandidates,
   createPhotoGroup,
+  addImageToGroup,
   dismissGroupCandidate,
 } from '../api/client';
 import { ScanConfirmModal } from '../components/ScanConfirmModal';
@@ -24,6 +24,8 @@ import { CandidateGroupModal } from '../components/CandidateGroupModal';
 import { LibraryFilterBar, StatusFilterType } from '../engines/library/LibraryFilterBar';
 import { PhotoCard } from '../engines/library/PhotoCard';
 import { ProjectAssignModal } from '../engines/library/ProjectAssignModal';
+import { CandidateBanner } from '../engines/library/CandidateBanner';
+import { PhotoGroupActionsModal } from '../engines/library/PhotoGroupActionsModal';
 
 interface LibraryViewProps {
   libraries: Library[];
@@ -63,6 +65,7 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
   // Candidate variants state
   const [candidates, setCandidates] = useState<GroupCandidatePair[]>([]);
   const [candidateModalOpen, setCandidateModalOpen] = useState(false);
+  const [managingGroupPhoto, setManagingGroupPhoto] = useState<ImageItem | null>(null);
 
   // Scan workflow state
   const [scanProjection, setScanProjection] = useState<ScanPrepareResponse | null>(null);
@@ -73,7 +76,9 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
 
   const loadCandidates = async () => {
     try {
-      const pairs = await fetchGroupCandidates();
+      const pairs = await fetchGroupCandidates(
+        selectedLibraryId !== undefined ? { library_id: selectedLibraryId } : undefined
+      );
       setCandidates(pairs);
     } catch (err) {
       console.error('Failed loading candidate variants', err);
@@ -110,10 +115,23 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
   };
 
   const handleGroupPair = async (imageAId: number, imageBId: number, preferredId: number) => {
-    await createPhotoGroup({
-      image_ids: [imageAId, imageBId],
-      preferred_image_id: preferredId,
-    });
+    const candidate = candidates.find(
+      (c) => (c.image_a.id === imageAId && c.image_b.id === imageBId) || (c.image_a.id === imageBId && c.image_b.id === imageAId)
+    );
+    const existingGroup = candidate?.image_a.photo_group_id
+      ? { groupId: candidate.image_a.photo_group_id, newImageId: candidate.image_b.id }
+      : candidate?.image_b.photo_group_id
+      ? { groupId: candidate.image_b.photo_group_id, newImageId: candidate.image_a.id }
+      : null;
+
+    if (existingGroup) {
+      await addImageToGroup(existingGroup.groupId, existingGroup.newImageId, preferredId === existingGroup.newImageId);
+    } else {
+      await createPhotoGroup({
+        image_ids: [imageAId, imageBId],
+        preferred_image_id: preferredId,
+      });
+    }
     await loadCandidates();
     await loadPhotos();
   };
@@ -239,23 +257,10 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
   return (
     <div className="max-w-[1600px] mx-auto px-4 sm:px-6 py-4 space-y-4">
       {/* Candidate Variants Banner */}
-      {candidates.length > 0 && (
-        <div className="flex items-center justify-between px-3.5 py-2.5 bg-accent-950/40 border border-accent-800/60 rounded-lg text-xs animate-fade-in">
-          <div className="flex items-center gap-2 text-carbon-200">
-            <Layers className="w-4 h-4 text-accent-400 shrink-0" />
-            <span>
-              <strong className="text-white font-medium">{candidates.length} candidate representation {candidates.length === 1 ? 'pair' : 'pairs'}</strong> detected (exact duplicates or perceptual variants). Grouping saves search credits by scanning 1 representation per photo.
-            </span>
-          </div>
-          <button
-            onClick={() => setCandidateModalOpen(true)}
-            data-testid="btn-review-candidates"
-            className="px-3 py-1 bg-accent-600 hover:bg-accent-500 text-white rounded font-medium text-xs shadow-xs transition-colors shrink-0 flex items-center gap-1.5"
-          >
-            <span>Review Candidates ({candidates.length})</span>
-          </button>
-        </div>
-      )}
+      <CandidateBanner
+        count={candidates.length}
+        onReview={() => setCandidateModalOpen(true)}
+      />
 
       {/* Control Strip Filter Bar */}
       <LibraryFilterBar
@@ -324,6 +329,7 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
               isSelected={selectedIds.has(photo.id)}
               onToggleSelect={toggleSelect}
               onNavigateToReview={onNavigateToReviewForPhoto}
+              onManageGroup={setManagingGroupPhoto}
             />
           ))}
         </div>
@@ -444,6 +450,20 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
           onClose={() => {
             setCandidateModalOpen(false);
             loadPhotos();
+            loadCandidates();
+          }}
+        />
+      )}
+
+      {/* Photo Group Actions Modal */}
+      {managingGroupPhoto && (
+        <PhotoGroupActionsModal
+          photo={managingGroupPhoto}
+          isOpen={Boolean(managingGroupPhoto)}
+          onClose={() => setManagingGroupPhoto(null)}
+          onGroupUpdated={async () => {
+            await loadPhotos();
+            await loadCandidates();
           }}
         />
       )}

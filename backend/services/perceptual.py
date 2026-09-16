@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Optional, Union
 from PIL import Image, ImageOps
 
+DHASH_UNAVAILABLE: str = ""
 DHASH_CANDIDATE_THRESHOLD = 10
 
 
@@ -20,9 +21,11 @@ def compute_dhash(image_input: Union[str, Path, Image.Image]) -> Optional[str]:
             if not path.is_file():
                 return None
             with Image.open(path) as img:
-                return _dhash_from_pil(img)
+                transposed = ImageOps.exif_transpose(img)
+                return _dhash_from_pil(transposed)
         elif isinstance(image_input, Image.Image):
-            return _dhash_from_pil(image_input)
+            transposed = ImageOps.exif_transpose(image_input)
+            return _dhash_from_pil(transposed)
         return None
     except Exception:
         return None
@@ -30,8 +33,7 @@ def compute_dhash(image_input: Union[str, Path, Image.Image]) -> Optional[str]:
 
 def _dhash_from_pil(img: Image.Image) -> str:
     """Internal helper to compute 64-bit dHash from an open PIL image."""
-    transposed = ImageOps.exif_transpose(img)
-    gray = transposed.convert("L")
+    gray = img.convert("L")
     resized = gray.resize((9, 8), Image.Resampling.LANCZOS)
     pixels = list(resized.tobytes())
 

@@ -10,6 +10,7 @@ export interface PhotoCardProps {
   isSelected: boolean;
   onToggleSelect: (id: number) => void;
   onNavigateToReview: (photoId: number) => void;
+  onManageGroup?: (photo: ImageItem) => void;
 }
 
 export const PhotoCard: React.FC<PhotoCardProps> = ({
@@ -17,6 +18,7 @@ export const PhotoCard: React.FC<PhotoCardProps> = ({
   isSelected,
   onToggleSelect,
   onNavigateToReview,
+  onManageGroup,
 }) => {
   const formatStr = photo.format || 'IMG';
   const sizeMb = (photo.file_size / (1024 * 1024)).toFixed(1);
@@ -52,21 +54,26 @@ export const PhotoCard: React.FC<PhotoCardProps> = ({
             {formatStr}
           </span>
           {photo.photo_group_id && (
-            <span
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onManageGroup?.(photo);
+              }}
               data-testid={photo.is_primary_representation === 1 ? 'badge-primary' : 'badge-variant'}
-              className={`text-[9px] font-mono px-1 py-0.2 rounded backdrop-blur-xs ${
+              className={`text-[9px] font-mono px-1 py-0.2 rounded backdrop-blur-xs transition-all hover:scale-105 cursor-pointer ${
                 photo.is_primary_representation === 1
-                  ? 'bg-accent-950/90 text-accent-300 border border-accent-800/80'
-                  : 'bg-carbon-950/90 text-carbon-400 border border-carbon-700/80'
+                  ? 'bg-accent-950/90 text-accent-300 border border-accent-800/80 hover:bg-accent-900'
+                  : 'bg-carbon-950/90 text-carbon-400 border border-carbon-700/80 hover:text-carbon-200 hover:bg-carbon-900'
               }`}
               title={
                 photo.is_primary_representation === 1
-                  ? 'Primary representation (searched on web)'
-                  : 'Secondary grouped representation'
+                  ? 'Primary representation (searched on web) — Click to manage group'
+                  : 'Secondary grouped representation — Click to manage group'
               }
             >
               {photo.is_primary_representation === 1 ? 'Primary' : 'Variant'}
-            </span>
+            </button>
           )}
           {!photo.is_present_on_disk && (
             <span

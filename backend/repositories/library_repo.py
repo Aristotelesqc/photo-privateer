@@ -234,6 +234,10 @@ class LibraryRepository:
                       AND status != 'RUNNING'
                       AND id NOT IN (SELECT DISTINCT scan_session_id FROM scan_items WHERE scan_session_id IS NOT NULL)
                 """, tuple(candidate_session_ids))
+
+            from backend.repositories.group_repo import PhotoGroupRepository
+            PhotoGroupRepository(self.conn).repair_groups()
+
             self.conn.commit()
 
             # Evict associated cached thumbnails from disk

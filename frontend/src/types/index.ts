@@ -190,3 +190,10 @@ export interface TestGoogleAuthResponse {
   project_id: string | null;
   service_account_email: string | null;
 }
+
+export type StatusFilterType = 'all' | 'unscanned' | 'scanned' | 'has_matches' | 'has_unreviewed' | 'grouped' | 'ungrouped';
+
+export interface AddImageToGroupPayload {
+  image_id: number;
+  set_preferred?: boolean;
+}

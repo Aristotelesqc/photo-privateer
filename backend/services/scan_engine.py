@@ -167,13 +167,18 @@ class ScanEngine:
                 if gid not in grouped_reps:
                     canonical = img
                     try:
-                        grp = self.group_repo.get_group(gid)
-                        if grp and grp.preferred_image_id:
-                            pref_img = self.image_repo.get_by_id(grp.preferred_image_id)
-                            if pref_img and pref_img.is_present_on_disk and Path(pref_img.file_path).exists():
+                        pref_id = self.group_repo.get_preferred_image_id(gid)
+                        if pref_id:
+                            pref_img = self.image_repo.get_by_id(pref_id)
+                            if (
+                                pref_img
+                                and pref_img.library_id in active_libs
+                                and pref_img.is_present_on_disk
+                                and Path(pref_img.file_path).exists()
+                            ):
                                 canonical = pref_img
                     except Exception:
-                        pass
+                        canonical = img
                     grouped_reps[gid] = canonical
                     if canonical.id not in seen_scannable_ids:
                         scannable_images.append(canonical)
@@ -485,7 +490,9 @@ class ScanEngine:
                             )
                             matches_count += 1
 
-                        image_repo.record_scan_completed(img.id)
+                        scan_timestamp = image_repo.record_scan_completed(img.id)
+                        if img.photo_group_id is not None:
+                            image_repo.record_group_scan_completed(img.photo_group_id, img.id, scanned_at=scan_timestamp)
                         usage_repo.record_scan_item(
                             session_id=session_id,
                             image_id=img.id,

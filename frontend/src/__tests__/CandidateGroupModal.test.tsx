@@ -234,4 +234,45 @@ describe('CandidateGroupModal Component', () => {
 
     expect(onGroupMock).toHaveBeenCalledWith(201, 202, 201);
   });
+
+  it('displays candidate-group-error alert banner when grouping action fails', async () => {
+    const onGroupMock = vi.fn().mockRejectedValue(new Error('Network failure'));
+    render(
+      <CandidateGroupModal
+        candidates={[mockCandidate]}
+        onGroup={onGroupMock}
+        onDismiss={vi.fn()}
+        onClose={vi.fn()}
+      />
+    );
+
+    const groupBtn = screen.getByTestId('btn-group-representations');
+    await act(async () => {
+      fireEvent.click(groupBtn);
+    });
+
+    const errorAlert = screen.getByTestId('candidate-group-error');
+    expect(errorAlert).toBeInTheDocument();
+    expect(errorAlert).toHaveTextContent('Network failure');
+  });
+
+  it('displays dynamic label "Add to Existing Group" when candidate is already grouped', () => {
+    const alreadyGroupedCandidate: GroupCandidatePair = {
+      image_a: { ...mockImageA, photo_group_id: 10 },
+      image_b: mockImageB,
+      hamming_distance: 4,
+      is_exact_duplicate: false,
+    };
+    render(
+      <CandidateGroupModal
+        candidates={[alreadyGroupedCandidate]}
+        onGroup={vi.fn()}
+        onDismiss={vi.fn()}
+        onClose={vi.fn()}
+      />
+    );
+
+    expect(screen.getByText('Add to Existing Group')).toBeInTheDocument();
+    expect(screen.getByTestId('btn-add-to-existing-group')).toBeInTheDocument();
+  });
 });

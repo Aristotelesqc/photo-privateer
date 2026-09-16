@@ -14,10 +14,21 @@ from backend.repositories.image_repo import ImageRepository
 from backend.services.perceptual import hamming_distance, DHASH_CANDIDATE_THRESHOLD
 
 
+class PhotoGroupNotFoundError(LookupError):
+    pass
+
+
 class PhotoGroupRepository:
     def __init__(self, conn: sqlite3.Connection):
         self.conn = conn
         self.image_repo = ImageRepository(conn)
+
+    def get_preferred_image_id(self, group_id: int) -> Optional[int]:
+        """Returns the preferred image ID for a group in O(1) without loading images."""
+        cur = self.conn.cursor()
+        cur.execute("SELECT preferred_image_id FROM photo_groups WHERE id = ?", (group_id,))
+        row = cur.fetchone()
+        return row["preferred_image_id"] if row else None
 
     def _row_to_group(self, r: sqlite3.Row, images: Optional[List[ImageOut]] = None) -> PhotoGroupOut:
         return PhotoGroupOut(
@@ -76,35 +87,43 @@ class PhotoGroupRepository:
             if r["photo_group_id"] is not None:
                 raise ValueError(f"Image #{r['id']} already belongs to a photo group.")
 
-        cur.execute(
-            """
-            INSERT INTO photo_groups (name, created_at, updated_at, preferred_image_id, notes)
-            VALUES (?, ?, ?, ?, ?)
-            """,
-            (name, now, now, preferred_image_id, notes),
-        )
-        group_id = cur.lastrowid
-        assert group_id is not None
-
-        # Assign images to the new group
-        for img_id in unique_ids:
-            is_primary = 1 if img_id == preferred_image_id else 0
+        try:
             cur.execute(
                 """
-                UPDATE images
-                SET photo_group_id = ?, is_primary_representation = ?
-                WHERE id = ?
+                INSERT INTO photo_groups (name, created_at, updated_at, preferred_image_id, notes)
+                VALUES (?, ?, ?, ?, ?)
                 """,
-                (group_id, is_primary, img_id),
+                (name, now, now, preferred_image_id, notes),
             )
+            group_id = cur.lastrowid
+            assert group_id is not None
 
-        self.conn.commit()
+            # Assign images to the new group conditionally
+            for img_id in unique_ids:
+                is_primary = 1 if img_id == preferred_image_id else 0
+                cur.execute(
+                    """
+                    UPDATE images
+                    SET photo_group_id = ?, is_primary_representation = ?
+                    WHERE id = ? AND photo_group_id IS NULL
+                    """,
+                    (group_id, is_primary, img_id),
+                )
+                if cur.rowcount != 1:
+                    self.conn.rollback()
+                    raise ValueError(f"Image #{img_id} was concurrently modified or already belongs to a group.")
+
+            self.conn.commit()
+        except Exception:
+            self.conn.rollback()
+            raise
+
         return self.get_group(group_id)  # type: ignore
 
     def set_preferred_image(self, group_id: int, image_id: int) -> PhotoGroupOut:
         group = self.get_group(group_id)
         if not group:
-            raise KeyError(f"Photo group #{group_id} not found.")
+            raise PhotoGroupNotFoundError(f"Photo group #{group_id} not found.")
 
         member_ids = [img.id for img in group.images]
         if image_id not in member_ids:
@@ -127,10 +146,64 @@ class PhotoGroupRepository:
         self.conn.commit()
         return self.get_group(group_id)  # type: ignore
 
+    def add_image_to_group(
+        self, group_id: int, image_id: int, set_preferred: bool = False
+    ) -> PhotoGroupOut:
+        group = self.get_group(group_id)
+        if not group:
+            raise PhotoGroupNotFoundError(f"Photo group #{group_id} not found.")
+
+        cur = self.conn.cursor()
+        cur.execute("SELECT id, photo_group_id FROM images WHERE id = ?", (image_id,))
+        img_row = cur.fetchone()
+        if not img_row:
+            raise ValueError(f"Image #{image_id} does not exist.")
+        if img_row["photo_group_id"] is not None:
+            raise ValueError(f"Image #{image_id} already belongs to a photo group.")
+
+        now = datetime.now(timezone.utc).isoformat()
+        try:
+            cur.execute(
+                """
+                UPDATE images
+                SET photo_group_id = ?, is_primary_representation = 0
+                WHERE id = ? AND photo_group_id IS NULL
+                """,
+                (group_id, image_id),
+            )
+            if cur.rowcount != 1:
+                self.conn.rollback()
+                raise ValueError(
+                    f"Failed to add image #{image_id} to group #{group_id}: already grouped or conflicting update."
+                )
+
+            if set_preferred:
+                cur.execute(
+                    "UPDATE photo_groups SET preferred_image_id = ?, updated_at = ? WHERE id = ?",
+                    (image_id, now, group_id),
+                )
+                cur.execute(
+                    """
+                    UPDATE images
+                    SET is_primary_representation = CASE WHEN id = ? THEN 1 ELSE 0 END
+                    WHERE photo_group_id = ?
+                    """,
+                    (image_id, group_id),
+                )
+            else:
+                cur.execute("UPDATE photo_groups SET updated_at = ? WHERE id = ?", (now, group_id))
+
+            self.conn.commit()
+        except Exception:
+            self.conn.rollback()
+            raise
+
+        return self.get_group(group_id)  # type: ignore
+
     def add_images_to_group(self, group_id: int, image_ids: List[int]) -> PhotoGroupOut:
         group = self.get_group(group_id)
         if not group:
-            raise ValueError(f"Photo group #{group_id} not found.")
+            raise PhotoGroupNotFoundError(f"Photo group #{group_id} not found.")
 
         now = datetime.now(timezone.utc).isoformat()
         cur = self.conn.cursor()
@@ -150,7 +223,7 @@ class PhotoGroupRepository:
     def remove_image_from_group(self, group_id: int, image_id: int) -> Optional[PhotoGroupOut]:
         group = self.get_group(group_id)
         if not group:
-            raise KeyError(f"Photo group #{group_id} not found.")
+            raise PhotoGroupNotFoundError(f"Photo group #{group_id} not found.")
 
         member_ids = [img.id for img in group.images]
         if image_id not in member_ids:
@@ -216,7 +289,7 @@ class PhotoGroupRepository:
         cur.execute("SELECT id FROM images WHERE id IN (?, ?)", (image_a_id, image_b_id))
         found_ids = {r["id"] for r in cur.fetchall()}
         if image_a_id not in found_ids or image_b_id not in found_ids:
-            raise KeyError("One or both images not found.")
+            raise PhotoGroupNotFoundError("One or both images not found.")
 
         a, b = min(image_a_id, image_b_id), max(image_a_id, image_b_id)
         now = datetime.now(timezone.utc).isoformat()
@@ -243,8 +316,11 @@ class PhotoGroupRepository:
         """Scans indexed photos with dHash or exact SHA-256 equality to detect candidate representations.
 
         Pairs that are already in the same group or have been dismissed by the user are excluded.
-        Optimized to use O(N) hash-map grouping for exact duplicates and lazy Pydantic model conversion.
+        Optimized with 64-bit integer bitwise Hamming distance and flat heapq tuple ordering.
         """
+        import heapq
+        from collections import defaultdict
+
         cur = self.conn.cursor()
         query = """
             SELECT i.* FROM images i
@@ -266,85 +342,145 @@ class PhotoGroupRepository:
         dismissed = self.get_dismissed_pairs()
         row_map = {r["id"]: r for r in rows}
 
-        candidates: List[dict] = []
+        exact_pairs_seen: Set[Tuple[int, int]] = set()
+        candidate_tuples: list[tuple[int, int, int, int, bool]] = []
 
         # 1. Fast O(N) detection of exact SHA-256 duplicates
-        from collections import defaultdict
         sha_groups: dict[str, list[sqlite3.Row]] = defaultdict(list)
         for r in rows:
-            sha_groups[r["sha256"]].append(r)
+            if r["sha256"]:
+                sha_groups[r["sha256"]].append(r)
 
-        exact_pairs_seen: Set[Tuple[int, int]] = set()
         for sha, group_rows in sha_groups.items():
             if len(group_rows) > 1:
                 for i in range(len(group_rows)):
                     r_a = group_rows[i]
+                    g_a = r_a["photo_group_id"]
                     for j in range(i + 1, len(group_rows)):
                         r_b = group_rows[j]
-                        if (
-                            r_a["photo_group_id"] is not None
-                            and r_b["photo_group_id"] is not None
-                            and r_a["photo_group_id"] == r_b["photo_group_id"]
-                        ):
+                        g_b = r_b["photo_group_id"]
+                        if g_a is not None and g_b is not None:
                             continue
-                        pair_key = (min(r_a["id"], r_b["id"]), max(r_a["id"], r_b["id"]))
+                        min_id, max_id = (r_a["id"], r_b["id"]) if r_a["id"] < r_b["id"] else (r_b["id"], r_a["id"])
+                        pair_key = (min_id, max_id)
                         if pair_key in dismissed:
                             continue
                         exact_pairs_seen.add(pair_key)
-                        candidates.append({
-                            "id_a": r_a["id"],
-                            "id_b": r_b["id"],
-                            "hamming_distance": 0,
-                            "is_exact_duplicate": True,
-                        })
+                        candidate_tuples.append((0, 0, min_id, max_id, True))
 
         # 2. Perceptual dHash matching on photos with valid dHash
-        dhash_rows = [r for r in rows if r["dhash"]]
-        n = len(dhash_rows)
-        # Cap perceptual comparisons to prevent thread starvation on very large libraries
-        max_compare = min(n, 2000)
-        for i in range(max_compare):
-            r_a = dhash_rows[i]
-            dhash_a = r_a["dhash"]
-            for j in range(i + 1, max_compare):
-                r_b = dhash_rows[j]
-                dhash_b = r_b["dhash"]
+        parsed_dhash_rows: list[tuple[int, int, Optional[int]]] = []
+        for r in rows:
+            dh = r["dhash"]
+            if dh:
+                try:
+                    parsed_dhash_rows.append((r["id"], int(dh, 16), r["photo_group_id"]))
+                except ValueError:
+                    pass
 
-                pair_key = (min(r_a["id"], r_b["id"]), max(r_a["id"], r_b["id"]))
+        n = len(parsed_dhash_rows)
+        for i in range(n):
+            id_a, h_a, g_a = parsed_dhash_rows[i]
+            for j in range(i + 1, n):
+                id_b, h_b, g_b = parsed_dhash_rows[j]
+                if g_a is not None and g_b is not None:
+                    continue
+
+                min_id, max_id = (id_a, id_b) if id_a < id_b else (id_b, id_a)
+                pair_key = (min_id, max_id)
                 if pair_key in exact_pairs_seen or pair_key in dismissed:
                     continue
 
-                if (
-                    r_a["photo_group_id"] is not None
-                    and r_b["photo_group_id"] is not None
-                    and r_a["photo_group_id"] == r_b["photo_group_id"]
-                ):
-                    continue
-
-                dist = hamming_distance(dhash_a, dhash_b)
+                dist = (h_a ^ h_b).bit_count()
                 if dist <= threshold:
-                    candidates.append({
-                        "id_a": r_a["id"],
-                        "id_b": r_b["id"],
-                        "hamming_distance": dist,
-                        "is_exact_duplicate": False,
-                    })
+                    candidate_tuples.append((1, dist, min_id, max_id, False))
 
-        # Sort candidate pairs: exact duplicates first, then lowest hamming distance
-        candidates.sort(key=lambda c: (0 if c["is_exact_duplicate"] else 1, c["hamming_distance"]))
-        top_candidates = candidates[:limit]
+        top_candidates = heapq.nsmallest(limit, candidate_tuples)
 
         # Lazy conversion: only instantiate ImageOut for the final selected candidates
         result: List[GroupCandidatePairOut] = []
-        for c in top_candidates:
-            img_a = self.image_repo._row_to_image(row_map[c["id_a"]])
-            img_b = self.image_repo._row_to_image(row_map[c["id_b"]])
+        for priority, dist, min_id, max_id, is_exact in top_candidates:
+            img_a = self.image_repo._row_to_image(row_map[min_id])
+            img_b = self.image_repo._row_to_image(row_map[max_id])
             result.append(
                 GroupCandidatePairOut(
                     image_a=img_a,
                     image_b=img_b,
-                    hamming_distance=c["hamming_distance"],
-                    is_exact_duplicate=c["is_exact_duplicate"],
+                    hamming_distance=dist,
+                    is_exact_duplicate=is_exact,
                 )
             )
         return result
+
+    def repair_groups(self) -> None:
+        """Repairs and maintains database integrity for photo groups and representations:
+        1. Dissolves groups with < 2 members into singletons.
+        2. Deletes orphan groups that have no images.
+        3. Re-elects preferred_image_id for groups if missing or invalid (MIN(id)).
+        4. Synchronizes is_primary_representation = 1 for preferred and 0 for sibling variants.
+        5. Resets is_primary_representation = 1 for all ungrouped photos.
+        """
+        cur = self.conn.cursor()
+
+        # 1. Dissolve groups with < 2 members into singletons
+        cur.execute(
+            """
+            UPDATE images
+            SET photo_group_id = NULL, is_primary_representation = 1
+            WHERE photo_group_id IN (
+                SELECT photo_group_id
+                FROM images
+                WHERE photo_group_id IS NOT NULL
+                GROUP BY photo_group_id
+                HAVING COUNT(*) < 2
+            )
+            """
+        )
+
+        # 2. Delete empty/orphan photo_groups
+        cur.execute(
+            """
+            DELETE FROM photo_groups
+            WHERE NOT EXISTS (
+                SELECT 1 FROM images WHERE images.photo_group_id = photo_groups.id
+            )
+            """
+        )
+
+        # 3. Re-elect preferred_image_id if missing or pointing to an image not in the group
+        cur.execute(
+            """
+            UPDATE photo_groups
+            SET preferred_image_id = (
+                SELECT MIN(id) FROM images WHERE photo_group_id = photo_groups.id
+            )
+            WHERE preferred_image_id IS NULL
+               OR preferred_image_id NOT IN (
+                   SELECT id FROM images WHERE photo_group_id = photo_groups.id
+               )
+            """
+        )
+
+        # 4. Synchronize is_primary_representation = 1 for preferred, 0 for variants
+        cur.execute(
+            """
+            UPDATE images
+            SET is_primary_representation = CASE
+                WHEN images.id = (
+                    SELECT preferred_image_id FROM photo_groups WHERE photo_groups.id = images.photo_group_id
+                ) THEN 1
+                ELSE 0
+            END
+            WHERE photo_group_id IS NOT NULL
+            """
+        )
+
+        # 5. Reset is_primary_representation = 1 for any images without a group
+        cur.execute(
+            """
+            UPDATE images
+            SET is_primary_representation = 1
+            WHERE photo_group_id IS NULL AND is_primary_representation != 1
+            """
+        )
+

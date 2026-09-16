@@ -15,6 +15,7 @@ import {
   PhotoGroup,
   GroupCandidatePair,
   PhotoGroupCreatePayload,
+  StatusFilterType,
 } from '../types';
 
 const API_BASE = '/api';
@@ -120,7 +121,7 @@ export const fetchPhotos = (params: {
   search?: string;
   project?: string;
   group_id?: number;
-  filter_status?: 'all' | 'unscanned' | 'scanned' | 'has_matches' | 'has_unreviewed' | 'grouped';
+  filter_status?: StatusFilterType;
   sort_by?: string;
   sort_dir?: 'asc' | 'desc';
   page?: number;
@@ -249,8 +250,39 @@ export const testGoogleAuth = (credentials_path?: string) =>
   });
 
 // --- Photo Groups & Deduplication ---
-export const fetchGroupCandidates = (threshold: number = 10, limit: number = 50) =>
-  request<GroupCandidatePair[]>(`/groups/candidates?threshold=${threshold}&limit=${limit}`);
+export const fetchGroupCandidates = (
+  params?: { threshold?: number; limit?: number; library_id?: number } | number,
+  limitParam: number = 50
+) => {
+  let threshold = 10;
+  let limit = 50;
+  let libraryId: number | undefined = undefined;
+
+  if (typeof params === 'number') {
+    threshold = params;
+    limit = limitParam;
+  } else if (params && typeof params === 'object') {
+    if (params.threshold !== undefined) threshold = params.threshold;
+    if (params.limit !== undefined) limit = params.limit;
+    if (params.library_id !== undefined) libraryId = params.library_id;
+  }
+
+  const query = new URLSearchParams({
+    threshold: String(threshold),
+    limit: String(limit),
+  });
+  if (libraryId !== undefined) {
+    query.set('library_id', String(libraryId));
+  }
+
+  return request<GroupCandidatePair[]>(`/groups/candidates?${query.toString()}`);
+};
+
+export const addImageToGroup = (groupId: number, imageId: number, setPreferred: boolean = false) =>
+  request<PhotoGroup>(`/groups/${groupId}/images`, {
+    method: 'POST',
+    body: JSON.stringify({ image_id: imageId, set_preferred: setPreferred }),
+  });
 
 export const dismissGroupCandidate = (imageAId: number, imageBId: number) =>
   request<{ status: string }>('/groups/candidates/dismiss', {

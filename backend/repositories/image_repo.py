@@ -208,7 +208,19 @@ class ImageRepository:
         relocating its unique file_path constraint to an archive alias and marking it absent.
         """
         cur = self.conn.cursor()
-        cur.execute("UPDATE images SET file_path = ?, is_present_on_disk = 0 WHERE id = ?", (archive_path, image_id))
+        cur.execute(
+            """
+            UPDATE images
+            SET file_path = ?,
+                is_present_on_disk = 0,
+                photo_group_id = NULL,
+                is_primary_representation = 1
+            WHERE id = ?
+            """,
+            (archive_path, image_id),
+        )
+        from backend.repositories.group_repo import PhotoGroupRepository
+        PhotoGroupRepository(self.conn).repair_groups()
 
     def upsert_image(
         self,
@@ -265,6 +277,14 @@ class ImageRepository:
         """Sets the perceptual dHash for an image."""
         cur = self.conn.cursor()
         cur.execute("UPDATE images SET dhash = ? WHERE id = ?", (dhash, image_id))
+
+    def update_dhashes(self, rows: list[tuple[str, int]]) -> None:
+        """Batch updates dhash values for multiple images and commits."""
+        if not rows:
+            return
+        cur = self.conn.cursor()
+        cur.executemany("UPDATE images SET dhash = ? WHERE id = ?", rows)
+        self.conn.commit()
 
     def get_images_for_group(self, group_id: int) -> list[ImageOut]:
         """Returns all images belonging to a group, ordered with the primary representation first."""
@@ -326,8 +346,8 @@ class ImageRepository:
             """)
         return [row[0] for row in cur.fetchall() if row[0]]
 
-    def record_scan_completed(self, image_id: int) -> None:
-        now = datetime.now(timezone.utc).isoformat()
+    def record_scan_completed(self, image_id: int, scanned_at: Optional[str] = None) -> str:
+        now = scanned_at or datetime.now(timezone.utc).isoformat()
         cur = self.conn.cursor()
         cur.execute("""
             UPDATE images
@@ -336,6 +356,23 @@ class ImageRepository:
             WHERE id = ?
         """, (now, image_id))
         self.refresh_image_match_counts(image_id)
+        return now
+
+    def record_group_scan_completed(self, group_id: int, representative_id: int, scanned_at: Optional[str] = None) -> None:
+        """Marks sibling group members as scanned when representative was searched."""
+        if not group_id:
+            return
+        now = scanned_at or datetime.now(timezone.utc).isoformat()
+        cur = self.conn.cursor()
+        cur.execute(
+            """
+            UPDATE images
+            SET scan_count = scan_count + 1,
+                last_scanned_at = ?
+            WHERE photo_group_id = ? AND id != ?
+            """,
+            (now, group_id, representative_id),
+        )
 
     def refresh_image_match_counts(self, image_id: int) -> None:
         cur = self.conn.cursor()

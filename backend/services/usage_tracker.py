@@ -16,19 +16,20 @@ class UsageTracker:
         image_count: int,
         usable_count: Optional[int] = None,
         provider_override: Optional[str] = None,
+        missing_count: Optional[int] = None,
     ) -> ScanPrepareResponse:
         settings = self.settings_repo.get_app_settings()
         provider = provider_override or settings.active_provider
         current_period = get_current_billing_period()
         effective_count = usable_count if usable_count is not None else image_count
-        missing_count = max(0, image_count - effective_count)
+        calc_missing = missing_count if missing_count is not None else max(0, image_count - effective_count)
 
         # If mock provider, costs and billable units are 0
         if provider == "mock":
             return ScanPrepareResponse(
                 selected_count=image_count,
                 usable_count=effective_count,
-                missing_count=missing_count,
+                missing_count=calc_missing,
                 provider="mock",
                 current_month=current_period,
                 units_used_this_month=0,
@@ -69,7 +70,7 @@ class UsageTracker:
         return ScanPrepareResponse(
             selected_count=image_count,
             usable_count=effective_count,
-            missing_count=missing_count,
+            missing_count=calc_missing,
             provider="google_vision",
             current_month=current_period,
             units_used_this_month=current_used,

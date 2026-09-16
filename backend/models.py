@@ -103,6 +103,10 @@ class DismissCandidateRequest(BaseModel):
 class SetPreferredRequest(BaseModel):
     preferred_image_id: int
 
+class AddImageToGroupRequest(BaseModel):
+    image_id: int
+    set_preferred: bool = False
+
 # --- Matches ---
 ClassificationLiteral = Literal["UNREVIEWED", "APPROVED", "UNAUTHORIZED", "IRRELEVANT"]
 SourceKindLiteral = Literal["PAGE", "ASSET_ONLY"]
