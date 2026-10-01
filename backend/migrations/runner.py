@@ -364,6 +364,45 @@ def migration_009_perceptual_grouping(conn: sqlite3.Connection) -> None:
     conn.execute("CREATE INDEX IF NOT EXISTS idx_images_group ON images(photo_group_id);")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_images_dhash ON images(dhash);")
 
+def migration_010_group_candidate_generation(conn: sqlite3.Connection) -> None:
+    """Creates a single-row generation counter bumped by triggers whenever any input of the
+    candidate pair search changes (hashes, group membership, disk presence, library state,
+    dismissals). The candidate search caches its results keyed on this counter.
+    """
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS group_candidate_state (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            instance_token TEXT NOT NULL,
+            generation INTEGER NOT NULL DEFAULT 0
+        );
+    """)
+    conn.execute(
+        "INSERT OR IGNORE INTO group_candidate_state (id, instance_token, generation) "
+        "VALUES (1, lower(hex(randomblob(16))), 0);"
+    )
+
+    bump = "UPDATE group_candidate_state SET generation = generation + 1 WHERE id = 1;"
+    triggers = {
+        "trg_candidates_images_insert": "AFTER INSERT ON images",
+        "trg_candidates_images_delete": "AFTER DELETE ON images",
+        "trg_candidates_images_update": (
+            "AFTER UPDATE ON images WHEN "
+            "OLD.sha256 IS NOT NEW.sha256 OR OLD.dhash IS NOT NEW.dhash "
+            "OR OLD.photo_group_id IS NOT NEW.photo_group_id "
+            "OR OLD.is_present_on_disk IS NOT NEW.is_present_on_disk "
+            "OR OLD.library_id IS NOT NEW.library_id"
+        ),
+        "trg_candidates_libraries_update": (
+            "AFTER UPDATE ON libraries WHEN "
+            "OLD.enabled IS NOT NEW.enabled OR OLD.is_archived IS NOT NEW.is_archived"
+        ),
+        "trg_candidates_libraries_delete": "AFTER DELETE ON libraries",
+        "trg_candidates_dismissed_insert": "AFTER INSERT ON dismissed_group_candidates",
+        "trg_candidates_dismissed_delete": "AFTER DELETE ON dismissed_group_candidates",
+    }
+    for name, clause in triggers.items():
+        conn.execute(f"CREATE TRIGGER IF NOT EXISTS {name} {clause} BEGIN {bump} END;")
+
 MIGRATIONS: list[Migration] = [
     Migration(1, "001_initial_schema", migration_001_initial_schema),
     Migration(2, "002_library_archiving_and_disk_presence", migration_002_library_archiving_and_disk_presence),
@@ -374,6 +413,7 @@ MIGRATIONS: list[Migration] = [
     Migration(7, "007_project_source_and_atomic_running_scan", migration_007_project_source_and_atomic_running_scan),
     Migration(8, "008_image_mtime_ns", migration_008_image_mtime_ns),
     Migration(9, "009_perceptual_grouping", migration_009_perceptual_grouping),
+    Migration(10, "010_group_candidate_generation", migration_010_group_candidate_generation),
 ]
 
 def run_migrations(conn: sqlite3.Connection) -> list[int]:

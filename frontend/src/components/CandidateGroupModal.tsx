@@ -1,11 +1,14 @@
 import React, { useState, useEffect } from 'react';
 import { Layers, CheckCircle2, XCircle, ArrowLeft, ArrowRight, X, Sparkles, AlertCircle } from 'lucide-react';
 import { GroupCandidatePair } from '../types';
-import { createPhotoGroup, addImageToGroup, dismissGroupCandidate } from '../api/client';
+import { dismissGroupCandidate } from '../api/client';
 import { CandidateCard } from '../engines/library/CandidateCard';
+import { CandidateSide, defaultPreferredSide, groupCandidatePair } from '../engines/library/candidateGrouping';
 
 interface CandidateGroupModalProps {
   candidates: GroupCandidatePair[];
+  /** Total number of candidate pairs when `candidates` is only the first page */
+  totalCount?: number;
   onGroup?: (imageAId: number, imageBId: number, preferredId: number) => Promise<void>;
   onDismiss?: (imageAId: number, imageBId: number) => Promise<void>;
   onClose: () => void;
@@ -13,20 +16,22 @@ interface CandidateGroupModalProps {
 
 export const CandidateGroupModal: React.FC<CandidateGroupModalProps> = ({
   candidates,
+  totalCount,
   onGroup,
   onDismiss,
   onClose,
 }) => {
   const [currentIndex, setCurrentIndex] = useState(0);
-  const [selectedPreferred, setSelectedPreferred] = useState<'A' | 'B'>('A');
+  const [selectedPreferred, setSelectedPreferred] = useState<CandidateSide>('A');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const currentPair = candidates[currentIndex] || candidates[0];
 
-  // Reset preferred selection to Candidate A and clear error when navigating or advancing pairs
+  // Reset preferred selection (keeping an existing group primary selected) and clear error
+  // when navigating or advancing pairs
   useEffect(() => {
-    setSelectedPreferred('A');
+    setSelectedPreferred(currentPair ? defaultPreferredSide(currentPair) : 'A');
     setError(null);
   }, [currentIndex, currentPair?.image_a?.id, currentPair?.image_b?.id]);
 
@@ -61,16 +66,7 @@ export const CandidateGroupModal: React.FC<CandidateGroupModalProps> = ({
       if (onGroup) {
         await onGroup(image_a.id, image_b.id, preferredId);
       } else {
-        if (image_a.photo_group_id) {
-          await addImageToGroup(image_a.photo_group_id, image_b.id, preferredId === image_b.id);
-        } else if (image_b.photo_group_id) {
-          await addImageToGroup(image_b.photo_group_id, image_a.id, preferredId === image_a.id);
-        } else {
-          await createPhotoGroup({
-            image_ids: [image_a.id, image_b.id],
-            preferred_image_id: preferredId,
-          });
-        }
+        await groupCandidatePair(currentPair, preferredId);
       }
       if (candidates.length <= 1) {
         onClose();
@@ -120,6 +116,9 @@ export const CandidateGroupModal: React.FC<CandidateGroupModalProps> = ({
               <h3 className="font-semibold text-white text-xs">Perceptual Source Representations</h3>
               <p className="text-[10px] text-carbon-400">
                 Candidate {currentIndex + 1} of {total}
+                {totalCount !== undefined && totalCount > total && (
+                  <span data-testid="candidate-total-note"> (showing the {total} closest of {totalCount})</span>
+                )}
               </p>
             </div>
           </div>

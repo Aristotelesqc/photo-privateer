@@ -65,4 +65,30 @@ describe('PhotoCard Component', () => {
 
     expect(screen.getByText('Missing')).toBeInTheDocument();
   });
+
+  it('shows the group discoveries on a grouped variant and opens its review', () => {
+    const handleNavigateToReview = vi.fn();
+    const variant: ImageItem = {
+      ...mockPhoto,
+      photo_group_id: 7,
+      is_primary_representation: 0,
+      scan_count: 1,
+      match_count: 0,
+      unreviewed_count: 0,
+      group_match_count: 4,
+      group_unreviewed_count: 2,
+    };
+    render(
+      <PhotoCard
+        photo={variant}
+        isSelected={false}
+        onToggleSelect={vi.fn()}
+        onNavigateToReview={handleNavigateToReview}
+      />
+    );
+    const pill = screen.getByText('4 matches');
+    fireEvent.click(pill);
+    expect(handleNavigateToReview).toHaveBeenCalledWith(101);
+  });
 });
+

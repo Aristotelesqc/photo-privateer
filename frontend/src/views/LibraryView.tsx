@@ -14,8 +14,6 @@ import {
   fetchProjects,
   batchAssignProject,
   fetchGroupCandidates,
-  createPhotoGroup,
-  addImageToGroup,
   dismissGroupCandidate,
 } from '../api/client';
 import { ScanConfirmModal } from '../components/ScanConfirmModal';
@@ -26,6 +24,7 @@ import { PhotoCard } from '../engines/library/PhotoCard';
 import { ProjectAssignModal } from '../engines/library/ProjectAssignModal';
 import { CandidateBanner } from '../engines/library/CandidateBanner';
 import { PhotoGroupActionsModal } from '../engines/library/PhotoGroupActionsModal';
+import { groupCandidatePair } from '../engines/library/candidateGrouping';
 
 interface LibraryViewProps {
   libraries: Library[];
@@ -64,6 +63,7 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
 
   // Candidate variants state
   const [candidates, setCandidates] = useState<GroupCandidatePair[]>([]);
+  const [candidateTotal, setCandidateTotal] = useState(0);
   const [candidateModalOpen, setCandidateModalOpen] = useState(false);
   const [managingGroupPhoto, setManagingGroupPhoto] = useState<ImageItem | null>(null);
 
@@ -76,10 +76,11 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
 
   const loadCandidates = async () => {
     try {
-      const pairs = await fetchGroupCandidates(
+      const result = await fetchGroupCandidates(
         selectedLibraryId !== undefined ? { library_id: selectedLibraryId } : undefined
       );
-      setCandidates(pairs);
+      setCandidates(result.pairs);
+      setCandidateTotal(result.total);
     } catch (err) {
       console.error('Failed loading candidate variants', err);
     }
@@ -118,20 +119,10 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
     const candidate = candidates.find(
       (c) => (c.image_a.id === imageAId && c.image_b.id === imageBId) || (c.image_a.id === imageBId && c.image_b.id === imageAId)
     );
-    const existingGroup = candidate?.image_a.photo_group_id
-      ? { groupId: candidate.image_a.photo_group_id, newImageId: candidate.image_b.id }
-      : candidate?.image_b.photo_group_id
-      ? { groupId: candidate.image_b.photo_group_id, newImageId: candidate.image_a.id }
-      : null;
-
-    if (existingGroup) {
-      await addImageToGroup(existingGroup.groupId, existingGroup.newImageId, preferredId === existingGroup.newImageId);
-    } else {
-      await createPhotoGroup({
-        image_ids: [imageAId, imageBId],
-        preferred_image_id: preferredId,
-      });
+    if (!candidate) {
+      throw new Error('This candidate pair is no longer available. Close and reopen the review to refresh.');
     }
+    await groupCandidatePair(candidate, preferredId);
     await loadCandidates();
     await loadPhotos();
   };
@@ -258,7 +249,7 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
     <div className="max-w-[1600px] mx-auto px-4 sm:px-6 py-4 space-y-4">
       {/* Candidate Variants Banner */}
       <CandidateBanner
-        count={candidates.length}
+        count={candidateTotal}
         onReview={() => setCandidateModalOpen(true)}
       />
 
@@ -445,6 +436,7 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
       {candidateModalOpen && (
         <CandidateGroupModal
           candidates={candidates}
+          totalCount={candidateTotal}
           onGroup={handleGroupPair}
           onDismiss={handleDismissPair}
           onClose={() => {

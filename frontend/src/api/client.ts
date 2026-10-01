@@ -13,7 +13,8 @@ import {
   AppSettings,
   TestGoogleAuthResponse,
   PhotoGroup,
-  GroupCandidatePair,
+  GroupCandidateList,
+  AddImageToGroupPayload,
   PhotoGroupCreatePayload,
   StatusFilterType,
 } from '../types';
@@ -275,14 +276,17 @@ export const fetchGroupCandidates = (
     query.set('library_id', String(libraryId));
   }
 
-  return request<GroupCandidatePair[]>(`/groups/candidates?${query.toString()}`);
+  return request<GroupCandidateList>(`/groups/candidates?${query.toString()}`);
 };
 
-export const addImageToGroup = (groupId: number, imageId: number, setPreferred: boolean = false) =>
-  request<PhotoGroup>(`/groups/${groupId}/images`, {
+export const addImageToGroup = (groupId: number, imageId: number, preferredImageId?: number) => {
+  const payload: AddImageToGroupPayload = { image_id: imageId };
+  if (preferredImageId !== undefined) payload.preferred_image_id = preferredImageId;
+  return request<PhotoGroup>(`/groups/${groupId}/images`, {
     method: 'POST',
-    body: JSON.stringify({ image_id: imageId, set_preferred: setPreferred }),
+    body: JSON.stringify(payload),
   });
+};
 
 export const dismissGroupCandidate = (imageAId: number, imageBId: number) =>
   request<{ status: string }>('/groups/candidates/dismiss', {

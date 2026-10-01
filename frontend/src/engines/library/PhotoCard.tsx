@@ -88,8 +88,8 @@ export const PhotoCard: React.FC<PhotoCardProps> = ({
         {/* Status Overlay Footer on Image */}
         <div className="absolute bottom-1.5 left-1.5 right-1.5 flex items-center justify-between pointer-events-none">
           <StatusPill
-            matchCount={photo.match_count}
-            unreviewedCount={photo.unreviewed_count}
+            matchCount={photo.group_match_count ?? photo.match_count}
+            unreviewedCount={photo.group_unreviewed_count ?? photo.unreviewed_count}
             scanCount={photo.scan_count}
             onMatchClick={() => onNavigateToReview(photo.id)}
           />

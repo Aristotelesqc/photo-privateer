@@ -5,6 +5,7 @@ import logging
 import os
 import sqlite3
 import threading
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Optional, Callable
 from pathlib import Path
@@ -28,6 +29,20 @@ _scan_start_lock = threading.Lock()
 class ScanConflictError(ValueError):
     """Raised when an attempt is made to start a scan while another is already running."""
     pass
+
+@dataclass
+class ScanPlan:
+    """Result of validating a scan request.
+
+    scannable_images: images actually sent to the provider (one per photo group).
+    missing_ids: selected images unavailable on disk.
+    grouped_variant_ids: selected, available images that are not searched themselves because
+        their photo group is searched once through another member (its primary representation).
+    """
+    scannable_images: list[ImageOut]
+    missing_ids: list[int]
+    grouped_variant_ids: list[int] = field(default_factory=list)
+
 
 class ScanEngine:
     def __init__(
@@ -64,9 +79,25 @@ class ScanEngine:
         provider_override: Optional[str] = None,
         force_override_guard: bool = False,
     ) -> tuple[list[ImageOut], list[int]]:
+        """Validates a scan request. Returns: (scannable_images, missing_image_ids).
+        See plan_scan for the full result including grouped variants.
+        """
+        plan = self.plan_scan(
+            image_ids=image_ids,
+            provider_override=provider_override,
+            force_override_guard=force_override_guard,
+        )
+        return plan.scannable_images, plan.missing_ids
+
+    def plan_scan(
+        self,
+        image_ids: list[int],
+        provider_override: Optional[str] = None,
+        force_override_guard: bool = False,
+    ) -> ScanPlan:
         """Validates that no other scan is running, enforces the free-tier safety guard,
-        and verifies that selected images exist and are present on disk.
-        Returns: (usable_images, missing_image_ids)
+        verifies that selected images exist and are present on disk, and collapses grouped
+        photos to one provider search per group.
         """
         # 1. Enforce single active scan invariant with worker thread liveness check
         active = self.usage_repo.get_active_running_session()
@@ -177,7 +208,11 @@ class ScanEngine:
                                 and Path(pref_img.file_path).exists()
                             ):
                                 canonical = pref_img
-                    except Exception:
+                    except Exception as exc:
+                        logger.warning(
+                            f"Could not resolve the primary representation of photo group #{gid}; "
+                            f"scanning selected photo #{img.id} instead: {exc}"
+                        )
                         canonical = img
                     grouped_reps[gid] = canonical
                     if canonical.id not in seen_scannable_ids:
@@ -199,7 +234,12 @@ class ScanEngine:
                     f"Authorize force override to proceed."
                 )
 
-        return scannable_images, missing_ids
+        grouped_variant_ids = [img.id for img in usable_images if img.id not in seen_scannable_ids]
+        return ScanPlan(
+            scannable_images=scannable_images,
+            missing_ids=missing_ids,
+            grouped_variant_ids=grouped_variant_ids,
+        )
 
 
     def start_background_scan(
@@ -210,11 +250,12 @@ class ScanEngine:
     ) -> ScanSessionOut:
         """Validates request, commits ScanSession to SQLite immediately, and spawns the local background worker."""
         with _scan_start_lock:
-            usable_images, missing_ids = self.validate_scan_request(
+            plan = self.plan_scan(
                 image_ids=image_ids,
                 provider_override=provider_override,
                 force_override_guard=force_override_guard,
             )
+            usable_images, missing_ids = plan.scannable_images, plan.missing_ids
 
             settings = self.settings_repo.get_app_settings()
             provider_id = provider_override or settings.active_provider
@@ -223,7 +264,16 @@ class ScanEngine:
                 credentials_path=settings.google_credentials_path,
             )
 
-            note_str = f"Skipped {len(missing_ids)} missing files." if missing_ids else None
+            notes: list[str] = []
+            if missing_ids:
+                notes.append(f"Skipped {len(missing_ids)} missing files.")
+            if plan.grouped_variant_ids:
+                count = len(plan.grouped_variant_ids)
+                notes.append(
+                    f"{count} selected {'photo is' if count == 1 else 'photos are'} covered by "
+                    f"the primary representation of {'its' if count == 1 else 'their'} photo group."
+                )
+            note_str = " ".join(notes) if notes else None
 
             # Create session and commit
             try:

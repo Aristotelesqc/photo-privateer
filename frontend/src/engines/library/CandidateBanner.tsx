@@ -2,6 +2,7 @@ import React from 'react';
 import { Layers } from 'lucide-react';
 
 export interface CandidateBannerProps {
+  /** Total number of candidate pairs (not capped by the review page size) */
   count: number;
   onReview: () => void;
 }

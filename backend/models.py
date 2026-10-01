@@ -62,6 +62,9 @@ class ImageOut(BaseModel):
     scan_count: int = 0
     match_count: int = 0
     unreviewed_count: int = 0
+    # Aggregates across all members of the image's photo group (only set by photo listings)
+    group_match_count: Optional[int] = None
+    group_unreviewed_count: Optional[int] = None
     thumbnail_url: str
 
 class BatchProjectUpdate(BaseModel):
@@ -106,6 +109,12 @@ class SetPreferredRequest(BaseModel):
 class AddImageToGroupRequest(BaseModel):
     image_id: int
     set_preferred: bool = False
+    # Optional explicit primary representation: the added image or any existing member
+    preferred_image_id: Optional[int] = None
+
+class GroupCandidateListOut(BaseModel):
+    total: int
+    pairs: List[GroupCandidatePairOut]
 
 # --- Matches ---
 ClassificationLiteral = Literal["UNREVIEWED", "APPROVED", "UNAUTHORIZED", "IRRELEVANT"]
@@ -171,6 +180,9 @@ class ScanPrepareResponse(BaseModel):
     selected_count: int
     usable_count: int
     missing_count: int
+    # Selected photos that are not sent to the provider themselves because their photo
+    # group is searched once through its primary representation
+    grouped_variant_count: int = 0
     provider: str
     current_month: str
     units_used_this_month: int

@@ -53,6 +53,14 @@ export const ScanConfirmModal: React.FC<ScanConfirmModalProps> = ({
                   {projection.usable_count} available ({projection.missing_count} missing)
                 </p>
               )}
+              {(projection.grouped_variant_count ?? 0) > 0 && (
+                <p data-testid="scan-grouped-variant-note" className="text-[10px] text-accent-300 mt-0.5">
+                  {projection.usable_count} {projection.usable_count === 1 ? 'search' : 'searches'}:{' '}
+                  {projection.grouped_variant_count} grouped{' '}
+                  {projection.grouped_variant_count === 1 ? 'photo is' : 'photos are'} covered by{' '}
+                  {projection.grouped_variant_count === 1 ? 'its' : 'their'} group's primary representation
+                </p>
+              )}
             </div>
             <div className="bg-carbon-950 border border-carbon-800 rounded-lg p-2.5">
               <span className="text-[11px] text-carbon-400">Estimated Cost</span>

@@ -68,7 +68,7 @@ photo-privateer/
 │   ├── database.py                # SQLite connection, WAL mode, migration initialization
 │   ├── models.py                  # Pydantic schemas and dataclasses
 │   ├── migrations/                # Versioned schema migrations
-│   │   └── runner.py              # Idempotent migration runner & applied tracker (001 through 009)
+│   │   └── runner.py              # Idempotent migration runner & applied tracker (001 through 010)
 │   ├── repositories/              # Data access layer (libraries, images, matches, rules, usage, settings)
 │   ├── services/                  # Indexer, thumbnail cache, image service, rules, scan engine
 │   ├── providers/                 # Base provider interface, Mock provider, Google Vision provider
@@ -141,7 +141,7 @@ Persistence Layer
 7. **Disk Presence Tracking**: If a library or folder is temporarily unmounted or missing on disk, `is_present_on_disk = 0` reflects reality without losing indexed data. Reconnection cleanly restores `is_present_on_disk = 1`.
 8. **Session Resilience**: Interrupted or crashed scans automatically recover to `INTERRUPTED` on startup.
 9. **Project Assignment Preservation**: Manual project assignments made by the user in the UI are permanently respected. Re-indexing existing images uses SQLite `COALESCE(images.project, excluded.project)` to preserve manual overrides, while subfolder auto-detection assigns immediate parent folders on newly discovered images.
-10. **Perceptual Source Grouping & Scan Deduplication**: Visual representations of the same photograph (detected via 64-bit dHash with Hamming distance <= 10) can be grouped by the user without altering individual photo metadata or original files. Each group designates a preferred primary representation (`is_primary_representation = 1`), and batch scan operations strictly deduplicate grouped representations so that exactly one reverse image search call is dispatched per group per scan operation.
+10. **Perceptual Source Grouping & Scan Deduplication**: Visual representations of the same photograph (detected via 64-bit dHash with Hamming distance <= 10) can be grouped by the user without altering individual photo metadata or original files. Each group designates a preferred primary representation (`is_primary_representation = 1`), and batch scan operations strictly deduplicate grouped representations so that exactly one reverse image search call is dispatched per group per scan operation. Discoveries are recorded once against the searched representation; library filters, card counts, and the per-photo review view are group-aware so every member reflects its group's discoveries without duplicating triage records. Selected photos covered by their group's primary search are reported in the scan projection and session notes. Re-exporting a grouped photo in place (new content, same path) preserves its group membership and primary role. Low-information dHashes (near-uniform frames) are excluded from perceptual matching; candidate search uses exact pigeonhole band bucketing and is cached until a trigger-maintained generation counter (migration 010) changes.
 
 ---
 

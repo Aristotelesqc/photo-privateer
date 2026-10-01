@@ -1,7 +1,8 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, act } from '@testing-library/react';
 import React from 'react';
 import { CandidateGroupModal } from '../components/CandidateGroupModal';
+import * as client from '../api/client';
 import { GroupCandidatePair, ImageItem } from '../types';
 
 const mockImageA: ImageItem = {
@@ -274,5 +275,61 @@ describe('CandidateGroupModal Component', () => {
 
     expect(screen.getByText('Add to Existing Group')).toBeInTheDocument();
     expect(screen.getByTestId('btn-add-to-existing-group')).toBeInTheDocument();
+  });
+
+  describe('preferred representation with an existing group (fallback path)', () => {
+    beforeEach(() => {
+      vi.restoreAllMocks();
+    });
+
+    it('promotes the already-grouped photo when the user picks it while adding the new one', async () => {
+      const addSpy = vi.spyOn(client, 'addImageToGroup').mockResolvedValue({
+        id: 10, created_at: '', updated_at: '', preferred_image_id: 101, images: [],
+      });
+      const pair: GroupCandidatePair = {
+        image_a: { ...mockImageA, photo_group_id: 10, is_primary_representation: 0 },
+        image_b: mockImageB,
+        hamming_distance: 4,
+        is_exact_duplicate: false,
+      };
+      render(<CandidateGroupModal candidates={[pair]} onClose={vi.fn()} />);
+
+      // Candidate A (the grouped variant) is selected by default
+      await act(async () => {
+        fireEvent.click(screen.getByTestId('btn-add-to-existing-group'));
+      });
+      expect(addSpy).toHaveBeenCalledWith(10, 102, 101);
+    });
+
+    it('keeps an existing group primary selected by default even when it is Candidate B', async () => {
+      const addSpy = vi.spyOn(client, 'addImageToGroup').mockResolvedValue({
+        id: 20, created_at: '', updated_at: '', preferred_image_id: 102, images: [],
+      });
+      const pair: GroupCandidatePair = {
+        image_a: mockImageA,
+        image_b: { ...mockImageB, photo_group_id: 20, is_primary_representation: 1 },
+        hamming_distance: 2,
+        is_exact_duplicate: false,
+      };
+      render(<CandidateGroupModal candidates={[pair]} onClose={vi.fn()} />);
+
+      await act(async () => {
+        fireEvent.click(screen.getByTestId('btn-add-to-existing-group'));
+      });
+      expect(addSpy).toHaveBeenCalledWith(20, 101, 102);
+    });
+  });
+
+  it('shows the total number of candidates when only the closest page is loaded', () => {
+    render(
+      <CandidateGroupModal
+        candidates={[mockCandidate]}
+        totalCount={66}
+        onGroup={vi.fn()}
+        onDismiss={vi.fn()}
+        onClose={vi.fn()}
+      />
+    );
+    expect(screen.getByTestId('candidate-total-note')).toHaveTextContent('showing the 1 closest of 66');
   });
 });

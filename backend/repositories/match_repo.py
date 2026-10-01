@@ -65,8 +65,16 @@ class MatchRepository:
         params: list[object] = []
 
         if image_id is not None:
-            where_clauses.append("m.image_id = ?")
-            params.append(image_id)
+            # Group-aware: a grouped photo shares one web search with its group, so its
+            # discoveries are those recorded against any member of the group.
+            where_clauses.append("""
+                m.image_id IN (
+                    SELECT g.id FROM images g
+                    WHERE g.id = ?
+                       OR g.photo_group_id = (SELECT photo_group_id FROM images WHERE id = ?)
+                )
+            """)
+            params.extend([image_id, image_id])
 
         if project:
             if project == "__unassigned__":

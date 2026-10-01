@@ -8,12 +8,25 @@ from PIL import Image, ImageOps
 DHASH_UNAVAILABLE: str = ""
 DHASH_CANDIDATE_THRESHOLD = 10
 
+# A dHash encodes 64 horizontal brightness gradients. Uniform frames (lens-cap shots, flat
+# backdrops, blank exports) produce near-all-zero hashes and smooth horizontal ramps produce
+# near-all-one hashes. Two hashes with at most k set bits each are always within 2k bits of
+# each other, so such low-information hashes would match one another regardless of content;
+# they are excluded from perceptual matching (exact SHA-256 duplicates are still reported).
+DHASH_MIN_INFORMATIVE_BITS = 8
+DHASH_MAX_INFORMATIVE_BITS = 56
+
+# JPEG draft decoding: the decoder downsamples by up to 1/8 in the DCT domain, which is
+# far cheaper than a full decode and is ample resolution for a 9x8 gradient hash.
+_DRAFT_TARGET_SIZE = (128, 128)
+
 
 def compute_dhash(image_input: Union[str, Path, Image.Image]) -> Optional[str]:
     """Computes a 64-bit difference hash (dHash) for an image.
 
     Downsamples the image to 9x8 grayscale and computes horizontal pixel gradients.
     Returns a 16-character lowercase hexadecimal string, or None if unreadable.
+    File inputs are opened read-only and JPEGs are decoded in reduced-size draft mode.
     """
     try:
         if isinstance(image_input, (str, Path)):
@@ -21,6 +34,7 @@ def compute_dhash(image_input: Union[str, Path, Image.Image]) -> Optional[str]:
             if not path.is_file():
                 return None
             with Image.open(path) as img:
+                img.draft("L", _DRAFT_TARGET_SIZE)
                 transposed = ImageOps.exif_transpose(img)
                 return _dhash_from_pil(transposed)
         elif isinstance(image_input, Image.Image):
@@ -48,6 +62,21 @@ def _dhash_from_pil(img: Image.Image) -> str:
     return f"{diff_bits:016x}"
 
 
+def is_informative_dhash_value(value: int) -> bool:
+    """Returns True if a parsed 64-bit dHash carries enough gradient information to be compared."""
+    return DHASH_MIN_INFORMATIVE_BITS <= value.bit_count() <= DHASH_MAX_INFORMATIVE_BITS
+
+
+def is_informative_dhash(hash_hex: Optional[str]) -> bool:
+    """Returns True if a hex dHash is present, parseable and not a low-information hash."""
+    if not hash_hex:
+        return False
+    try:
+        return is_informative_dhash_value(int(hash_hex, 16))
+    except ValueError:
+        return False
+
+
 def hamming_distance(hash1: str, hash2: str) -> int:
     """Computes the Hamming distance (number of differing bits) between two 16-char hex dHashes."""
     val1 = int(hash1, 16)
@@ -58,5 +87,8 @@ def hamming_distance(hash1: str, hash2: str) -> int:
 def is_candidate_representation(
     hash1: str, hash2: str, threshold: int = DHASH_CANDIDATE_THRESHOLD
 ) -> bool:
-    """Returns True if two hashes are within the perceptual candidate similarity threshold."""
+    """Returns True if two hashes are within the perceptual candidate similarity threshold
+    and both carry enough information to be meaningfully compared."""
+    if not (is_informative_dhash(hash1) and is_informative_dhash(hash2)):
+        return False
     return hamming_distance(hash1, hash2) <= threshold

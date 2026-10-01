@@ -34,6 +34,9 @@ export interface ImageItem {
   scan_count: number;
   match_count: number;
   unreviewed_count: number;
+  /** Aggregates across all members of the photo's group (photo listings only) */
+  group_match_count?: number | null;
+  group_unreviewed_count?: number | null;
   thumbnail_url: string;
 }
 
@@ -52,6 +55,12 @@ export interface GroupCandidatePair {
   image_b: ImageItem;
   hamming_distance: number;
   is_exact_duplicate: boolean;
+}
+
+export interface GroupCandidateList {
+  /** Total number of candidate pairs, independent of the returned page size */
+  total: number;
+  pairs: GroupCandidatePair[];
 }
 
 export interface PhotoGroupCreatePayload {
@@ -130,6 +139,8 @@ export interface ScanPrepareResponse {
   selected_count: number;
   usable_count: number;
   missing_count: number;
+  /** Selected photos covered by their photo group's primary representation search */
+  grouped_variant_count?: number;
   provider: string;
   current_month: string;
   units_used_this_month: number;
@@ -196,4 +207,6 @@ export type StatusFilterType = 'all' | 'unscanned' | 'scanned' | 'has_matches' |
 export interface AddImageToGroupPayload {
   image_id: number;
   set_preferred?: boolean;
+  /** Explicit primary representation: the added image or any existing member */
+  preferred_image_id?: number;
 }

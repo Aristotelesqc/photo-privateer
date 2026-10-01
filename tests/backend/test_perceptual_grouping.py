@@ -26,10 +26,45 @@ from backend.services.perceptual import (
 
 
 def _create_sample_image(path: Path, color: tuple[int, int, int], text: str = "") -> None:
+    """Creates a deterministic photo-like image (base color, textured shapes, caption).
+
+    Flat single-color frames carry almost no gradient information and are deliberately excluded
+    from perceptual matching, so fixtures must have real tonal structure.
+    """
+    import random
+    import zlib
+
+    rng = random.Random(zlib.crc32(f"{color}|{text}".encode()))
     img = Image.new("RGB", (200, 200), color=color)
     draw = ImageDraw.Draw(img)
+    for _ in range(30):
+        x0, y0 = rng.randrange(200), rng.randrange(200)
+        x1, y1 = x0 + rng.randrange(15, 90), y0 + rng.randrange(15, 90)
+        shade = tuple(min(255, max(0, c + rng.randrange(-90, 91))) for c in color)
+        if rng.random() < 0.5:
+            draw.ellipse((x0, y0, x1, y1), fill=shade)
+        else:
+            draw.rectangle((x0, y0, x1, y1), fill=shade)
     if text:
         draw.text((20, 20), text, fill=(255, 255, 255))
+    img.save(path, format="JPEG", quality=95)
+
+
+def _create_textured_image(path: Path, seed: int, size: tuple[int, int] = (240, 200)) -> None:
+    """Creates a deterministic image with photo-like tonal structure (many local gradients)."""
+    import random
+
+    rng = random.Random(seed)
+    img = Image.new("RGB", size, color=(rng.randrange(256), rng.randrange(256), rng.randrange(256)))
+    draw = ImageDraw.Draw(img)
+    for _ in range(40):
+        x0, y0 = rng.randrange(size[0]), rng.randrange(size[1])
+        x1, y1 = x0 + rng.randrange(20, 120), y0 + rng.randrange(20, 120)
+        fill = (rng.randrange(256), rng.randrange(256), rng.randrange(256))
+        if rng.random() < 0.5:
+            draw.ellipse((x0, y0, x1, y1), fill=fill)
+        else:
+            draw.rectangle((x0, y0, x1, y1), fill=fill)
     img.save(path, format="JPEG", quality=95)
 
 
@@ -39,13 +74,13 @@ def test_dhash_calculation_and_hamming_distance(temp_dir: Path):
     p3 = temp_dir / "img3.jpg"
 
     # Create base image
-    _create_sample_image(p1, (100, 150, 200), "Photo 1")
+    _create_textured_image(p1, seed=1)
     # Create minor variation (slightly different quality/resolution of same image)
     img1 = Image.open(p1)
-    img_variant = img1.resize((190, 190))
+    img_variant = img1.resize((228, 190))
     img_variant.save(p2, format="JPEG", quality=80)
     # Create completely different image
-    _create_sample_image(p3, (20, 30, 40), "Completely Different Pattern")
+    _create_textured_image(p3, seed=2)
 
     h1 = compute_dhash(p1)
     h2 = compute_dhash(p2)

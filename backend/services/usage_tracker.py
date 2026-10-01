@@ -17,6 +17,7 @@ class UsageTracker:
         usable_count: Optional[int] = None,
         provider_override: Optional[str] = None,
         missing_count: Optional[int] = None,
+        grouped_variant_count: int = 0,
     ) -> ScanPrepareResponse:
         settings = self.settings_repo.get_app_settings()
         provider = provider_override or settings.active_provider
@@ -30,6 +31,7 @@ class UsageTracker:
                 selected_count=image_count,
                 usable_count=effective_count,
                 missing_count=calc_missing,
+                grouped_variant_count=grouped_variant_count,
                 provider="mock",
                 current_month=current_period,
                 units_used_this_month=0,
@@ -71,6 +73,7 @@ class UsageTracker:
             selected_count=image_count,
             usable_count=effective_count,
             missing_count=calc_missing,
+            grouped_variant_count=grouped_variant_count,
             provider="google_vision",
             current_month=current_period,
             units_used_this_month=current_used,

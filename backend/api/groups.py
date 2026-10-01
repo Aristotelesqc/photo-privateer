@@ -1,13 +1,14 @@
 """Photo groups and representation deduplication API router."""
 from __future__ import annotations
 
+import logging
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from backend.models import (
     PhotoGroupOut,
     PhotoGroupCreate,
-    GroupCandidatePairOut,
+    GroupCandidateListOut,
     DismissCandidateRequest,
     SetPreferredRequest,
     AddImageToGroupRequest,
@@ -15,21 +16,26 @@ from backend.models import (
 from backend.repositories.group_repo import PhotoGroupRepository, PhotoGroupNotFoundError
 from backend.api.deps import get_group_repo
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/api/groups", tags=["groups"])
 
 
-@router.get("/candidates", response_model=List[GroupCandidatePairOut])
+@router.get("/candidates", response_model=GroupCandidateListOut)
 def get_group_candidates(
     threshold: int = Query(default=10, ge=0, le=16),
     limit: int = Query(default=50, ge=1, le=500),
     library_id: Optional[int] = Query(default=None),
     repo: PhotoGroupRepository = Depends(get_group_repo),
 ):
-    """Returns candidate photo representation pairs (perceptual distance <= threshold or exact SHA)."""
+    """Returns the top candidate photo representation pairs (perceptual distance <= threshold or
+    exact SHA) together with the total number of candidate pairs."""
     try:
-        return repo.find_candidate_pairs(threshold=threshold, limit=limit, library_id=library_id)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed finding candidate pairs: {str(e)}")
+        pairs, total = repo.find_candidates_page(threshold=threshold, limit=limit, library_id=library_id)
+    except Exception:
+        logger.exception("Failed finding candidate pairs")
+        raise HTTPException(status_code=500, detail="Failed finding candidate pairs. See server log for details.")
+    return GroupCandidateListOut(total=total, pairs=pairs)
 
 
 @router.post("/candidates/dismiss")
@@ -111,6 +117,7 @@ def add_image_to_group(
             group_id=group_id,
             image_id=payload.image_id,
             set_preferred=payload.set_preferred,
+            preferred_image_id=payload.preferred_image_id,
         )
     except (PhotoGroupNotFoundError, KeyError) as e:
         raise HTTPException(status_code=404, detail=str(e))
