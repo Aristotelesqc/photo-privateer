@@ -96,14 +96,14 @@ def test_candidate_total_is_reported_beyond_page_limit(client, db_conn, temp_dir
     value = rng.getrandbits(64)
     while not is_informative_dhash_value(value):
         value = rng.getrandbits(64)
-    for i in range(12):  # 12 byte-identical files -> 66 exact pairs
+    for i in range(12):  # 12 byte-identical files -> 11 exact pairs (linear, not a 66-pair clique)
         _insert_image(db_conn, lib_id, i, value, sha="same-content")
     db_conn.commit()
 
     resp = client.get("/api/groups/candidates", params={"limit": 5})
     assert resp.status_code == 200
     body = resp.json()
-    assert body["total"] == 66
+    assert body["total"] == 11
     assert len(body["pairs"]) == 5
     assert all(p["is_exact_duplicate"] for p in body["pairs"])
 
@@ -382,9 +382,11 @@ def test_validated_reexport_keeps_group_role_and_discovery_history(client, db_co
         assert kept["classification"] == "UNAUTHORIZED"
         assert kept["notes"] == "Sent takedown"
         assert kept["first_seen_at"] == triaged["first_seen_at"]
-    assert new_master.scan_count == archived.scan_count and new_master.last_scanned_at is not None
+    # Scan counts are physical per-file history: the edited content itself was never searched,
+    # nor was the variant, so the group is offered for a new search (its triage is kept)
+    assert new_master.scan_count == 0 and archived.scan_count == 1
     listed, _ = img_repo.list_images(filter_status="unscanned")
-    assert listed == []
+    assert {img.id for img in listed} == {new_master.id, web.id}
 
 
 def test_unrelated_photo_reusing_a_grouped_path_is_not_grouped(db_conn, temp_dir: Path):
@@ -542,3 +544,230 @@ def test_migration_010_triggers_bump_generation(temp_dir: Path):
         conn.execute("UPDATE images SET dhash = '0000000000000001' WHERE id = ?", (img,))
         conn.commit()
         assert gen() == g1 + 1
+
+
+# --- Follow-up review on 3c04c3f: identity transitions -------------------------------------------
+
+
+def _matches_of(conn, image_ids: list[int]) -> list:
+    placeholders = ",".join("?" for _ in image_ids)
+    return conn.execute(
+        f"SELECT * FROM matches WHERE image_id IN ({placeholders}) ORDER BY id", tuple(image_ids)
+    ).fetchall()
+
+
+def _row_identity(r) -> tuple:
+    return (r["source_kind"], r["page_url"] or "", r["candidate_image_url"] or "")
+
+
+def _scan_both_ungrouped(conn, master, web):
+    _assert_provider_returns_same_discoveries(master.file_path, web.file_path)
+    _scan(conn, [master.id])
+    _scan(conn, [web.id])
+    rows = _matches_of(conn, [master.id, web.id])
+    identities = [_row_identity(r) for r in rows]
+    assert len(identities) == 2 * len(set(identities))  # each discovery stored once per photo
+    return rows
+
+
+@pytest.mark.parametrize("via", ["create_group", "add_image_to_group"])
+def test_grouping_already_scanned_photos_coalesces_discoveries(db_conn, temp_dir: Path, via: str):
+    _lib, master, web, _p1, _p2 = _indexed_pair(db_conn, temp_dir)
+    rows = _scan_both_ungrouped(db_conn, master, web)
+    match_repo = MatchRepository(db_conn)
+    x_master = next(r for r in rows if r["image_id"] == master.id)
+    x_web = next(r for r in rows if r["image_id"] == web.id and _row_identity(r) == _row_identity(x_master))
+    # Older first sighting on the master, newer last sighting and a note on the web export
+    db_conn.execute("UPDATE matches SET first_seen_at = '2026-01-01T00:00:00+00:00' WHERE id = ?", (x_master["id"],))
+    db_conn.execute("UPDATE matches SET last_seen_at = '2026-12-31T00:00:00+00:00' WHERE id = ?", (x_web["id"],))
+    db_conn.commit()
+    match_repo.update_classification_and_notes(x_web["id"], classification="UNAUTHORIZED", notes="Reported", acknowledged=True)
+    db_conn.commit()
+
+    group_repo = PhotoGroupRepository(db_conn)
+    if via == "create_group":
+        group_repo.create_group([master.id, web.id], preferred_image_id=master.id)
+    else:
+        extra = _insert_image(db_conn, master.library_id, 99, 0x0F0F_F0F0_3C3C_A5A5)
+        db_conn.commit()
+        group = group_repo.create_group([master.id, extra], preferred_image_id=master.id)
+        group_repo.add_image_to_group(group.id, web.id)
+
+    after = _matches_of(db_conn, [master.id, web.id])
+    identities = [_row_identity(r) for r in after]
+    assert len(identities) == len(set(identities)) == len(rows) // 2  # exactly one logical discovery each
+    merged = next(r for r in after if _row_identity(r) == _row_identity(x_master))
+    assert merged["first_seen_at"] == "2026-01-01T00:00:00+00:00"
+    assert merged["last_seen_at"] == "2026-12-31T00:00:00+00:00"
+    assert merged["classification"] == "UNAUTHORIZED"
+    assert merged["notes"] == "Reported"
+    assert merged["acknowledged_at"] is not None and merged["is_new"] == 0
+    img_repo = ImageRepository(db_conn)
+    total = img_repo.get_by_id(master.id).match_count + img_repo.get_by_id(web.id).match_count
+    assert total == len(after)
+
+
+def test_grouping_with_conflicting_decisions_requires_explicit_rereview(db_conn, temp_dir: Path):
+    _lib, master, web, _p1, _p2 = _indexed_pair(db_conn, temp_dir)
+    rows = _scan_both_ungrouped(db_conn, master, web)
+    match_repo = MatchRepository(db_conn)
+    x_master = next(r for r in rows if r["image_id"] == master.id)
+    x_web = next(r for r in rows if r["image_id"] == web.id and _row_identity(r) == _row_identity(x_master))
+    match_repo.update_classification_and_notes(x_master["id"], classification="APPROVED", notes="Licensed to client")
+    match_repo.update_classification_and_notes(x_web["id"], classification="UNAUTHORIZED")
+    db_conn.commit()
+
+    PhotoGroupRepository(db_conn).create_group([master.id, web.id], preferred_image_id=master.id)
+
+    merged = [r for r in _matches_of(db_conn, [master.id, web.id]) if _row_identity(r) == _row_identity(x_master)]
+    assert len(merged) == 1
+    merged = merged[0]
+    # Never a silent pick between incompatible human decisions
+    assert merged["classification"] == "UNREVIEWED"
+    assert merged["is_new"] == 1 and merged["auto_classified_by_rule_id"] is None
+    assert "conflicting decisions" in merged["notes"]
+    assert f"APPROVED (photo #{master.id})" in merged["notes"]
+    assert f"UNAUTHORIZED (photo #{web.id})" in merged["notes"]
+    assert "Licensed to client" in merged["notes"]
+
+
+def test_fallback_rediscovery_previews_an_available_group_member(client, db_conn, temp_dir: Path):
+    lib, master, web, p1, _p2 = _indexed_pair(db_conn, temp_dir)
+    PhotoGroupRepository(db_conn).create_group([master.id, web.id], preferred_image_id=master.id)
+    _assert_provider_returns_same_discoveries(master.file_path, web.file_path)
+    _scan(db_conn, [master.id])
+
+    # Master goes missing; the group is scanned through the variant
+    p1.unlink()
+    img_repo = ImageRepository(db_conn)
+    LibraryIndexer(LibraryRepository(db_conn), img_repo, ThumbnailCache(temp_dir / "thumbs")).index_library(lib.id)
+    assert not img_repo.get_by_id(master.id).is_present_on_disk
+    _scan(db_conn, [web.id])
+
+    review = _group_review(client, web.id)
+    assert review
+    for m in review:
+        assert m["image_id"] == master.id  # provenance unchanged
+        assert m["display_image_id"] == web.id  # preview resolves to a present member
+        assert m["image_thumbnail_url"] == f"/api/photos/{web.id}/thumbnail"
+    single = client.get(f"/api/matches/{review[0]['id']}")
+    assert single.status_code == 200
+    assert single.json()["display_image_id"] == web.id
+
+
+def test_selecting_a_missing_group_member_scans_through_an_available_one(db_conn, temp_dir: Path):
+    lib, master, web, p1, _p2 = _indexed_pair(db_conn, temp_dir)
+    PhotoGroupRepository(db_conn).create_group([master.id, web.id], preferred_image_id=master.id)
+    p1.unlink()
+    LibraryIndexer(LibraryRepository(db_conn), ImageRepository(db_conn), ThumbnailCache(temp_dir / "thumbs")).index_library(lib.id)
+
+    plan = _scan_engine(db_conn).plan_scan(image_ids=[master.id], provider_override="mock")
+    assert [img.id for img in plan.scannable_images] == [web.id]
+    assert plan.missing_ids == []
+    assert plan.grouped_variant_ids == [master.id]
+
+    # A singleton that is missing is still reported missing
+    db_conn.execute("UPDATE images SET photo_group_id = NULL, is_primary_representation = 1")
+    db_conn.commit()
+    with pytest.raises(ValueError):
+        _scan_engine(db_conn).plan_scan(image_ids=[master.id], provider_override="mock")
+
+
+def test_project_filter_on_discoveries_is_group_aware(client, db_conn, temp_dir: Path):
+    _lib, master, web, _p1, _p2 = _indexed_pair(db_conn, temp_dir)
+    db_conn.execute("UPDATE images SET project = 'Masters' WHERE id = ?", (master.id,))
+    db_conn.execute("UPDATE images SET project = 'Client exports' WHERE id = ?", (web.id,))
+    db_conn.commit()
+    PhotoGroupRepository(db_conn).create_group([master.id, web.id], preferred_image_id=master.id)
+    _scan(db_conn, [master.id])
+    owned = _group_review(client, master.id)
+    assert owned
+
+    for project in ("Client exports", "Masters"):
+        resp = client.get("/api/matches", params={"project": project, "page_size": 200})
+        assert resp.status_code == 200
+        body = resp.json()
+        ids = [m["id"] for m in body["matches"]]
+        assert sorted(ids) == sorted(m["id"] for m in owned), project
+        assert body["total"] == len(owned)
+
+
+def test_exact_duplicate_clusters_produce_linear_candidates(temp_dir: Path):
+    db_file = temp_dir / "sha_cluster.sqlite"
+    init_db(db_file)
+    with get_db(db_file) as conn:
+        lib_id = _make_library(conn, temp_dir)
+        ids = [_insert_image(conn, lib_id, i, 0xA5A5_5A5A_0FF0_F00F, sha="same") for i in range(600)]
+        conn.commit()
+        repo = PhotoGroupRepository(conn)
+        pairs, total = repo.find_candidates_page(limit=1000)
+        assert total == 599  # N - 1, not N * (N - 1) / 2 = 179,700
+        assert all(p.is_exact_duplicate for p in pairs)
+        assert {p.image_a.id for p in pairs} | {p.image_b.id for p in pairs} == set(ids)
+
+        # Dismissing a copy's anchor pair falls back to the next anchor
+        first = pairs[0]
+        repo.dismiss_candidate_pair(first.image_a.id, first.image_b.id)
+        pairs, total = repo.find_candidates_page(limit=1000)
+        assert total == 599
+        assert (first.image_a.id, first.image_b.id) not in {(p.image_a.id, p.image_b.id) for p in pairs}
+
+
+def test_startup_repairs_group_left_invalid_by_an_interrupted_index(db_path, db_conn, temp_dir: Path):
+    from fastapi.testclient import TestClient
+    from backend.main import app
+
+    lib_id = _make_library(db_conn, temp_dir)
+    a = _insert_image(db_conn, lib_id, 1, 0x1111_2222_3333_4444)
+    b = _insert_image(db_conn, lib_id, 2, 0x1111_2222_3333_4445)
+    group = PhotoGroupRepository(db_conn).create_group([a, b], preferred_image_id=a)
+    # Interrupted pass: the replaced primary was detached and committed, the final repair never ran
+    ImageRepository(db_conn).detach_archived_image(a, "/virtual/1.jpg#archived-1")
+    db_conn.commit()
+    assert db_conn.execute("SELECT preferred_image_id FROM photo_groups WHERE id = ?", (group.id,)).fetchone()[0] == a
+
+    with TestClient(app):
+        pass
+
+    assert db_conn.execute("SELECT COUNT(*) FROM photo_groups").fetchone()[0] == 0
+    row = db_conn.execute("SELECT photo_group_id, is_primary_representation FROM images WHERE id = ?", (b,)).fetchone()
+    assert row["photo_group_id"] is None and row["is_primary_representation"] == 1
+
+
+def test_reexport_adopting_a_known_missing_record_keeps_lineage(client, db_conn, temp_dir: Path):
+    lib, master, web, p1, _p2 = _indexed_pair(db_conn, temp_dir)
+    group_repo = PhotoGroupRepository(db_conn)
+    group = group_repo.create_group([master.id, web.id], preferred_image_id=master.id)
+    _scan(db_conn, [master.id])
+    before = _group_review(client, master.id)
+    assert before
+    MatchRepository(db_conn).update_classification_and_notes(before[0]["id"], classification="UNAUTHORIZED", notes="DMCA sent")
+    db_conn.commit()
+
+    # A retouched export C of the master was indexed elsewhere earlier, then went missing
+    c_path = p1.with_name("multi_retouch.jpg")
+    c_path.write_bytes(p1.read_bytes())
+    _reexport_edit(c_path)
+    img_repo = ImageRepository(db_conn)
+    indexer = LibraryIndexer(LibraryRepository(db_conn), img_repo, ThumbnailCache(temp_dir / "thumbs"))
+    indexer.index_library(lib.id)
+    c_record = img_repo.get_by_path(str(c_path.resolve()))
+    c_bytes = c_path.read_bytes()
+    c_path.unlink()
+    indexer.index_library(lib.id)
+
+    # The photographer copies C's bytes over the master's file
+    time.sleep(0.01)
+    p1.write_bytes(c_bytes)
+    indexer.index_library(lib.id)
+
+    adopted = img_repo.get_by_path(str(p1.resolve()))
+    assert adopted.id == c_record.id  # the known record was reconciled to the path
+    refreshed = group_repo.get_group(group.id)
+    assert {img.id for img in refreshed.images} == {c_record.id, web.id}
+    assert refreshed.preferred_image_id == c_record.id
+
+    after = _group_review(client, web.id)
+    assert sorted(_identity(m) for m in after) == sorted(_identity(m) for m in before)
+    kept = next(m for m in after if _identity(m) == _identity(before[0]))
+    assert kept["classification"] == "UNAUTHORIZED" and kept["notes"] == "DMCA sent"

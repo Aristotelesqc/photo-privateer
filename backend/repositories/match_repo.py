@@ -7,6 +7,24 @@ from typing import Optional
 from backend.models import MatchOut
 from backend.config import CLASS_UNREVIEWED
 
+# Photo to preview for a discovery: the owning record when present on disk, otherwise an available
+# member of its photo group (primary first), so a discovery rediscovered through a fallback member
+# still previews when its original owner is missing. `image_id` stays the provenance owner.
+DISPLAY_IMAGE_SQL = """
+    COALESCE(
+        CASE WHEN i.is_present_on_disk = 1 THEN i.id END,
+        (
+            SELECT g.id FROM images g
+            WHERE i.photo_group_id IS NOT NULL
+              AND g.photo_group_id = i.photo_group_id
+              AND g.is_present_on_disk = 1
+            ORDER BY g.is_primary_representation DESC, g.id ASC
+            LIMIT 1
+        ),
+        m.image_id
+    ) AS display_image_id
+"""
+
 class MatchRepository:
     def __init__(self, conn: sqlite3.Connection):
         self.conn = conn
@@ -33,14 +51,19 @@ class MatchRepository:
             auto_classified_by_rule_id=r["auto_classified_by_rule_id"],
             notes=r["notes"],
             image_filename=r["filename"] if "filename" in r.keys() else None,
-            image_thumbnail_url=f"/api/photos/{r['image_id']}/thumbnail" if "image_id" in r.keys() else None,
+            display_image_id=(
+                r["display_image_id"] if "display_image_id" in r.keys() and r["display_image_id"] else r["image_id"]
+            ),
+            image_thumbnail_url=(
+                f"/api/photos/{r['display_image_id'] if 'display_image_id' in r.keys() and r['display_image_id'] else r['image_id']}/thumbnail"
+            ),
             image_project=r["project"] if "project" in r.keys() else None,
         )
 
     def get_by_id(self, match_id: int) -> Optional[MatchOut]:
         cur = self.conn.cursor()
-        cur.execute("""
-            SELECT m.*, i.filename, i.project
+        cur.execute(f"""
+            SELECT m.*, i.filename, i.project, {DISPLAY_IMAGE_SQL}
             FROM matches m
             LEFT JOIN images i ON m.image_id = i.id
             WHERE m.id = ?
@@ -77,10 +100,17 @@ class MatchRepository:
             params.extend([image_id, image_id])
 
         if project:
+            # Group-aware: a discovery belongs to a project when its owner or any current member
+            # of the owner's photo group does (EXISTS keeps each discovery listed once)
+            group_members = """
+                SELECT 1 FROM images gi
+                WHERE (gi.id = m.image_id
+                       OR (i.photo_group_id IS NOT NULL AND gi.photo_group_id = i.photo_group_id))
+            """
             if project == "__unassigned__":
-                where_clauses.append("(i.project IS NULL OR i.project = '')")
+                where_clauses.append(f"EXISTS ({group_members} AND (gi.project IS NULL OR gi.project = ''))")
             else:
-                where_clauses.append("i.project = ?")
+                where_clauses.append(f"EXISTS ({group_members} AND gi.project = ?)")
                 params.append(project)
 
         if classification:
@@ -126,7 +156,7 @@ class MatchRepository:
         data_params = list(params)
         data_params.extend([limit, offset])
         cur.execute(f"""
-            SELECT m.*, i.filename, i.project
+            SELECT m.*, i.filename, i.project, {DISPLAY_IMAGE_SQL}
             FROM matches m
             LEFT JOIN images i ON m.image_id = i.id
             {where_sql}

@@ -81,7 +81,7 @@ export const MatchInspectModal: React.FC<MatchInspectModalProps> = ({
             </div>
             <div className="flex-1 min-h-[280px] max-h-[50vh] flex items-center justify-center overflow-hidden rounded bg-carbon-900/60 border border-carbon-800/80">
               <img
-                src={`/api/photos/${inspectingMatch.image_id}/file`}
+                src={`/api/photos/${inspectingMatch.display_image_id ?? inspectingMatch.image_id}/file`}
                 alt={inspectingMatch.image_filename || 'Original photo'}
                 className="max-h-[48vh] max-w-full object-contain rounded"
               />

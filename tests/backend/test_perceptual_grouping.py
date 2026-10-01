@@ -300,7 +300,7 @@ def test_scan_deduplication_one_call_per_group(temp_dir: Path):
         assert scannable_single[0].id == img1.id
 
 
-def test_scan_completed_marks_group_variants_as_scanned(temp_dir: Path):
+def test_group_scan_records_physical_history_only_on_searched_representative(temp_dir: Path):
     db_file = temp_dir / "test_grouping_scan.sqlite"
     init_db(db_file)
     photos_dir = temp_dir / "photos"
@@ -362,15 +362,26 @@ def test_scan_completed_marks_group_variants_as_scanned(temp_dir: Path):
             if t.name == f"scan-worker-{sess.id}":
                 t.join(timeout=10.0)
 
-        # Both representative (img1) and sibling variant (img2) must be marked scanned
+        # Physical per-file history: only the searched representative records a scan
         updated_img1 = img_repo.get_by_id(img1.id)
         updated_img2 = img_repo.get_by_id(img2.id)
-
         assert updated_img1.scan_count == 1
         assert updated_img1.last_scanned_at is not None
-        assert updated_img2.scan_count == 1
-        assert updated_img2.last_scanned_at is not None
-        assert updated_img2.last_scanned_at == updated_img1.last_scanned_at
+        assert updated_img2.scan_count == 0
+        assert updated_img2.last_scanned_at is None
+
+        # While grouped, both are covered through derived group coverage
+        scanned, _ = img_repo.list_images(filter_status="scanned")
+        assert {img.id for img in scanned} == {img1.id, img2.id}
+        unscanned, _ = img_repo.list_images(filter_status="unscanned")
+        assert unscanned == []
+
+        # Once removed from the group, the never-searched photo is unscanned again
+        group_repo.remove_image_from_group(group.id, img2.id)
+        unscanned, _ = img_repo.list_images(filter_status="unscanned")
+        assert {img.id for img in unscanned} == {img2.id}
+        listed = {img.id: img for img in img_repo.list_images()[0]}
+        assert listed[img2.id].group_scan_count is None and listed[img2.id].scan_count == 0
 
 
 def test_add_image_to_existing_group(temp_dir: Path):

@@ -72,7 +72,6 @@ class LibraryIndexer:
         observed_paths: set[str] = set()
         unchanged_ids: list[int] = []
         pending_dhashes: list[tuple[str, int]] = []
-        detached_count = 0
 
         for file_path in self._discover_files(root, lib.recursive):
             scanned += 1
@@ -162,7 +161,6 @@ class LibraryIndexer:
                         replaced_grouped = existing
                     archive_alias = f"{norm_path}#archived-{existing.id}"
                     self.image_repo.detach_archived_image(existing.id, archive_alias)
-                    detached_count += 1
                     existing = None
 
             # Check if this is a renamed or moved file with identical content hash
@@ -190,7 +188,10 @@ class LibraryIndexer:
                         and candidate.photo_group_id is None
                         and is_candidate_representation(replaced_grouped.dhash or "", candidate.dhash or "")
                     ):
-                        # A previously known photo keeps its own discovery history; it only joins the group
+                        # The known photo adopts the replaced record's lineage: its discoveries are
+                        # coalesced with the replaced record's (exactly once, triage preserved), then it
+                        # joins the group, whose discoveries are coalesced in turn.
+                        self.image_repo.transfer_representation_history(replaced_grouped.id, candidate.id)
                         self.image_repo.inherit_group_membership(
                             candidate.id,
                             replaced_grouped.photo_group_id,
@@ -246,13 +247,13 @@ class LibraryIndexer:
             )
             if replaced_grouped is not None and is_candidate_representation(replaced_grouped.dhash or "", dhash):
                 # Validated re-export: same representation lineage, so it keeps the group role and the
-                # discoveries, triage and scan coverage recorded against the replaced content.
+                # discoveries and triage recorded against the replaced content.
+                self.image_repo.transfer_representation_history(replaced_grouped.id, upserted.id)
                 self.image_repo.inherit_group_membership(
                     upserted.id,
                     replaced_grouped.photo_group_id,
                     replaced_grouped.is_primary_representation == 1,
                 )
-                self.image_repo.transfer_representation_history(replaced_grouped.id, upserted.id)
             added_or_updated += 1
 
         if pending_dhashes:
@@ -268,10 +269,10 @@ class LibraryIndexer:
 
 
         # Repair group integrity once for the whole pass (groups left with < 2 members by
-        # replaced files, dangling preferred representations)
-        if detached_count:
-            from backend.repositories.group_repo import PhotoGroupRepository
-            PhotoGroupRepository(self.image_repo.conn).repair_groups()
+        # replaced files, dangling preferred representations). Runs on every pass, so damage left
+        # by an earlier interrupted pass is healed even when this pass detaches nothing.
+        from backend.repositories.group_repo import PhotoGroupRepository
+        PhotoGroupRepository(self.image_repo.conn).repair_groups()
 
         # Update library last indexed timestamp
         self.library_repo.update_last_indexed(library_id)

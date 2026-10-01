@@ -165,59 +165,65 @@ class ScanEngine:
                 f"Cannot scan images belonging to archived or disabled libraries: {archived_or_disabled_ids}"
             )
         
-        usable_images: list[ImageOut] = []
+        def is_available(candidate: ImageOut) -> bool:
+            return (
+                candidate.library_id in active_libs
+                and candidate.is_present_on_disk
+                and Path(candidate.file_path).exists()
+            )
+
+        # 4. Resolve availability per photo group and collapse each group to 1 search call.
+        # A grouped photo is searched through the group's preferred representation when it is
+        # available, otherwise through the selected photo, otherwise through any available member;
+        # it is only reported missing when no member of its group can be searched.
+        group_reps: dict[int, Optional[ImageOut]] = {}
+
+        def resolve_group(gid: int, selected: ImageOut) -> Optional[ImageOut]:
+            if gid in group_reps:
+                return group_reps[gid]
+            rep: Optional[ImageOut] = None
+            try:
+                pref_id = self.group_repo.get_preferred_image_id(gid)
+                members = self.image_repo.get_images_for_group(gid)
+                ordered = sorted(members, key=lambda m: (m.id != pref_id, m.id != selected.id, m.id))
+                rep = next((m for m in ordered if is_available(m)), None)
+            except Exception as exc:
+                logger.warning(
+                    f"Could not resolve the representations of photo group #{gid}; "
+                    f"scanning selected photo #{selected.id} instead: {exc}"
+                )
+                rep = selected if is_available(selected) else None
+            group_reps[gid] = rep
+            return rep
+
+        scannable_images: list[ImageOut] = []
+        seen_scannable_ids: set[int] = set()
         missing_ids: list[int] = []
+        grouped_variant_ids: list[int] = []
 
         for iid in unique_image_ids:
             img = image_map.get(iid)
             if img is None:
                 missing_ids.append(iid)
-            elif not img.is_present_on_disk or not Path(img.file_path).exists():
-                missing_ids.append(iid)
+                continue
+            if img.photo_group_id is None:
+                target = img if is_available(img) else None
             else:
-                usable_images.append(img)
+                target = resolve_group(img.photo_group_id, img)
+            if target is None:
+                missing_ids.append(iid)
+                continue
+            if target.id != iid:
+                grouped_variant_ids.append(iid)
+            if target.id not in seen_scannable_ids:
+                scannable_images.append(target)
+                seen_scannable_ids.add(target.id)
 
-        if not usable_images:
+        if not scannable_images:
             raise ValueError(
                 f"None of the {len(unique_image_ids)} selected images are currently available on disk. "
                 f"Check that files have not been moved or unmounted."
             )
-
-        # 4. Collapse grouped photo representations to 1 search call per group
-        grouped_reps: dict[int, ImageOut] = {}
-        scannable_images: list[ImageOut] = []
-        seen_scannable_ids: set[int] = set()
-
-        for img in usable_images:
-            if img.photo_group_id is None:
-                if img.id not in seen_scannable_ids:
-                    scannable_images.append(img)
-                    seen_scannable_ids.add(img.id)
-            else:
-                gid = img.photo_group_id
-                if gid not in grouped_reps:
-                    canonical = img
-                    try:
-                        pref_id = self.group_repo.get_preferred_image_id(gid)
-                        if pref_id:
-                            pref_img = self.image_repo.get_by_id(pref_id)
-                            if (
-                                pref_img
-                                and pref_img.library_id in active_libs
-                                and pref_img.is_present_on_disk
-                                and Path(pref_img.file_path).exists()
-                            ):
-                                canonical = pref_img
-                    except Exception as exc:
-                        logger.warning(
-                            f"Could not resolve the primary representation of photo group #{gid}; "
-                            f"scanning selected photo #{img.id} instead: {exc}"
-                        )
-                        canonical = img
-                    grouped_reps[gid] = canonical
-                    if canonical.id not in seen_scannable_ids:
-                        scannable_images.append(canonical)
-                        seen_scannable_ids.add(canonical.id)
 
         # 5. Enforce free tier allowance guard on the actual usable scannable image count
         settings = self.settings_repo.get_app_settings()
@@ -234,7 +240,6 @@ class ScanEngine:
                     f"Authorize force override to proceed."
                 )
 
-        grouped_variant_ids = [img.id for img in usable_images if img.id not in seen_scannable_ids]
         return ScanPlan(
             scannable_images=scannable_images,
             missing_ids=missing_ids,
@@ -540,9 +545,9 @@ class ScanEngine:
                             )
                             matches_count += 1
 
-                        scan_timestamp = image_repo.record_scan_completed(img.id)
-                        if img.photo_group_id is not None:
-                            image_repo.record_group_scan_completed(img.photo_group_id, img.id, scanned_at=scan_timestamp)
+                        # Physical per-file history only: siblings are covered through derived
+                        # group coverage (MAX over members), never by writing scans they did not get
+                        image_repo.record_scan_completed(img.id)
                         usage_repo.record_scan_item(
                             session_id=session_id,
                             image_id=img.id,

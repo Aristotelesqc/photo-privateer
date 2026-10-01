@@ -144,6 +144,8 @@ class MatchOut(BaseModel):
     auto_classified_by_rule_id: Optional[int] = None
     notes: Optional[str] = None
     # Joined photo details for display
+    # Photo to preview: the owner when present, otherwise an available member of its group
+    display_image_id: Optional[int] = None
     image_filename: Optional[str] = None
     image_thumbnail_url: Optional[str] = None
     image_project: Optional[str] = None

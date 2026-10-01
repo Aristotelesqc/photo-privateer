@@ -104,6 +104,8 @@ export interface MatchItem {
   auto_classified_by_rule_id: number | null;
   notes: string | null;
   image_filename?: string | null;
+  /** Photo to preview: the owner when present, otherwise an available member of its group */
+  display_image_id?: number | null;
   image_thumbnail_url?: string | null;
   image_project?: string | null;
 }

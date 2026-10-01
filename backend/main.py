@@ -53,6 +53,16 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f"Failed to recover interrupted scan sessions: {e}")
 
+    # Startup integrity recovery: an indexing pass interrupted between detaching a replaced photo
+    # and its final group repair can leave a group with < 2 members or a dangling primary
+    try:
+        from backend.repositories.group_repo import PhotoGroupRepository
+        with get_connection(target_db_path) as conn:
+            PhotoGroupRepository(conn).repair_groups()
+            conn.commit()
+    except Exception as e:
+        logger.error(f"Failed to repair photo group integrity: {e}")
+
     yield
     logger.info("Photo Privateer shutting down.")
 

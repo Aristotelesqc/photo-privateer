@@ -143,6 +143,8 @@ class PhotoGroupRepository:
                 if cur.rowcount != 1:
                     raise ValueError(f"Image #{img_id} was concurrently modified or already belongs to a group.")
 
+            # The members are now one source photograph: merge discoveries they hold separately
+            self.image_repo.coalesce_group_discoveries(group_id)
             self.conn.commit()
         except Exception:
             self.conn.rollback()
@@ -236,6 +238,8 @@ class PhotoGroupRepository:
             else:
                 cur.execute("UPDATE photo_groups SET updated_at = ? WHERE id = ?", (now, group_id))
 
+            # The joining photo may already hold discoveries the group has: merge them
+            self.image_repo.coalesce_group_discoveries(group_id)
             self.conn.commit()
         except Exception:
             self.conn.rollback()
@@ -364,7 +368,9 @@ class PhotoGroupRepository:
         candidates: list[CandidateTuple] = []
         exact_pairs_seen: Set[Tuple[int, int]] = set()
 
-        # 1. Exact SHA-256 duplicates
+        # 1. Exact SHA-256 duplicates: linear, not a clique. Each byte-identical copy is paired with
+        # one anchor of its cluster (an already-grouped copy first, so loose copies join its group),
+        # falling back to the next anchor only when that pair is dismissed or both are grouped.
         sha_groups: dict[str, list[tuple[int, Optional[int]]]] = defaultdict(list)
         for r in rows:
             if r["sha256"]:
@@ -373,20 +379,22 @@ class PhotoGroupRepository:
         for members in sha_groups.values():
             if len(members) < 2:
                 continue
-            for i in range(len(members)):
-                id_a, g_a = members[i]
-                for j in range(i + 1, len(members)):
-                    id_b, g_b = members[j]
-                    if g_a is not None and g_b is not None:
+            anchors = sorted(members, key=lambda m: (m[1] is None, m[0]))
+            for id_b, g_b in members:
+                for id_a, g_a in anchors:
+                    if id_a == id_b or (g_a is not None and g_b is not None):
                         continue
                     pair_key = (id_a, id_b) if id_a < id_b else (id_b, id_a)
                     if pair_key in dismissed:
                         continue
-                    exact_pairs_seen.add(pair_key)
-                    candidates.append((0, 0, pair_key[0], pair_key[1], True))
+                    if pair_key not in exact_pairs_seen:
+                        exact_pairs_seen.add(pair_key)
+                        candidates.append((0, 0, pair_key[0], pair_key[1], True))
+                    break
 
         # 2. Perceptual dHash variants via pigeonhole band bucketing
         entries: list[tuple[int, int, Optional[int]]] = []
+        sha_by_id = {r["id"]: r["sha256"] for r in rows}
         for r in rows:
             dh = r["dhash"]
             if not dh:
@@ -418,6 +426,9 @@ class PhotoGroupRepository:
                     for j in hits:
                         id_b, h_b, g_b = entries[bucket[j]]
                         if g_a is not None and g_b is not None:
+                            continue
+                        # Byte-identical copies are handled by the linear exact-duplicate pass
+                        if sha_by_id[id_a] and sha_by_id[id_a] == sha_by_id[id_b]:
                             continue
                         pair_key = (id_a, id_b) if id_a < id_b else (id_b, id_a)
                         if pair_key in found or pair_key in exact_pairs_seen or pair_key in dismissed:

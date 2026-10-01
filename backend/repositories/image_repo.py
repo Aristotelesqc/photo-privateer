@@ -5,6 +5,7 @@ import sqlite3
 from datetime import datetime, timezone
 from typing import Optional
 from backend.models import ImageOut
+from backend.repositories.discovery_merge import coalesce_discoveries, coalesce_group_discoveries
 
 class ImageRepository:
     def __init__(self, conn: sqlite3.Connection):
@@ -260,35 +261,38 @@ class ImageRepository:
             "WHERE id = ? AND photo_group_id IS NULL",
             (group_id, image_id),
         )
-        if cur.rowcount != 1 or not make_primary:
+        if cur.rowcount != 1:
             return
-        now = datetime.now(timezone.utc).isoformat()
-        cur.execute(
-            "UPDATE photo_groups SET preferred_image_id = ?, updated_at = ? WHERE id = ?",
-            (image_id, now, group_id),
-        )
-        cur.execute(
-            "UPDATE images SET is_primary_representation = CASE WHEN id = ? THEN 1 ELSE 0 END "
-            "WHERE photo_group_id = ?",
-            (image_id, group_id),
-        )
+        if make_primary:
+            now = datetime.now(timezone.utc).isoformat()
+            cur.execute(
+                "UPDATE photo_groups SET preferred_image_id = ?, updated_at = ? WHERE id = ?",
+                (image_id, now, group_id),
+            )
+            cur.execute(
+                "UPDATE images SET is_primary_representation = CASE WHEN id = ? THEN 1 ELSE 0 END "
+                "WHERE photo_group_id = ?",
+                (image_id, group_id),
+            )
+        self.coalesce_group_discoveries(group_id)
+
+    def coalesce_group_discoveries(self, group_id: int) -> None:
+        """Merges duplicate discoveries across a group's members (see discovery_merge) and refreshes
+        their match counts. Does not commit."""
+        if coalesce_group_discoveries(self.conn, group_id):
+            cur = self.conn.cursor()
+            cur.execute("SELECT id FROM images WHERE photo_group_id = ?", (group_id,))
+            for r in cur.fetchall():
+                self.refresh_image_match_counts(r["id"])
 
     def transfer_representation_history(self, old_image_id: int, new_image_id: int) -> None:
-        """Moves discoveries (with their classification, notes and first_seen_at) and scan coverage
-        from a replaced record to its validated in-place re-export. Provider call and scan item
-        records keep the old image ID as provenance of the physical request. Does not commit.
+        """Moves the discoveries (classification, notes, first_seen_at) of a replaced record onto the
+        record that takes over its lineage (a validated re-export), coalescing any discovery both
+        already hold. Scan counts are physical per-file history and are not copied: the replacement
+        content has not itself been searched. Provider call and scan item records keep the old
+        image ID as provenance of the physical request. Does not commit.
         """
-        cur = self.conn.cursor()
-        cur.execute("UPDATE matches SET image_id = ? WHERE image_id = ?", (new_image_id, old_image_id))
-        cur.execute(
-            """
-            UPDATE images
-            SET scan_count = (SELECT scan_count FROM images WHERE id = ?),
-                last_scanned_at = (SELECT last_scanned_at FROM images WHERE id = ?)
-            WHERE id = ?
-            """,
-            (old_image_id, old_image_id, new_image_id),
-        )
+        coalesce_discoveries(self.conn, [old_image_id, new_image_id], target_image_id=new_image_id)
         self.refresh_image_match_counts(old_image_id)
         self.refresh_image_match_counts(new_image_id)
 
@@ -427,22 +431,6 @@ class ImageRepository:
         """, (now, image_id))
         self.refresh_image_match_counts(image_id)
         return now
-
-    def record_group_scan_completed(self, group_id: int, representative_id: int, scanned_at: Optional[str] = None) -> None:
-        """Marks sibling group members as scanned when representative was searched."""
-        if not group_id:
-            return
-        now = scanned_at or datetime.now(timezone.utc).isoformat()
-        cur = self.conn.cursor()
-        cur.execute(
-            """
-            UPDATE images
-            SET scan_count = scan_count + 1,
-                last_scanned_at = ?
-            WHERE photo_group_id = ? AND id != ?
-            """,
-            (now, group_id, representative_id),
-        )
 
     def refresh_image_match_counts(self, image_id: int) -> None:
         cur = self.conn.cursor()
