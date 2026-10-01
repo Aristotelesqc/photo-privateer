@@ -65,6 +65,8 @@ class ImageOut(BaseModel):
     # Aggregates across all members of the image's photo group (only set by photo listings)
     group_match_count: Optional[int] = None
     group_unreviewed_count: Optional[int] = None
+    group_scan_count: Optional[int] = None
+    group_last_scanned_at: Optional[str] = None
     thumbnail_url: str
 
 class BatchProjectUpdate(BaseModel):

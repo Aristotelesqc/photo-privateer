@@ -90,5 +90,22 @@ describe('PhotoCard Component', () => {
     fireEvent.click(pill);
     expect(handleNavigateToReview).toHaveBeenCalledWith(101);
   });
+
+  it('shows a never-scanned variant of an already-searched group as covered', () => {
+    const variant: ImageItem = {
+      ...mockPhoto,
+      photo_group_id: 7,
+      is_primary_representation: 0,
+      scan_count: 0,
+      group_match_count: 0,
+      group_unreviewed_count: 0,
+      group_scan_count: 1,
+    };
+    render(
+      <PhotoCard photo={variant} isSelected={false} onToggleSelect={vi.fn()} onNavigateToReview={vi.fn()} />
+    );
+    expect(screen.getByText('Clean')).toBeInTheDocument();
+    expect(screen.queryByText('Unscanned')).not.toBeInTheDocument();
+  });
 });
 

@@ -115,7 +115,7 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
     }
   };
 
-  const handleGroupPair = async (imageAId: number, imageBId: number, preferredId: number) => {
+  const handleGroupPair = async (imageAId: number, imageBId: number, preferredId?: number) => {
     const candidate = candidates.find(
       (c) => (c.image_a.id === imageAId && c.image_b.id === imageBId) || (c.image_a.id === imageBId && c.image_b.id === imageAId)
     );

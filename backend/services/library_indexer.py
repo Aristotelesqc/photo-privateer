@@ -11,7 +11,7 @@ from backend.config import SUPPORTED_EXTENSIONS
 from backend.repositories.library_repo import LibraryRepository
 from backend.repositories.image_repo import ImageRepository
 from backend.services.thumbnail_cache import ThumbnailCache
-from backend.services.perceptual import compute_dhash, DHASH_UNAVAILABLE
+from backend.services.perceptual import compute_dhash, is_candidate_representation, DHASH_UNAVAILABLE
 
 def calculate_sha256(file_path: Path) -> str:
     hasher = hashlib.sha256()
@@ -151,12 +151,15 @@ class LibraryIndexer:
             # If an existing record was at this path but has a DIFFERENT sha256,
             # detach the old record to an archive alias to preserve its history without inheriting to new file.
             # A photographer re-exporting an edit over the same file keeps the photo's place in its
-            # group: the new record inherits the old record's group membership and primary role.
-            inherited_group: tuple[int, bool] | None = None
+            # group, but only when the new content is perceptually a re-export of the old one: a path
+            # reused for an unrelated photograph must not be folded into another photo's group (it
+            # would then never be searched on its own). Low-information or unavailable hashes fail
+            # open: the new photo stays ungrouped and surfaces through normal candidate review.
+            replaced_grouped = None
             if existing:
                 if existing.sha256 != sha256:
                     if existing.photo_group_id is not None:
-                        inherited_group = (existing.photo_group_id, existing.is_primary_representation == 1)
+                        replaced_grouped = existing
                     archive_alias = f"{norm_path}#archived-{existing.id}"
                     self.image_repo.detach_archived_image(existing.id, archive_alias)
                     detached_count += 1
@@ -182,8 +185,17 @@ class LibraryIndexer:
                     )
                     if detected_project and not candidate.project:
                         self.image_repo.update_project_auto(candidate.id, detected_project)
-                    if inherited_group and candidate.photo_group_id is None:
-                        self.image_repo.inherit_group_membership(candidate.id, *inherited_group)
+                    if (
+                        replaced_grouped is not None
+                        and candidate.photo_group_id is None
+                        and is_candidate_representation(replaced_grouped.dhash or "", candidate.dhash or "")
+                    ):
+                        # A previously known photo keeps its own discovery history; it only joins the group
+                        self.image_repo.inherit_group_membership(
+                            candidate.id,
+                            replaced_grouped.photo_group_id,
+                            replaced_grouped.is_primary_representation == 1,
+                        )
                     # Ensure thumbnail cached
                     if not self.thumbnail_cache.has_thumbnail(sha256):
                         try:
@@ -232,8 +244,15 @@ class LibraryIndexer:
                 file_modified_at_ns=mtime_ns,
                 dhash=dhash,
             )
-            if inherited_group:
-                self.image_repo.inherit_group_membership(upserted.id, *inherited_group)
+            if replaced_grouped is not None and is_candidate_representation(replaced_grouped.dhash or "", dhash):
+                # Validated re-export: same representation lineage, so it keeps the group role and the
+                # discoveries, triage and scan coverage recorded against the replaced content.
+                self.image_repo.inherit_group_membership(
+                    upserted.id,
+                    replaced_grouped.photo_group_id,
+                    replaced_grouped.is_primary_representation == 1,
+                )
+                self.image_repo.transfer_representation_history(replaced_grouped.id, upserted.id)
             added_or_updated += 1
 
         if pending_dhashes:

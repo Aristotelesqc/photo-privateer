@@ -233,7 +233,8 @@ def _indexed_pair(conn, temp_dir: Path, names=("multi_master.jpg", "multi_web.jp
     p1, p2 = photos_dir / names[0], photos_dir / names[1]
     _create_sample_image(p1, (120, 90, 60), "Master")
     with Image.open(p1) as img:
-        img.resize((170, 170)).save(p2, format="JPEG", quality=85)
+        # quality 84: the deterministic mock provider returns the same discoveries for both files
+        img.resize((170, 170)).save(p2, format="JPEG", quality=84)
     lib_repo = LibraryRepository(conn)
     img_repo = ImageRepository(conn)
     lib = lib_repo.create(str(photos_dir), name="Gallery")
@@ -307,30 +308,190 @@ def test_grouped_variant_shares_group_discoveries_in_filters_and_review(client, 
     assert {img.id for img in listed} == {master.id, web.id}
 
 
-def test_in_place_reexport_keeps_group_membership_and_primary(temp_dir: Path):
-    db_file = temp_dir / "reexport.sqlite"
-    init_db(db_file)
-    with get_db(db_file) as conn:
-        lib, master, web, p1, _p2 = _indexed_pair(conn, temp_dir)
-        group_repo = PhotoGroupRepository(conn)
-        group = group_repo.create_group([master.id, web.id], preferred_image_id=master.id)
+def _reexport_edit(path: Path) -> None:
+    """Simulates re-exporting a retouched version of a photo over the same file."""
+    from PIL import ImageEnhance
 
-        # Photographer re-exports an edit over the primary file
-        time.sleep(0.01)
-        _create_sample_image(p1, (124, 90, 60), "Master edit")
-        img_repo = ImageRepository(conn)
-        LibraryIndexer(LibraryRepository(conn), img_repo, ThumbnailCache(temp_dir / "thumbs")).index_library(lib.id)
+    with Image.open(path) as img:
+        edited = ImageEnhance.Brightness(img.convert("RGB")).enhance(1.08)
+        edited = ImageEnhance.Contrast(edited).enhance(1.05)
+    edited.save(path, format="JPEG", quality=90)
 
-        new_master = img_repo.get_by_path(str(p1.resolve()))
-        assert new_master.id != master.id  # history of the old content is preserved separately
-        refreshed = group_repo.get_group(group.id)
-        assert refreshed is not None
-        assert {img.id for img in refreshed.images} == {new_master.id, web.id}
-        assert refreshed.preferred_image_id == new_master.id
-        assert img_repo.get_by_id(new_master.id).is_primary_representation == 1
-        assert img_repo.get_by_id(web.id).is_primary_representation == 0
-        archived = img_repo.get_by_id(master.id)
-        assert archived.photo_group_id is None and not archived.is_present_on_disk
+
+def _scan(conn, image_ids: list[int]) -> None:
+    session = _scan_engine(conn).start_background_scan(image_ids=image_ids, provider_override="mock")
+    _wait_for_scan(session.id)
+    conn.commit()
+
+
+def _group_review(client, image_id: int) -> list[dict]:
+    resp = client.get("/api/matches", params={"image_id": image_id, "page_size": 200})
+    assert resp.status_code == 200
+    return resp.json()["matches"]
+
+
+def _identity(m: dict) -> tuple:
+    return (m["source_kind"], m["page_url"] or "", m["candidate_image_url"] or "")
+
+
+def _assert_provider_returns_same_discoveries(path_a: str, path_b: str) -> None:
+    """Precondition: searching either representation yields the same web discoveries."""
+    from backend.providers.mock_provider import MockSearchProvider
+
+    provider = MockSearchProvider()
+
+    def ids(path: str) -> set:
+        return {(i.source_kind, i.page_url or "", i.candidate_image_url or "") for i in provider.search(path).items}
+
+    assert ids(path_a) and ids(path_a) == ids(path_b)
+
+
+def test_validated_reexport_keeps_group_role_and_discovery_history(client, db_conn, temp_dir: Path):
+    lib, master, web, p1, _p2 = _indexed_pair(db_conn, temp_dir)
+    group_repo = PhotoGroupRepository(db_conn)
+    group = group_repo.create_group([master.id, web.id], preferred_image_id=master.id)
+    _scan(db_conn, [master.id])
+
+    before = _group_review(client, web.id)
+    assert before
+    triaged = before[0]
+    MatchRepository(db_conn).update_classification_and_notes(
+        triaged["id"], classification="UNAUTHORIZED", notes="Sent takedown"
+    )
+    db_conn.commit()
+
+    time.sleep(0.01)
+    _reexport_edit(p1)
+    img_repo = ImageRepository(db_conn)
+    LibraryIndexer(LibraryRepository(db_conn), img_repo, ThumbnailCache(temp_dir / "thumbs")).index_library(lib.id)
+
+    new_master = img_repo.get_by_path(str(p1.resolve()))
+    assert new_master.id != master.id  # the replaced content stays archived as its own record
+    refreshed = group_repo.get_group(group.id)
+    assert {img.id for img in refreshed.images} == {new_master.id, web.id}
+    assert refreshed.preferred_image_id == new_master.id
+    assert new_master.is_primary_representation == 1
+    archived = img_repo.get_by_id(master.id)
+    assert archived.photo_group_id is None and not archived.is_present_on_disk
+
+    # Discovery history and triage follow the re-export, exactly once, from either member
+    for member in (new_master.id, web.id):
+        after = _group_review(client, member)
+        assert sorted(_identity(m) for m in after) == sorted(_identity(m) for m in before)
+        kept = next(m for m in after if m["id"] == triaged["id"])
+        assert kept["classification"] == "UNAUTHORIZED"
+        assert kept["notes"] == "Sent takedown"
+        assert kept["first_seen_at"] == triaged["first_seen_at"]
+    assert new_master.scan_count == archived.scan_count and new_master.last_scanned_at is not None
+    listed, _ = img_repo.list_images(filter_status="unscanned")
+    assert listed == []
+
+
+def test_unrelated_photo_reusing_a_grouped_path_is_not_grouped(db_conn, temp_dir: Path):
+    lib, master, web, p1, _p2 = _indexed_pair(db_conn, temp_dir)
+    group_repo = PhotoGroupRepository(db_conn)
+    group_repo.create_group([master.id, web.id], preferred_image_id=master.id)
+
+    time.sleep(0.01)
+    _create_sample_image(p1, (10, 160, 220), "A completely different photograph")
+    img_repo = ImageRepository(db_conn)
+    LibraryIndexer(LibraryRepository(db_conn), img_repo, ThumbnailCache(temp_dir / "thumbs")).index_library(lib.id)
+
+    unrelated = img_repo.get_by_path(str(p1.resolve()))
+    assert unrelated.id != master.id
+    assert unrelated.photo_group_id is None
+    archived = img_repo.get_by_id(master.id)
+    assert archived.photo_group_id is None and not archived.is_present_on_disk
+    # The remaining member is no longer in a group of one
+    assert img_repo.get_by_id(web.id).photo_group_id is None
+    # The unrelated photo is searched on its own
+    plan = _scan_engine(db_conn).plan_scan(image_ids=[unrelated.id], provider_override="mock")
+    assert [img.id for img in plan.scannable_images] == [unrelated.id]
+    assert plan.grouped_variant_ids == []
+
+
+def test_changing_searched_representation_does_not_duplicate_discoveries(client, db_conn, temp_dir: Path):
+    _lib, master, web, _p1, _p2 = _indexed_pair(db_conn, temp_dir)
+    group_repo = PhotoGroupRepository(db_conn)
+    group = group_repo.create_group([master.id, web.id], preferred_image_id=master.id)
+    _assert_provider_returns_same_discoveries(master.file_path, web.file_path)
+    _scan(db_conn, [master.id])
+
+    first = _group_review(client, master.id)
+    assert first
+    triaged = first[0]
+    MatchRepository(db_conn).update_classification_and_notes(triaged["id"], classification="APPROVED", notes="Licensed")
+    db_conn.commit()
+
+    # User makes the variant the primary representation, then rescans the group through it
+    group_repo.set_preferred_image(group.id, web.id)
+    _scan(db_conn, [master.id, web.id])
+
+    second = _group_review(client, master.id)
+    identities = [_identity(m) for m in second]
+    assert len(identities) == len(set(identities))  # each discovery exactly once
+    assert set(identities) >= {_identity(m) for m in first}
+    kept = next(m for m in second if m["id"] == triaged["id"])
+    assert kept["classification"] == "APPROVED" and kept["notes"] == "Licensed"
+    listed, _ = ImageRepository(db_conn).list_images(group_id=group.id)
+    assert all(img.group_match_count == len(second) for img in listed)
+
+
+def test_preferred_unavailable_fallback_does_not_duplicate_discoveries(client, db_conn, temp_dir: Path):
+    _lib, master, web, p1, _p2 = _indexed_pair(db_conn, temp_dir)
+    PhotoGroupRepository(db_conn).create_group([master.id, web.id], preferred_image_id=master.id)
+    _assert_provider_returns_same_discoveries(master.file_path, web.file_path)
+    _scan(db_conn, [master.id])
+    first = _group_review(client, web.id)
+    assert first
+
+    # Primary file temporarily unavailable: the scan falls back to the variant
+    hidden = p1.with_suffix(".hidden")
+    p1.rename(hidden)
+    try:
+        plan = _scan_engine(db_conn).plan_scan(image_ids=[web.id], provider_override="mock")
+        assert [img.id for img in plan.scannable_images] == [web.id]
+        _scan(db_conn, [web.id])
+    finally:
+        hidden.rename(p1)
+
+    second = _group_review(client, web.id)
+    identities = [_identity(m) for m in second]
+    assert len(identities) == len(set(identities))
+    assert set(identities) >= {_identity(m) for m in first}
+
+
+def test_grouping_with_an_already_scanned_photo_covers_the_group(db_conn, temp_dir: Path):
+    _lib, master, web, _p1, _p2 = _indexed_pair(db_conn, temp_dir)
+    img_repo = ImageRepository(db_conn)
+    group_repo = PhotoGroupRepository(db_conn)
+
+    # Scanned while ungrouped (e.g. in v1.2.x), then grouped with a never-scanned variant
+    _scan(db_conn, [master.id])
+    assert img_repo.get_by_id(web.id).scan_count == 0
+    group = group_repo.create_group([master.id, web.id], preferred_image_id=master.id)
+
+    unscanned, _ = img_repo.list_images(filter_status="unscanned")
+    assert unscanned == []
+    scanned, _ = img_repo.list_images(filter_status="scanned")
+    assert {img.id for img in scanned} == {master.id, web.id}
+    by_id = {img.id: img for img in img_repo.list_images()[0]}
+    assert by_id[web.id].group_scan_count == 1
+    assert by_id[web.id].group_last_scanned_at == img_repo.get_by_id(master.id).last_scanned_at
+
+    # A variant added later to the covered group does not re-enter Unscanned either
+    extra_path = Path(master.file_path).with_name("multi_extra.jpg")
+    with Image.open(master.file_path) as img:
+        img.resize((150, 150)).save(extra_path, format="JPEG", quality=80)
+    LibraryIndexer(LibraryRepository(db_conn), img_repo, ThumbnailCache(temp_dir / "thumbs")).index_library(
+        master.library_id
+    )
+    extra = img_repo.get_by_path(str(extra_path.resolve()))
+    unscanned, _ = img_repo.list_images(filter_status="unscanned")
+    assert {img.id for img in unscanned} == {extra.id}
+    group_repo.add_image_to_group(group.id, extra.id)
+    unscanned, _ = img_repo.list_images(filter_status="unscanned")
+    assert unscanned == []
 
 
 def test_repair_groups_runs_once_per_index_pass(temp_dir: Path, monkeypatch):

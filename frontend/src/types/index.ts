@@ -37,6 +37,9 @@ export interface ImageItem {
   /** Aggregates across all members of the photo's group (photo listings only) */
   group_match_count?: number | null;
   group_unreviewed_count?: number | null;
+  /** Group-aware scan coverage: highest scan count / latest scan among group members */
+  group_scan_count?: number | null;
+  group_last_scanned_at?: string | null;
   thumbnail_url: string;
 }
 

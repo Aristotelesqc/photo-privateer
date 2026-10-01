@@ -37,6 +37,8 @@ class ImageRepository:
             unreviewed_count=r["unreviewed_count"],
             group_match_count=r["group_match_count"] if "group_match_count" in r.keys() else None,
             group_unreviewed_count=r["group_unreviewed_count"] if "group_unreviewed_count" in r.keys() else None,
+            group_scan_count=r["group_scan_count"] if "group_scan_count" in r.keys() else None,
+            group_last_scanned_at=r["group_last_scanned_at"] if "group_last_scanned_at" in r.keys() else None,
             thumbnail_url=f"/api/photos/{r['id']}/thumbnail",
         )
 
@@ -160,10 +162,13 @@ class ImageRepository:
                 where_clauses.append("project = ?")
                 params.append(project)
 
+        # Scan coverage is group-aware: a group is covered once any member has been searched, so
+        # grouping a fresh variant with an already-searched photo does not re-list it as unscanned
+        # (which would invite a duplicate billable search of the group).
         if filter_status == "unscanned":
-            where_clauses.append("scan_count = 0 AND is_present_on_disk = 1")
+            where_clauses.append("COALESCE(gc_scan_count, scan_count) = 0 AND is_present_on_disk = 1")
         elif filter_status == "scanned":
-            where_clauses.append("scan_count > 0")
+            where_clauses.append("COALESCE(gc_scan_count, scan_count) > 0")
         elif filter_status == "has_matches":
             # Group-aware: a grouped variant shares the discoveries of its group's web search
             where_clauses.append("COALESCE(gc_match_count, match_count) > 0")
@@ -184,7 +189,9 @@ class ImageRepository:
             LEFT JOIN (
                 SELECT photo_group_id AS gc_group_id,
                        SUM(match_count) AS gc_match_count,
-                       SUM(unreviewed_count) AS gc_unreviewed_count
+                       SUM(unreviewed_count) AS gc_unreviewed_count,
+                       MAX(scan_count) AS gc_scan_count,
+                       MAX(last_scanned_at) AS gc_last_scanned_at
                 FROM images
                 WHERE photo_group_id IS NOT NULL
                 GROUP BY photo_group_id
@@ -213,7 +220,8 @@ class ImageRepository:
         data_params = list(params)
         data_params.extend([limit, offset])
         cur.execute(
-            f"SELECT images.*, gc_match_count AS group_match_count, gc_unreviewed_count AS group_unreviewed_count "
+            f"SELECT images.*, gc_match_count AS group_match_count, gc_unreviewed_count AS group_unreviewed_count, "
+            f"gc_scan_count AS group_scan_count, gc_last_scanned_at AS group_last_scanned_at "
             f"FROM {from_sql} {where_sql} ORDER BY {order_col} {direction}, images.id {direction} LIMIT ? OFFSET ?",
             tuple(data_params),
         )
@@ -264,6 +272,25 @@ class ImageRepository:
             "WHERE photo_group_id = ?",
             (image_id, group_id),
         )
+
+    def transfer_representation_history(self, old_image_id: int, new_image_id: int) -> None:
+        """Moves discoveries (with their classification, notes and first_seen_at) and scan coverage
+        from a replaced record to its validated in-place re-export. Provider call and scan item
+        records keep the old image ID as provenance of the physical request. Does not commit.
+        """
+        cur = self.conn.cursor()
+        cur.execute("UPDATE matches SET image_id = ? WHERE image_id = ?", (new_image_id, old_image_id))
+        cur.execute(
+            """
+            UPDATE images
+            SET scan_count = (SELECT scan_count FROM images WHERE id = ?),
+                last_scanned_at = (SELECT last_scanned_at FROM images WHERE id = ?)
+            WHERE id = ?
+            """,
+            (old_image_id, old_image_id, new_image_id),
+        )
+        self.refresh_image_match_counts(old_image_id)
+        self.refresh_image_match_counts(new_image_id)
 
     def upsert_image(
         self,

@@ -282,23 +282,59 @@ describe('CandidateGroupModal Component', () => {
       vi.restoreAllMocks();
     });
 
-    it('promotes the already-grouped photo when the user picks it while adding the new one', async () => {
-      const addSpy = vi.spyOn(client, 'addImageToGroup').mockResolvedValue({
-        id: 10, created_at: '', updated_at: '', preferred_image_id: 101, images: [],
-      });
-      const pair: GroupCandidatePair = {
-        image_a: { ...mockImageA, photo_group_id: 10, is_primary_representation: 0 },
-        image_b: mockImageB,
-        hamming_distance: 4,
-        is_exact_duplicate: false,
-      };
-      render(<CandidateGroupModal candidates={[pair]} onClose={vi.fn()} />);
+    const variantPair: GroupCandidatePair = {
+      image_a: { ...mockImageA, photo_group_id: 10, is_primary_representation: 0 },
+      image_b: mockImageB,
+      hamming_distance: 4,
+      is_exact_duplicate: false,
+    };
+    const groupResult = { id: 10, created_at: '', updated_at: '', preferred_image_id: 999, images: [] };
 
-      // Candidate A (the grouped variant) is selected by default
+    it('keeps the current group primary when neither card is the primary and nothing is picked', async () => {
+      const addSpy = vi.spyOn(client, 'addImageToGroup').mockResolvedValue(groupResult);
+      render(<CandidateGroupModal candidates={[variantPair]} onClose={vi.fn()} />);
+
+      expect(screen.getByTestId('keep-primary-note')).toBeInTheDocument();
+      await act(async () => {
+        fireEvent.click(screen.getByTestId('btn-add-to-existing-group'));
+      });
+      // B joins the group, no preferred_image_id is sent
+      expect(addSpy).toHaveBeenCalledWith(10, 102, undefined);
+    });
+
+    it('promotes the already-grouped variant only when the user explicitly picks it', async () => {
+      const addSpy = vi.spyOn(client, 'addImageToGroup').mockResolvedValue(groupResult);
+      render(<CandidateGroupModal candidates={[variantPair]} onClose={vi.fn()} />);
+
+      fireEvent.click(screen.getByTestId('candidate-card-sunset_highres.jpg'));
       await act(async () => {
         fireEvent.click(screen.getByTestId('btn-add-to-existing-group'));
       });
       expect(addSpy).toHaveBeenCalledWith(10, 102, 101);
+    });
+
+    it('promotes the joining photo when the user explicitly picks it', async () => {
+      const addSpy = vi.spyOn(client, 'addImageToGroup').mockResolvedValue(groupResult);
+      render(<CandidateGroupModal candidates={[variantPair]} onClose={vi.fn()} />);
+
+      fireEvent.click(screen.getByTestId('candidate-card-sunset_web.jpg'));
+      await act(async () => {
+        fireEvent.click(screen.getByTestId('btn-add-to-existing-group'));
+      });
+      expect(addSpy).toHaveBeenCalledWith(10, 102, 102);
+    });
+
+    it('lets the user return to keeping the current primary after picking a card', async () => {
+      const addSpy = vi.spyOn(client, 'addImageToGroup').mockResolvedValue(groupResult);
+      render(<CandidateGroupModal candidates={[variantPair]} onClose={vi.fn()} />);
+
+      fireEvent.click(screen.getByTestId('candidate-card-sunset_web.jpg'));
+      fireEvent.click(screen.getByTestId('btn-keep-current-primary'));
+      expect(screen.getByTestId('keep-primary-note')).toBeInTheDocument();
+      await act(async () => {
+        fireEvent.click(screen.getByTestId('btn-add-to-existing-group'));
+      });
+      expect(addSpy).toHaveBeenCalledWith(10, 102, undefined);
     });
 
     it('keeps an existing group primary selected by default even when it is Candidate B', async () => {

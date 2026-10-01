@@ -155,15 +155,25 @@ class MatchRepository:
         now = datetime.now(timezone.utc).isoformat()
         cur = self.conn.cursor()
 
-        # Check existing match using deterministic identity that works even with NULL page_url or candidate_image_url
+        # Check existing match using deterministic identity that works even with NULL page_url or candidate_image_url.
+        # Group-aware: members of a photo group are representations of one source photograph, so a
+        # discovery already recorded against any current member (e.g. a previous primary, or the
+        # member scanned when the preferred one was unavailable) is the same logical discovery and
+        # is updated in place, preserving its triage, instead of being duplicated.
         cur.execute("""
             SELECT id, classification, notes, auto_classified_by_rule_id, is_new, acknowledged_at
             FROM matches
-            WHERE image_id = ? 
+            WHERE image_id IN (
+                    SELECT g.id FROM images g
+                    WHERE g.id = ?
+                       OR g.photo_group_id = (SELECT photo_group_id FROM images WHERE id = ?)
+                  )
               AND source_kind = ?
               AND COALESCE(page_url, '') = COALESCE(?, '')
               AND COALESCE(candidate_image_url, '') = COALESCE(?, '')
-        """, (image_id, source_kind, page_url, candidate_image_url))
+            ORDER BY (image_id = ?) DESC, id ASC
+            LIMIT 1
+        """, (image_id, image_id, source_kind, page_url, candidate_image_url, image_id))
         existing = cur.fetchone()
 
         if existing:

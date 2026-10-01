@@ -3,13 +3,19 @@ import { Layers, CheckCircle2, XCircle, ArrowLeft, ArrowRight, X, Sparkles, Aler
 import { GroupCandidatePair } from '../types';
 import { dismissGroupCandidate } from '../api/client';
 import { CandidateCard } from '../engines/library/CandidateCard';
-import { CandidateSide, defaultPreferredSide, groupCandidatePair } from '../engines/library/candidateGrouping';
+import {
+  PreferredSelection,
+  defaultPreferredSelection,
+  groupCandidatePair,
+  pairJoinsExistingGroup,
+} from '../engines/library/candidateGrouping';
 
 interface CandidateGroupModalProps {
   candidates: GroupCandidatePair[];
   /** Total number of candidate pairs when `candidates` is only the first page */
   totalCount?: number;
-  onGroup?: (imageAId: number, imageBId: number, preferredId: number) => Promise<void>;
+  /** preferredId is undefined when an existing group keeps its current primary representation */
+  onGroup?: (imageAId: number, imageBId: number, preferredId?: number) => Promise<void>;
   onDismiss?: (imageAId: number, imageBId: number) => Promise<void>;
   onClose: () => void;
 }
@@ -22,7 +28,7 @@ export const CandidateGroupModal: React.FC<CandidateGroupModalProps> = ({
   onClose,
 }) => {
   const [currentIndex, setCurrentIndex] = useState(0);
-  const [selectedPreferred, setSelectedPreferred] = useState<CandidateSide>('A');
+  const [selectedPreferred, setSelectedPreferred] = useState<PreferredSelection>('A');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -31,7 +37,7 @@ export const CandidateGroupModal: React.FC<CandidateGroupModalProps> = ({
   // Reset preferred selection (keeping an existing group primary selected) and clear error
   // when navigating or advancing pairs
   useEffect(() => {
-    setSelectedPreferred(currentPair ? defaultPreferredSide(currentPair) : 'A');
+    setSelectedPreferred(currentPair ? defaultPreferredSelection(currentPair) : 'A');
     setError(null);
   }, [currentIndex, currentPair?.image_a?.id, currentPair?.image_b?.id]);
 
@@ -56,13 +62,16 @@ export const CandidateGroupModal: React.FC<CandidateGroupModalProps> = ({
   const { image_a, image_b, hamming_distance, is_exact_duplicate } = currentPair;
   const total = candidates.length;
   const similarityPct = is_exact_duplicate ? 100 : Math.round(((64 - hamming_distance) / 64) * 100);
-  const isAlreadyGrouped = Boolean(image_a.photo_group_id || image_b.photo_group_id);
+  const isAlreadyGrouped = pairJoinsExistingGroup(currentPair);
+  // Existing group whose primary is not one of the two cards: keeping it is a valid choice
+  const canKeepCurrentPrimary = isAlreadyGrouped && defaultPreferredSelection(currentPair) === null;
 
   const handleGroup = async () => {
     setIsSubmitting(true);
     setError(null);
     try {
-      const preferredId = selectedPreferred === 'A' ? image_a.id : image_b.id;
+      const preferredId =
+        selectedPreferred === 'A' ? image_a.id : selectedPreferred === 'B' ? image_b.id : undefined;
       if (onGroup) {
         await onGroup(image_a.id, image_b.id, preferredId);
       } else {
@@ -204,6 +213,32 @@ export const CandidateGroupModal: React.FC<CandidateGroupModalProps> = ({
             onSelect={() => setSelectedPreferred('B')}
           />
         </div>
+
+        {canKeepCurrentPrimary && (
+          <div
+            data-testid="keep-primary-row"
+            className="px-4 pb-3 -mt-1 flex items-center justify-between gap-3 text-[11px] text-carbon-400"
+          >
+            {selectedPreferred === null ? (
+              <span data-testid="keep-primary-note">
+                The group keeps its current primary representation. Select a card to make it the primary instead.
+              </span>
+            ) : (
+              <>
+                <span>The selected photo will become the group&apos;s primary representation.</span>
+                <button
+                  type="button"
+                  onClick={() => setSelectedPreferred(null)}
+                  disabled={isSubmitting}
+                  data-testid="btn-keep-current-primary"
+                  className="shrink-0 px-2 py-1 rounded border border-carbon-700 text-carbon-300 hover:text-white hover:bg-carbon-800 disabled:opacity-50 transition-colors cursor-pointer"
+                >
+                  Keep current primary
+                </button>
+              </>
+            )}
+          </div>
+        )}
 
         {/* Footer Actions */}
         <div className="px-4 py-3 border-t border-carbon-800 bg-carbon-950/60 flex items-center justify-between">

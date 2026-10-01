@@ -90,7 +90,7 @@ export const PhotoCard: React.FC<PhotoCardProps> = ({
           <StatusPill
             matchCount={photo.group_match_count ?? photo.match_count}
             unreviewedCount={photo.group_unreviewed_count ?? photo.unreviewed_count}
-            scanCount={photo.scan_count}
+            scanCount={photo.group_scan_count ?? photo.scan_count}
             onMatchClick={() => onNavigateToReview(photo.id)}
           />
         </div>
