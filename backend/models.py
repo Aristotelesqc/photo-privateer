@@ -146,6 +146,10 @@ class MatchOut(BaseModel):
     # Joined photo details for display
     # Photo to preview: the owner when present, otherwise an available member of its group
     display_image_id: Optional[int] = None
+    # Set on an observation folded into another logical discovery (its id)
+    canonical_match_id: Optional[int] = None
+    # Physical observations behind this logical discovery (itself plus folded observations)
+    observation_count: int = 1
     image_filename: Optional[str] = None
     image_thumbnail_url: Optional[str] = None
     image_project: Optional[str] = None

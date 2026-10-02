@@ -206,6 +206,12 @@ class LibraryRepository:
             image_ids = [r["id"] if isinstance(r, sqlite3.Row) else r[0] for r in image_rows]
             sha_hashes = [r["sha256"] if isinstance(r, sqlite3.Row) else r[1] for r in image_rows]
 
+            # Hand over logical discoveries held by purged photos to observations other photos made
+            # of the same web use (photo groups), so purging never deletes another photo's discovery
+            if image_ids:
+                from backend.repositories.discovery_merge import release_discoveries, refresh_match_counts
+                refresh_match_counts(self.conn, release_discoveries(self.conn, image_ids))
+
             candidate_session_ids = set()
             if image_ids:
                 for chunk in chunked(image_ids, 500):

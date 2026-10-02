@@ -276,6 +276,7 @@ class PhotoGroupRepository:
                         (remaining[0],),
                     )
                 cur.execute("DELETE FROM photo_groups WHERE id = ?", (group_id,))
+                self.image_repo.reconcile_discovery_folds()
                 self.conn.commit()
                 return None
 
@@ -284,6 +285,8 @@ class PhotoGroupRepository:
             grp_row = cur.fetchone()
             if grp_row and grp_row["preferred_image_id"] == image_id:
                 self._apply_preferred(cur, group_id, remaining[0], datetime.now(timezone.utc).isoformat())
+            # Observations the removed photo shares with the group become independent again
+            self.image_repo.reconcile_discovery_folds()
             self.conn.commit()
         except Exception:
             self.conn.rollback()
@@ -299,6 +302,8 @@ class PhotoGroupRepository:
             )
             cur.execute("DELETE FROM photo_groups WHERE id = ?", (group_id,))
             deleted = cur.rowcount > 0
+            # Every member's folded observations become independent discoveries again
+            self.image_repo.reconcile_discovery_folds()
             self.conn.commit()
         except Exception:
             self.conn.rollback()
@@ -511,6 +516,7 @@ class PhotoGroupRepository:
         3. Re-elects preferred_image_id for groups if missing or invalid (MIN(id)).
         4. Synchronizes is_primary_representation = 1 for preferred and 0 for sibling variants.
         5. Resets is_primary_representation = 1 for all ungrouped photos.
+        6. Restores independent discoveries for observations whose photos left their group.
 
         Does not commit: callers run it inside their own transaction.
         """
@@ -577,3 +583,6 @@ class PhotoGroupRepository:
             WHERE photo_group_id IS NULL AND is_primary_representation != 1
             """
         )
+
+        # 6. Unfold observations whose photos are no longer grouped together
+        self.image_repo.reconcile_discovery_folds()

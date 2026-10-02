@@ -550,10 +550,16 @@ def test_migration_010_triggers_bump_generation(temp_dir: Path):
 
 
 def _matches_of(conn, image_ids: list[int]) -> list:
+    """All physical observations (logical discoveries and folded observations) of the photos."""
     placeholders = ",".join("?" for _ in image_ids)
     return conn.execute(
         f"SELECT * FROM matches WHERE image_id IN ({placeholders}) ORDER BY id", tuple(image_ids)
     ).fetchall()
+
+
+def _logical_of(conn, image_ids: list[int]) -> list:
+    """Logical discoveries only (what review lists and counts)."""
+    return [r for r in _matches_of(conn, image_ids) if r["canonical_match_id"] is None]
 
 
 def _row_identity(r) -> tuple:
@@ -593,9 +599,11 @@ def test_grouping_already_scanned_photos_coalesces_discoveries(db_conn, temp_dir
         group = group_repo.create_group([master.id, extra], preferred_image_id=master.id)
         group_repo.add_image_to_group(group.id, web.id)
 
-    after = _matches_of(db_conn, [master.id, web.id])
+    after = _logical_of(db_conn, [master.id, web.id])
     identities = [_row_identity(r) for r in after]
     assert len(identities) == len(set(identities)) == len(rows) // 2  # exactly one logical discovery each
+    # ...while every physical observation is kept (folded, not deleted)
+    assert len(_matches_of(db_conn, [master.id, web.id])) == len(rows)
     merged = next(r for r in after if _row_identity(r) == _row_identity(x_master))
     assert merged["first_seen_at"] == "2026-01-01T00:00:00+00:00"
     assert merged["last_seen_at"] == "2026-12-31T00:00:00+00:00"
@@ -619,9 +627,15 @@ def test_grouping_with_conflicting_decisions_requires_explicit_rereview(db_conn,
 
     PhotoGroupRepository(db_conn).create_group([master.id, web.id], preferred_image_id=master.id)
 
-    merged = [r for r in _matches_of(db_conn, [master.id, web.id]) if _row_identity(r) == _row_identity(x_master)]
+    merged = [r for r in _logical_of(db_conn, [master.id, web.id]) if _row_identity(r) == _row_identity(x_master)]
     assert len(merged) == 1
     merged = merged[0]
+    # Both observations still exist, each keeping its own prior decision as inspectable provenance
+    observations = {r["id"]: r for r in _matches_of(db_conn, [master.id, web.id]) if _row_identity(r) == _row_identity(x_master)}
+    assert set(observations) == {x_master["id"], x_web["id"]}
+    folded = next(r for r in observations.values() if r["canonical_match_id"] is not None)
+    assert folded["canonical_match_id"] == merged["id"]
+    assert folded["classification"] in ("APPROVED", "UNAUTHORIZED")
     # Never a silent pick between incompatible human decisions
     assert merged["classification"] == "UNREVIEWED"
     assert merged["is_new"] == 1 and merged["auto_classified_by_rule_id"] is None
@@ -771,3 +785,120 @@ def test_reexport_adopting_a_known_missing_record_keeps_lineage(client, db_conn,
     assert sorted(_identity(m) for m in after) == sorted(_identity(m) for m in before)
     kept = next(m for m in after if _identity(m) == _identity(before[0]))
     assert kept["classification"] == "UNAUTHORIZED" and kept["notes"] == "DMCA sent"
+
+
+# --- Follow-up review on 19b39cd: non-destructive folding -----------------------------------------
+
+
+def _x_rows(conn, master, web):
+    rows = _scan_both_ungrouped(conn, master, web)
+    x_master = next(r for r in rows if r["image_id"] == master.id)
+    x_web = next(r for r in rows if r["image_id"] == web.id and _row_identity(r) == _row_identity(x_master))
+    return rows, x_master, x_web
+
+
+@pytest.mark.parametrize("ungroup", ["remove_from_group", "dissolve_group"])
+def test_group_then_ungroup_preserves_each_photos_observations(client, db_conn, temp_dir: Path, ungroup: str):
+    _lib, master, web, _p1, _p2 = _indexed_pair(db_conn, temp_dir)
+    rows, x_master, x_web = _x_rows(db_conn, master, web)
+    match_repo = MatchRepository(db_conn)
+    match_repo.update_classification_and_notes(x_web["id"], classification="UNAUTHORIZED", notes="B's own finding")
+    db_conn.commit()
+    per_photo_before = {
+        img: sorted(_row_identity(r) for r in rows if r["image_id"] == img) for img in (master.id, web.id)
+    }
+
+    group_repo = PhotoGroupRepository(db_conn)
+    group = group_repo.create_group([master.id, web.id], preferred_image_id=master.id)
+    grouped_review = _group_review(client, master.id)
+    identities = [_identity(m) for m in grouped_review]
+    assert len(identities) == len(set(identities)) == len(per_photo_before[master.id])  # one logical X
+    logical_x = next(m for m in grouped_review if _identity(m) == _row_identity(x_master))
+    assert logical_x["observation_count"] == 2
+    obs = client.get(f"/api/matches/{logical_x['id']}/observations").json()
+    assert {o["image_id"] for o in obs} == {master.id, web.id}
+
+    if ungroup == "remove_from_group":
+        group_repo.remove_image_from_group(group.id, web.id)
+    else:
+        group_repo.delete_group(group.id)
+
+    # Each photo again lists every web use its own scans observed, nothing invented or lost
+    for img in (master.id, web.id):
+        review = _group_review(client, img)
+        assert sorted(_identity(m) for m in review) == per_photo_before[img]
+        assert all(m["image_id"] == img for m in review)
+    restored = next(m for m in _group_review(client, web.id) if _identity(m) == _row_identity(x_web))
+    assert restored["id"] == x_web["id"]
+    assert restored["classification"] == "UNAUTHORIZED" and restored["notes"] == "B's own finding"
+    assert len(_matches_of(db_conn, [master.id, web.id])) == len(rows)
+    img_repo = ImageRepository(db_conn)
+    assert img_repo.get_by_id(web.id).match_count == len(per_photo_before[web.id])
+
+
+def test_purging_one_grouped_library_keeps_the_other_members_discoveries(client, db_conn, temp_dir: Path):
+    lib_repo = LibraryRepository(db_conn)
+    img_repo = ImageRepository(db_conn)
+    thumbs = ThumbnailCache(temp_dir / "thumbs")
+    dirs = [temp_dir / "lib_one", temp_dir / "lib_two"]
+    for d in dirs:
+        d.mkdir()
+    p1, p2 = dirs[0] / "multi_master.jpg", dirs[1] / "multi_web.jpg"
+    _create_sample_image(p1, (120, 90, 60), "Master")
+    with Image.open(p1) as img:
+        img.resize((170, 170)).save(p2, format="JPEG", quality=84)
+    lib_one = lib_repo.create(str(dirs[0]), name="One")
+    lib_two = lib_repo.create(str(dirs[1]), name="Two")
+    LibraryIndexer(lib_repo, img_repo, thumbs).index_library(lib_one.id)
+    LibraryIndexer(lib_repo, img_repo, thumbs).index_library(lib_two.id)
+    master = img_repo.get_by_path(str(p1.resolve()))
+    web = img_repo.get_by_path(str(p2.resolve()))
+
+    rows, x_master, x_web = _x_rows(db_conn, master, web)
+    group = PhotoGroupRepository(db_conn).create_group([master.id, web.id], preferred_image_id=master.id)
+    logical_x = next(m for m in _group_review(client, web.id) if _identity(m) == _row_identity(x_master))
+    MatchRepository(db_conn).update_classification_and_notes(logical_x["id"], classification="UNAUTHORIZED", notes="Group decision")
+    db_conn.commit()
+    assert logical_x["image_id"] == master.id  # the logical discovery is held by the purged photo
+
+    lib_repo.purge(lib_one.id)
+
+    assert img_repo.get_by_id(master.id) is None
+    remaining = img_repo.get_by_id(web.id)
+    assert remaining is not None and remaining.photo_group_id is None
+    review = _group_review(client, web.id)
+    assert sorted(_identity(m) for m in review) == sorted(_row_identity(r) for r in rows if r["image_id"] == web.id)
+    x = next(m for m in review if _identity(m) == _row_identity(x_web))
+    assert x["id"] == x_web["id"] and x["image_id"] == web.id  # B's own physical observation survives
+    assert x["classification"] == "UNAUTHORIZED" and x["notes"] == "Group decision"  # logical triage handed over
+    assert remaining.match_count == len(review)
+    assert group.id not in {g.id for g in PhotoGroupRepository(db_conn).list_groups()}
+
+
+def test_folded_observations_are_read_only_provenance(client, db_conn, temp_dir: Path):
+    _lib, master, web, _p1, _p2 = _indexed_pair(db_conn, temp_dir)
+    _rows, x_master, x_web = _x_rows(db_conn, master, web)
+    PhotoGroupRepository(db_conn).create_group([master.id, web.id], preferred_image_id=master.id)
+    folded_id = next(
+        r["id"] for r in _matches_of(db_conn, [master.id, web.id]) if r["canonical_match_id"] is not None
+    )
+    resp = client.patch(f"/api/matches/{folded_id}", json={"classification": "APPROVED"})
+    assert resp.status_code == 409
+    # Domain rules and rule cascades touch logical discoveries only
+    rule = DomainRuleRepository(db_conn).upsert_rule(x_master["domain"], "IRRELEVANT")
+    MatchRepository(db_conn).apply_rule_to_unreviewed_matches(rule.domain, "IRRELEVANT", rule_id=rule.id)
+    folded = db_conn.execute("SELECT classification FROM matches WHERE id = ?", (folded_id,)).fetchone()
+    assert folded["classification"] == "UNREVIEWED"
+
+
+def test_rescan_through_a_member_with_a_folded_observation_updates_the_logical_discovery(client, db_conn, temp_dir: Path):
+    _lib, master, web, _p1, _p2 = _indexed_pair(db_conn, temp_dir)
+    rows, x_master, x_web = _x_rows(db_conn, master, web)
+    group_repo = PhotoGroupRepository(db_conn)
+    group = group_repo.create_group([master.id, web.id], preferred_image_id=master.id)
+    group_repo.set_preferred_image(group.id, web.id)
+    _scan(db_conn, [web.id])
+    assert len(_matches_of(db_conn, [master.id, web.id])) == len(rows)  # no new rows
+    review = _group_review(client, web.id)
+    identities = [_identity(m) for m in review]
+    assert len(identities) == len(set(identities)) == len(rows) // 2

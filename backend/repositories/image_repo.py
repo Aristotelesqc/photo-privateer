@@ -5,7 +5,12 @@ import sqlite3
 from datetime import datetime, timezone
 from typing import Optional
 from backend.models import ImageOut
-from backend.repositories.discovery_merge import coalesce_discoveries, coalesce_group_discoveries
+from backend.repositories.discovery_merge import (
+    coalesce_discoveries,
+    coalesce_group_discoveries,
+    reconcile_group_folds,
+    refresh_match_counts,
+)
 
 class ImageRepository:
     def __init__(self, conn: sqlite3.Connection):
@@ -277,24 +282,24 @@ class ImageRepository:
         self.coalesce_group_discoveries(group_id)
 
     def coalesce_group_discoveries(self, group_id: int) -> None:
-        """Merges duplicate discoveries across a group's members (see discovery_merge) and refreshes
-        their match counts. Does not commit."""
-        if coalesce_group_discoveries(self.conn, group_id):
-            cur = self.conn.cursor()
-            cur.execute("SELECT id FROM images WHERE photo_group_id = ?", (group_id,))
-            for r in cur.fetchall():
-                self.refresh_image_match_counts(r["id"])
+        """Folds duplicate logical discoveries across a group's members (non-destructive, see
+        discovery_merge) and refreshes their match counts. Does not commit."""
+        refresh_match_counts(self.conn, coalesce_group_discoveries(self.conn, group_id))
+
+    def reconcile_discovery_folds(self) -> None:
+        """Restores independent discoveries for observations whose photos are no longer grouped
+        together (see discovery_merge.reconcile_group_folds). Does not commit."""
+        refresh_match_counts(self.conn, reconcile_group_folds(self.conn))
 
     def transfer_representation_history(self, old_image_id: int, new_image_id: int) -> None:
-        """Moves the discoveries (classification, notes, first_seen_at) of a replaced record onto the
-        record that takes over its lineage (a validated re-export), coalescing any discovery both
-        already hold. Scan counts are physical per-file history and are not copied: the replacement
+        """Moves the logical discoveries (classification, notes, first_seen_at) of a replaced record
+        onto the record that takes over its lineage (a validated re-export); where both observed the
+        same web use, the replaced record's observation is folded (kept, not deleted). Scan counts are physical per-file history and are not copied: the replacement
         content has not itself been searched. Provider call and scan item records keep the old
         image ID as provenance of the physical request. Does not commit.
         """
-        coalesce_discoveries(self.conn, [old_image_id, new_image_id], target_image_id=new_image_id)
-        self.refresh_image_match_counts(old_image_id)
-        self.refresh_image_match_counts(new_image_id)
+        affected = coalesce_discoveries(self.conn, [old_image_id, new_image_id], target_image_id=new_image_id)
+        refresh_match_counts(self.conn, affected | {old_image_id, new_image_id})
 
     def upsert_image(
         self,
@@ -433,23 +438,9 @@ class ImageRepository:
         return now
 
     def refresh_image_match_counts(self, image_id: int) -> None:
-        cur = self.conn.cursor()
-        cur.execute("""
-            SELECT 
-                COUNT(*) as total_matches,
-                SUM(CASE WHEN classification = 'UNREVIEWED' THEN 1 ELSE 0 END) as unreviewed_matches
-            FROM matches
-            WHERE image_id = ?
-        """, (image_id,))
-        row = cur.fetchone()
-        total_m = row["total_matches"] if row else 0
-        unrev_m = row["unreviewed_matches"] if (row and row["unreviewed_matches"] is not None) else 0
-        cur.execute("""
-            UPDATE images
-            SET match_count = ?,
-                unreviewed_count = ?
-            WHERE id = ?
-        """, (total_m, unrev_m, image_id))
+        """Counts logical discoveries only (observations folded into another discovery are
+        provenance, not separate discoveries)."""
+        refresh_match_counts(self.conn, [image_id])
 
     def get_by_ids(self, image_ids: list[int]) -> list[ImageOut]:
         if not image_ids:

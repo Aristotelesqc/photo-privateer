@@ -403,6 +403,26 @@ def migration_010_group_candidate_generation(conn: sqlite3.Connection) -> None:
     for name, clause in triggers.items():
         conn.execute(f"CREATE TRIGGER IF NOT EXISTS {name} {clause} BEGIN {bump} END;")
 
+def migration_011_match_observation_folding(conn: sqlite3.Connection) -> None:
+    """Keeps every physical provider observation while presenting one logical discovery per
+    identity within a photo group. A row with canonical_match_id IS NULL is a logical discovery
+    (and its own observation); a folded row is an observation of the logical discovery it points
+    to, keeping its own original triage as provenance. Folding is reversible (ungroup, purge).
+    """
+    cur = conn.cursor()
+    cur.execute("PRAGMA table_info(matches)")
+    cols = {row[1] for row in cur.fetchall()}
+    if "canonical_match_id" not in cols:
+        conn.execute(
+            "ALTER TABLE matches ADD COLUMN canonical_match_id INTEGER "
+            "REFERENCES matches(id) ON DELETE SET NULL;"
+        )
+    if "fold_kind" not in cols:
+        conn.execute("ALTER TABLE matches ADD COLUMN fold_kind TEXT;")
+    if "folded_at" not in cols:
+        conn.execute("ALTER TABLE matches ADD COLUMN folded_at TEXT;")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_matches_canonical ON matches(canonical_match_id);")
+
 MIGRATIONS: list[Migration] = [
     Migration(1, "001_initial_schema", migration_001_initial_schema),
     Migration(2, "002_library_archiving_and_disk_presence", migration_002_library_archiving_and_disk_presence),
@@ -414,6 +434,7 @@ MIGRATIONS: list[Migration] = [
     Migration(8, "008_image_mtime_ns", migration_008_image_mtime_ns),
     Migration(9, "009_perceptual_grouping", migration_009_perceptual_grouping),
     Migration(10, "010_group_candidate_generation", migration_010_group_candidate_generation),
+    Migration(11, "011_match_observation_folding", migration_011_match_observation_folding),
 ]
 
 def run_migrations(conn: sqlite3.Connection) -> list[int]:

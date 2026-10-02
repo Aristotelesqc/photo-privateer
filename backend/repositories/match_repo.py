@@ -25,6 +25,11 @@ DISPLAY_IMAGE_SQL = """
     ) AS display_image_id
 """
 
+# Number of physical observations behind a logical discovery (itself plus folded observations)
+OBSERVATION_COUNT_SQL = """
+    (1 + (SELECT COUNT(*) FROM matches o WHERE o.canonical_match_id = m.id)) AS observation_count
+"""
+
 class MatchRepository:
     def __init__(self, conn: sqlite3.Connection):
         self.conn = conn
@@ -58,12 +63,14 @@ class MatchRepository:
                 f"/api/photos/{r['display_image_id'] if 'display_image_id' in r.keys() and r['display_image_id'] else r['image_id']}/thumbnail"
             ),
             image_project=r["project"] if "project" in r.keys() else None,
+            canonical_match_id=r["canonical_match_id"] if "canonical_match_id" in r.keys() else None,
+            observation_count=r["observation_count"] if "observation_count" in r.keys() else 1,
         )
 
     def get_by_id(self, match_id: int) -> Optional[MatchOut]:
         cur = self.conn.cursor()
         cur.execute(f"""
-            SELECT m.*, i.filename, i.project, {DISPLAY_IMAGE_SQL}
+            SELECT m.*, i.filename, i.project, {DISPLAY_IMAGE_SQL}, {OBSERVATION_COUNT_SQL}
             FROM matches m
             LEFT JOIN images i ON m.image_id = i.id
             WHERE m.id = ?
@@ -84,7 +91,8 @@ class MatchRepository:
         limit: int = 50,
         offset: int = 0,
     ) -> tuple[list[MatchOut], int]:
-        where_clauses = []
+        # Logical discoveries only: observations folded into another discovery are provenance
+        where_clauses = ["m.canonical_match_id IS NULL"]
         params: list[object] = []
 
         if image_id is not None:
@@ -156,7 +164,7 @@ class MatchRepository:
         data_params = list(params)
         data_params.extend([limit, offset])
         cur.execute(f"""
-            SELECT m.*, i.filename, i.project, {DISPLAY_IMAGE_SQL}
+            SELECT m.*, i.filename, i.project, {DISPLAY_IMAGE_SQL}, {OBSERVATION_COUNT_SQL}
             FROM matches m
             LEFT JOIN images i ON m.image_id = i.id
             {where_sql}
@@ -165,6 +173,24 @@ class MatchRepository:
         """, tuple(data_params))
         rows = cur.fetchall()
         return [self._row_to_match(r) for r in rows], total
+
+    def list_observations(self, match_id: int) -> list[MatchOut]:
+        """Returns the physical observations behind a logical discovery: the discovery's own row
+        first, then observations folded into it (each with its own photo and original triage)."""
+        cur = self.conn.cursor()
+        cur.execute("SELECT COALESCE(canonical_match_id, id) FROM matches WHERE id = ?", (match_id,))
+        row = cur.fetchone()
+        if not row:
+            return []
+        logical_id = row[0]
+        cur.execute(f"""
+            SELECT m.*, i.filename, i.project, {DISPLAY_IMAGE_SQL}
+            FROM matches m
+            LEFT JOIN images i ON m.image_id = i.id
+            WHERE m.id = ? OR m.canonical_match_id = ?
+            ORDER BY (m.id = ?) DESC, m.first_seen_at ASC, m.id ASC
+        """, (logical_id, logical_id, logical_id))
+        return [self._row_to_match(r) for r in cur.fetchall()]
 
     def upsert_match(
         self,
@@ -189,9 +215,10 @@ class MatchRepository:
         # Group-aware: members of a photo group are representations of one source photograph, so a
         # discovery already recorded against any current member (e.g. a previous primary, or the
         # member scanned when the preferred one was unavailable) is the same logical discovery and
-        # is updated in place, preserving its triage, instead of being duplicated.
+        # is updated in place, preserving its triage, instead of being duplicated. Observations
+        # folded into a logical discovery resolve to it (canonical_match_id).
         cur.execute("""
-            SELECT id, classification, notes, auto_classified_by_rule_id, is_new, acknowledged_at
+            SELECT id, image_id, canonical_match_id
             FROM matches
             WHERE image_id IN (
                     SELECT g.id FROM images g
@@ -201,10 +228,24 @@ class MatchRepository:
               AND source_kind = ?
               AND COALESCE(page_url, '') = COALESCE(?, '')
               AND COALESCE(candidate_image_url, '') = COALESCE(?, '')
-            ORDER BY (image_id = ?) DESC, id ASC
+            ORDER BY (image_id = ?) DESC, (canonical_match_id IS NULL) DESC, id ASC
             LIMIT 1
         """, (image_id, image_id, source_kind, page_url, candidate_image_url, image_id))
-        existing = cur.fetchone()
+        found = cur.fetchone()
+        existing = None
+        if found:
+            if found["image_id"] == image_id and found["canonical_match_id"] is not None:
+                # Keep the searched photo's own folded observation current as provenance
+                cur.execute(
+                    "UPDATE matches SET last_seen_at = ?, scan_session_id = ? WHERE id = ?",
+                    (now, scan_session_id, found["id"]),
+                )
+            logical_id = found["canonical_match_id"] or found["id"]
+            cur.execute("""
+                SELECT id, classification, notes, auto_classified_by_rule_id, is_new, acknowledged_at
+                FROM matches WHERE id = ?
+            """, (logical_id,))
+            existing = cur.fetchone()
 
         if existing:
             # Rediscovery: preserve user's human classification and notes!
@@ -289,10 +330,11 @@ class MatchRepository:
             cur.execute("""
                 UPDATE images
                 SET unreviewed_count = (
-                    SELECT COUNT(*) FROM matches WHERE image_id = ? AND classification = 'UNREVIEWED'
+                    SELECT COUNT(*) FROM matches
+                    WHERE image_id = ? AND canonical_match_id IS NULL AND classification = 'UNREVIEWED'
                 ),
                 match_count = (
-                    SELECT COUNT(*) FROM matches WHERE image_id = ?
+                    SELECT COUNT(*) FROM matches WHERE image_id = ? AND canonical_match_id IS NULL
                 )
                 WHERE id = ?
             """, (image_id, image_id, image_id))
@@ -312,6 +354,7 @@ class MatchRepository:
                 auto_classified_by_rule_id = ?
             WHERE (domain = ? OR domain LIKE '%.' || ?) 
               AND classification = 'UNREVIEWED'
+              AND canonical_match_id IS NULL
         """, (classification, now, rule_id, domain, domain))
         updated_count = cur.rowcount
 
@@ -319,7 +362,8 @@ class MatchRepository:
         cur.execute("""
             UPDATE images
             SET unreviewed_count = (
-                SELECT COUNT(*) FROM matches WHERE matches.image_id = images.id AND classification = 'UNREVIEWED'
+                SELECT COUNT(*) FROM matches
+                WHERE matches.image_id = images.id AND canonical_match_id IS NULL AND classification = 'UNREVIEWED'
             )
             WHERE id IN (SELECT DISTINCT image_id FROM matches WHERE domain = ? OR domain LIKE '%.' || ?)
         """, (domain, domain))
@@ -336,6 +380,7 @@ class MatchRepository:
             SET classification = ?,
                 classified_at = ?
             WHERE auto_classified_by_rule_id = ?
+              AND canonical_match_id IS NULL
         """, (new_classification, now, rule_id))
         updated = cur.rowcount
 
@@ -343,7 +388,8 @@ class MatchRepository:
         cur.execute("""
             UPDATE images
             SET unreviewed_count = (
-                SELECT COUNT(*) FROM matches WHERE matches.image_id = images.id AND classification = 'UNREVIEWED'
+                SELECT COUNT(*) FROM matches
+                WHERE matches.image_id = images.id AND canonical_match_id IS NULL AND classification = 'UNREVIEWED'
             )
             WHERE id IN (SELECT DISTINCT image_id FROM matches WHERE auto_classified_by_rule_id = ?)
         """, (rule_id,))

@@ -1,7 +1,7 @@
 """Matches router."""
 from __future__ import annotations
 
-from typing import Optional
+from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from backend.models import MatchOut, MatchUpdate, MatchListResponse
 from backend.repositories.match_repo import MatchRepository
@@ -54,6 +54,15 @@ def get_match(match_id: int, repo: MatchRepository = Depends(get_match_repo)):
         raise HTTPException(status_code=404, detail="Match not found")
     return m
 
+@router.get("/{match_id}/observations", response_model=List[MatchOut])
+def get_match_observations(match_id: int, repo: MatchRepository = Depends(get_match_repo)):
+    """Physical observations behind a logical discovery: its own row first, then observations of
+    the same web use made by other photos of its group, each with its own original triage."""
+    observations = repo.list_observations(match_id)
+    if not observations:
+        raise HTTPException(status_code=404, detail="Match not found")
+    return observations
+
 @router.patch("/{match_id}", response_model=MatchOut)
 def update_match(
     match_id: int,
@@ -66,6 +75,12 @@ def update_match(
     m = repo.get_by_id(match_id)
     if not m:
         raise HTTPException(status_code=404, detail="Match not found")
+    if m.canonical_match_id is not None:
+        # Folded observations are read-only provenance; triage applies to the logical discovery
+        raise HTTPException(
+            status_code=409,
+            detail=f"This observation is part of discovery #{m.canonical_match_id}; classify that discovery instead.",
+        )
 
     clear_notes = False
     notes_val = None

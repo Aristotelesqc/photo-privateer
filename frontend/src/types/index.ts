@@ -106,6 +106,10 @@ export interface MatchItem {
   image_filename?: string | null;
   /** Photo to preview: the owner when present, otherwise an available member of its group */
   display_image_id?: number | null;
+  /** Set when this row is an observation folded into another logical discovery */
+  canonical_match_id?: number | null;
+  /** Physical observations behind this logical discovery (itself plus folded observations) */
+  observation_count?: number;
   image_thumbnail_url?: string | null;
   image_project?: string | null;
 }
