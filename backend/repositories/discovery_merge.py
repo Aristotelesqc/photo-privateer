@@ -44,7 +44,7 @@ FOLD_LINEAGE = "LINEAGE"
 _LOGICAL_FIELDS = (
     "first_seen_at", "last_seen_at", "scan_session_id", "page_title", "page_score",
     "classification", "classified_at", "auto_classified_by_rule_id", "notes", "is_new", "acknowledged_at",
-    "triage_conflict", "explicit_review_at", "merged_at",
+    "triage_conflict", "explicit_review_at", "merged_at", "inherited_at", "inherited_from",
 )
 
 
@@ -130,12 +130,30 @@ def _merged_state(rows: list[sqlite3.Row], survivor: sqlite3.Row) -> dict[str, o
             (r["merged_at"] for r in rows if r["merged_at"]),
             default=datetime.now(timezone.utc).isoformat(),
         ),
+        # A decision inherited from a permanently purged photo stays inherited through every later
+        # coalescence, with each original purged source kept
+        "inherited_at": min((r["inherited_at"] for r in rows if r["inherited_at"]), default=None),
+        "inherited_from": _merge_provenance(r["inherited_from"] for r in rows),
     }
 
 
+def _merge_provenance(values: Iterable[Optional[str]]) -> Optional[str]:
+    items: list[str] = []
+    for value in values:
+        for item in (value or "").split("; "):
+            if item and item not in items:
+                items.append(item)
+    return "; ".join(items) if items else None
+
+
 def _capture_observation_triage(cur: sqlite3.Cursor, match_id: int) -> None:
-    """Before a physical row starts carrying merged logical state, keep its own original triage
-    (once) in the obs_* provenance columns."""
+    """Before a physical row starts carrying merged logical state, keep its own triage:
+
+    - obs_*: its original observation, captured once and never overwritten (read-only provenance);
+    - rb_*: its state right before the current grouping cycle, captured at the start of each
+      cycle; this is what a dissolution rolls back to, so a later cycle never undoes a decision
+      the user made after an earlier one."""
+    now = datetime.now(timezone.utc).isoformat()
     cur.execute(
         """
         UPDATE matches
@@ -148,31 +166,58 @@ def _capture_observation_triage(cur: sqlite3.Cursor, match_id: int) -> None:
             obs_captured_at = ?
         WHERE id = ? AND obs_captured_at IS NULL
         """,
-        (datetime.now(timezone.utc).isoformat(), match_id),
+        (now, match_id),
+    )
+    cur.execute(
+        """
+        UPDATE matches
+        SET rb_classification = classification,
+            rb_classified_at = classified_at,
+            rb_rule_id = auto_classified_by_rule_id,
+            rb_notes = notes,
+            rb_is_new = is_new,
+            rb_acknowledged_at = acknowledged_at,
+            rb_captured_at = ?
+        WHERE id = ? AND rb_captured_at IS NULL
+        """,
+        (now, match_id),
     )
 
 
 def _restore_observation_triage(cur: sqlite3.Cursor, match_id: int) -> None:
     """When a row stops carrying a logical discovery (it becomes an independent discovery again
-    after ungrouping), it returns to its own original triage. Never for a row that inherited the
-    logical triage of a permanently purged photo (inherited_at): that decision has no other row
-    left to return to, so it stays, whether the row leaves a group as canonical or as a folded
-    observation."""
+    after ungrouping), it rolls back to its state right before this grouping cycle. Never for a
+    row that inherited the logical triage of a permanently purged photo (inherited_at): that
+    decision has no other row left to return to, so it stays, whether the row leaves a group as
+    canonical or as a folded observation. The original observation (obs_*) stays as provenance."""
     cur.execute(
         """
         UPDATE matches
-        SET classification = obs_classification,
-            classified_at = obs_classified_at,
-            auto_classified_by_rule_id = obs_rule_id,
-            notes = obs_notes,
-            is_new = obs_is_new,
-            acknowledged_at = obs_acknowledged_at,
-            triage_conflict = 0,
-            explicit_review_at = NULL,
-            merged_at = NULL,
-            obs_classification = NULL, obs_classified_at = NULL, obs_rule_id = NULL,
-            obs_notes = NULL, obs_is_new = NULL, obs_acknowledged_at = NULL, obs_captured_at = NULL
-        WHERE id = ? AND obs_captured_at IS NOT NULL AND inherited_at IS NULL
+        SET classification = rb_classification,
+            classified_at = rb_classified_at,
+            -- a domain rule deleted since then cannot be referenced again
+            auto_classified_by_rule_id = (SELECT id FROM domain_rules WHERE id = rb_rule_id),
+            notes = rb_notes,
+            is_new = rb_is_new,
+            acknowledged_at = rb_acknowledged_at,
+            triage_conflict = 0
+        WHERE id = ? AND rb_captured_at IS NOT NULL AND inherited_at IS NULL
+        """,
+        (match_id,),
+    )
+    _end_cycle(cur, match_id)
+
+
+def _end_cycle(cur: sqlite3.Cursor, match_id: int) -> None:
+    """Closes the grouping cycle of a row that is independent again: the next grouping captures a
+    fresh rollback state and needs its own explicit review."""
+    cur.execute(
+        """
+        UPDATE matches
+        SET explicit_review_at = NULL, merged_at = NULL,
+            rb_classification = NULL, rb_classified_at = NULL, rb_rule_id = NULL,
+            rb_notes = NULL, rb_is_new = NULL, rb_acknowledged_at = NULL, rb_captured_at = NULL
+        WHERE id = ?
         """,
         (match_id,),
     )
@@ -380,9 +425,11 @@ def release_discoveries(conn: sqlite3.Connection, image_ids: Iterable[int]) -> s
 
     def mark_inherited(match_id: int, from_image: int) -> None:
         # Permanent inheritance: never "restored" away when the group later dissolves
+        cur.execute("SELECT inherited_from FROM matches WHERE id = ?", (match_id,))
+        earlier = cur.fetchone()["inherited_from"]
         cur.execute(
-            "UPDATE matches SET inherited_at = ?, inherited_from = ? WHERE id = ?",
-            (now, provenance(from_image), match_id),
+            "UPDATE matches SET inherited_at = COALESCE(inherited_at, ?), inherited_from = ? WHERE id = ?",
+            (now, _merge_provenance([earlier, provenance(from_image)]), match_id),
         )
 
     affected: set[int] = set()
@@ -484,17 +531,22 @@ def reconcile_group_folds(conn: sqlite3.Connection) -> set[int]:
     # remains available as provenance in obs_*).
     cur.execute(
         """
-        SELECT m.id, m.image_id FROM matches m
+        SELECT m.id, m.image_id,
+               (m.inherited_at IS NULL
+                AND (m.explicit_review_at IS NULL
+                     OR m.explicit_review_at < COALESCE(m.merged_at, m.rb_captured_at))) AS restorable
+        FROM matches m
         JOIN images i ON i.id = m.image_id
         WHERE m.canonical_match_id IS NULL
-          AND m.obs_captured_at IS NOT NULL
+          AND m.rb_captured_at IS NOT NULL
           AND i.photo_group_id IS NULL
           AND NOT EXISTS (SELECT 1 FROM matches f WHERE f.canonical_match_id = m.id)
-          AND m.inherited_at IS NULL
-          AND (m.explicit_review_at IS NULL OR m.explicit_review_at < COALESCE(m.merged_at, m.obs_captured_at))
         """
     )
     for r in cur.fetchall():
-        _restore_observation_triage(cur, r["id"])
+        if r["restorable"]:
+            _restore_observation_triage(cur, r["id"])
+        else:
+            _end_cycle(cur, r["id"])
         affected.add(r["image_id"])
     return affected

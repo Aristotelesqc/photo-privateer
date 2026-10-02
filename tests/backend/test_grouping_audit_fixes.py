@@ -1520,3 +1520,106 @@ def test_photo_grouped_after_an_earlier_search_in_the_same_scan_is_not_searched_
         for r in db_conn.execute("SELECT image_id, status FROM scan_items WHERE scan_session_id = ?", (session.id,))
     }
     assert items == {master.id: "SUCCESS", filler.id: "SUCCESS", web.id: "SKIPPED"}
+
+
+def _shared_observation(conn, image_id: int) -> int:
+    row, _ = MatchRepository(conn).upsert_match(
+        image_id=image_id, scan_session_id=None, domain="audit.example",
+        match_type="FULL", provider="mock", source_kind="PAGE",
+        page_url="https://audit.example/shared", candidate_image_url="https://audit.example/shared.jpg",
+    )
+    conn.commit()
+    return row.id
+
+
+def _match_row(conn, match_id: int):
+    return conn.execute("SELECT * FROM matches WHERE id = ?", (match_id,)).fetchone()
+
+
+def test_latest_explicit_decision_survives_a_second_group_cycle(db_conn, temp_dir: Path):
+    """Each grouping cycle rolls back to the state right before that cycle, never to the first
+    cycle's snapshot; the original observation stays available as provenance."""
+    lib = _make_library(db_conn, temp_dir)
+    a = _insert_image(db_conn, lib, 1, 0xA5A55A5A0FF0F00F)
+    b = _insert_image(db_conn, lib, 2, 0xA5A55A5A0FF0F00F)
+    ma, mb = _shared_observation(db_conn, a), _shared_observation(db_conn, b)
+    match_repo = MatchRepository(db_conn)
+    match_repo.update_classification_and_notes(ma, classification="APPROVED", notes="original")
+    match_repo.update_classification_and_notes(mb, classification="UNAUTHORIZED")
+    db_conn.commit()
+    repo = PhotoGroupRepository(db_conn)
+    first = repo.create_group([a, b], preferred_image_id=a)
+    match_repo.update_classification_and_notes(ma, classification="IRRELEVANT", notes="latest human review")
+    db_conn.commit()
+    repo.delete_group(first.id)
+    assert _match_row(db_conn, ma)["classification"] == "IRRELEVANT"
+
+    second = repo.create_group([a, b], preferred_image_id=a)
+    assert _match_row(db_conn, ma)["classification"] == "UNREVIEWED"  # new conflict
+    repo.delete_group(second.id)  # no human review during the second cycle
+
+    row = _match_row(db_conn, ma)
+    assert row["classification"] == "IRRELEVANT" and row["notes"] == "latest human review"
+    assert row["obs_classification"] == "APPROVED" and row["obs_notes"] == "original"  # provenance
+    assert _match_row(db_conn, mb)["classification"] == "UNAUTHORIZED"
+
+
+def test_inherited_decision_travels_through_a_later_ordinary_handover(db_conn, temp_dir: Path):
+    libs = [_make_library(db_conn, temp_dir, name=f"lib{i}") for i in range(4)]
+    ids = [_insert_image(db_conn, lib, i, 0xA5A55A5A0FF0F00F) for i, lib in enumerate(libs)]
+    matches = [_shared_observation(db_conn, i) for i in ids]
+    MatchRepository(db_conn).update_classification_and_notes(
+        matches[0], classification="APPROVED", notes="licensed client"
+    )
+    db_conn.commit()
+    repo = PhotoGroupRepository(db_conn)
+    group = repo.create_group(ids, preferred_image_id=ids[0])
+    LibraryRepository(db_conn).purge(libs[0])
+    inherited = _match_row(db_conn, matches[1])
+    assert inherited["classification"] == "APPROVED" and inherited["inherited_at"]
+
+    repo.remove_image_from_group(group.id, ids[1])  # ordinary handover from B to C
+    promoted = _match_row(db_conn, matches[2])
+    assert promoted["classification"] == "APPROVED"
+    assert promoted["inherited_at"] and f"photo #{ids[0]}" in promoted["inherited_from"]
+
+    LibraryRepository(db_conn).purge(libs[1])
+    repo.delete_group(group.id)
+    kept = _match_row(db_conn, matches[2])
+    assert kept["classification"] == "APPROVED" and "licensed client" in (kept["notes"] or "")
+    assert f"photo #{ids[0]}" in kept["inherited_from"]
+
+
+@pytest.mark.parametrize("n,budget", [(400, 1_000), (10_000, 20_000_000)])
+def test_candidate_budget_applies_inside_a_bucket(db_conn, temp_dir: Path, monkeypatch, n: int, budget: int):
+    """Codex reproduction: the first six-bit band collides, the rest is unrelated."""
+    import backend.repositories.group_repo as group_repo_module
+
+    lib = _make_library(db_conn, temp_dir)
+    rng = random.Random(721)
+    for i in range(n):
+        _insert_image(db_conn, lib, i, rng.getrandbits(58) << 6)
+    db_conn.commit()
+    monkeypatch.setattr(group_repo_module, "CANDIDATE_COMPARISON_BUDGET", budget)
+    repo = PhotoGroupRepository(db_conn)
+    repo.find_candidates_page(threshold=10, limit=50)
+    assert repo.last_candidates_truncated
+    assert repo.last_candidate_comparisons <= budget
+
+
+def test_successive_purges_keep_every_original_purged_source(db_conn, temp_dir: Path):
+    libs = [_make_library(db_conn, temp_dir, name=f"lib{i}") for i in range(3)]
+    ids = [_insert_image(db_conn, lib, i, 0xA5A55A5A0FF0F00F) for i, lib in enumerate(libs)]
+    matches = [_shared_observation(db_conn, i) for i in ids]
+    MatchRepository(db_conn).update_classification_and_notes(matches[0], classification="APPROVED")
+    db_conn.commit()
+    group = PhotoGroupRepository(db_conn).create_group(ids, preferred_image_id=ids[0])
+    LibraryRepository(db_conn).purge(libs[0])  # A -> B
+    LibraryRepository(db_conn).purge(libs[1])  # B (carrying A's decision) -> C
+    kept = _match_row(db_conn, matches[2])
+    assert kept["classification"] == "APPROVED" and kept["canonical_match_id"] is None
+    assert f"photo #{ids[0]}" in kept["inherited_from"] and f"photo #{ids[1]}" in kept["inherited_from"]
+    repo = PhotoGroupRepository(db_conn)
+    if repo.get_group(group.id):  # a single surviving member may already have dissolved it
+        repo.delete_group(group.id)
+    assert _match_row(db_conn, matches[2])["classification"] == "APPROVED"

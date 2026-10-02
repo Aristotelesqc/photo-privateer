@@ -483,6 +483,37 @@ def migration_015_discovery_inheritance(conn: sqlite3.Connection) -> None:
         "BEGIN UPDATE group_candidate_state SET generation = generation + 1 WHERE id = 1; END;"
     )
 
+
+def migration_016_cycle_rollback_state(conn: sqlite3.Connection) -> None:
+    """Separates the per-cycle rollback state (rb_*) from the immutable original observation
+    provenance (obs_*). Rows currently carrying or folded under merged state keep their captured
+    baseline as rollback state; rows that already left their group keep obs_* as provenance only."""
+    cur = conn.cursor()
+    cur.execute("PRAGMA table_info(matches)")
+    cols = {row[1] for row in cur.fetchall()}
+    for name in (
+        "rb_classification", "rb_classified_at", "rb_rule_id", "rb_notes",
+        "rb_is_new", "rb_acknowledged_at", "rb_captured_at",
+    ):
+        if name not in cols:
+            kind = "INTEGER" if name in ("rb_rule_id", "rb_is_new") else "TEXT"
+            conn.execute(f"ALTER TABLE matches ADD COLUMN {name} {kind};")
+    conn.execute(
+        """
+        UPDATE matches
+        SET rb_classification = obs_classification, rb_classified_at = obs_classified_at,
+            rb_rule_id = obs_rule_id, rb_notes = obs_notes, rb_is_new = obs_is_new,
+            rb_acknowledged_at = obs_acknowledged_at, rb_captured_at = obs_captured_at
+        WHERE obs_captured_at IS NOT NULL
+          AND rb_captured_at IS NULL
+          AND NOT (
+              canonical_match_id IS NULL
+              AND NOT EXISTS (SELECT 1 FROM matches f WHERE f.canonical_match_id = matches.id)
+              AND (SELECT photo_group_id FROM images WHERE images.id = matches.image_id) IS NULL
+          )
+        """
+    )
+
 MIGRATIONS: list[Migration] = [
     Migration(1, "001_initial_schema", migration_001_initial_schema),
     Migration(2, "002_library_archiving_and_disk_presence", migration_002_library_archiving_and_disk_presence),
@@ -499,6 +530,7 @@ MIGRATIONS: list[Migration] = [
     Migration(13, "013_match_triage_conflict", migration_013_match_triage_conflict),
     Migration(14, "014_match_explicit_review", migration_014_match_explicit_review),
     Migration(15, "015_discovery_inheritance", migration_015_discovery_inheritance),
+    Migration(16, "016_cycle_rollback_state", migration_016_cycle_rollback_state),
 ]
 
 def run_migrations(conn: sqlite3.Connection) -> list[int]:
