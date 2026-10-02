@@ -150,6 +150,10 @@ class MatchOut(BaseModel):
     canonical_match_id: Optional[int] = None
     # Physical observations behind this logical discovery (itself plus folded observations)
     observation_count: int = 1
+    # This physical observation's own original triage (differs from classification/notes when
+    # the row carries a merged logical discovery state)
+    observed_classification: Optional[str] = None
+    observed_notes: Optional[str] = None
     image_filename: Optional[str] = None
     image_thumbnail_url: Optional[str] = None
     image_project: Optional[str] = None

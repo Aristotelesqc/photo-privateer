@@ -10,7 +10,10 @@ deterministic identity (source_kind, page_url, candidate_image_url) must surface
   counted, and carries the merged logical triage;
 - folded rows point to it (`canonical_match_id`), keep their own image_id and their own original
   classification / notes / timestamps as inspectable provenance, and are excluded from review
-  lists and counts.
+  lists and counts;
+- a row that carries a logical discovery (the canonical row, or a row that received a handover)
+  first keeps its own original triage in the obs_* columns (migration 012), so every physical
+  observation, canonical or folded, still exposes the decision it had on its own.
 
 Folding is reversible:
 - when a group is dissolved or a photo leaves it, its folded observations become independent
@@ -103,7 +106,47 @@ def _merged_state(rows: list[sqlite3.Row], survivor: sqlite3.Row) -> dict[str, o
     }
 
 
+def _capture_observation_triage(cur: sqlite3.Cursor, match_id: int) -> None:
+    """Before a physical row starts carrying merged logical state, keep its own original triage
+    (once) in the obs_* provenance columns."""
+    cur.execute(
+        """
+        UPDATE matches
+        SET obs_classification = classification,
+            obs_classified_at = classified_at,
+            obs_rule_id = auto_classified_by_rule_id,
+            obs_notes = notes,
+            obs_is_new = is_new,
+            obs_acknowledged_at = acknowledged_at,
+            obs_captured_at = ?
+        WHERE id = ? AND obs_captured_at IS NULL
+        """,
+        (datetime.now(timezone.utc).isoformat(), match_id),
+    )
+
+
+def _restore_observation_triage(cur: sqlite3.Cursor, match_id: int) -> None:
+    """When a row stops carrying a logical discovery (it becomes an independent discovery again
+    after ungrouping), it returns to its own original triage."""
+    cur.execute(
+        """
+        UPDATE matches
+        SET classification = obs_classification,
+            classified_at = obs_classified_at,
+            auto_classified_by_rule_id = obs_rule_id,
+            notes = obs_notes,
+            is_new = obs_is_new,
+            acknowledged_at = obs_acknowledged_at,
+            obs_classification = NULL, obs_classified_at = NULL, obs_rule_id = NULL,
+            obs_notes = NULL, obs_is_new = NULL, obs_acknowledged_at = NULL, obs_captured_at = NULL
+        WHERE id = ? AND obs_captured_at IS NOT NULL
+        """,
+        (match_id,),
+    )
+
+
 def _write_state(cur: sqlite3.Cursor, match_id: int, state: dict[str, object]) -> None:
+    _capture_observation_triage(cur, match_id)
     cur.execute(
         f"UPDATE matches SET {', '.join(f'{k} = ?' for k in _LOGICAL_FIELDS)} WHERE id = ?",
         tuple(state[k] for k in _LOGICAL_FIELDS) + (match_id,),
@@ -305,6 +348,7 @@ def reconcile_group_folds(conn: sqlite3.Connection) -> set[int]:
                     "UPDATE matches SET canonical_match_id = NULL, fold_kind = NULL, folded_at = NULL WHERE id = ?",
                     (c["fid"],),
                 )
+                _restore_observation_triage(cur, c["fid"])
         else:
             children.sort(key=lambda r: (r["ffirst"] or "", r["fid"]))
             cur.execute("SELECT * FROM matches WHERE id = ?", (hid,))

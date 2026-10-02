@@ -110,6 +110,9 @@ export interface MatchItem {
   canonical_match_id?: number | null;
   /** Physical observations behind this logical discovery (itself plus folded observations) */
   observation_count?: number;
+  /** This physical observation's own original triage (provenance) */
+  observed_classification?: string | null;
+  observed_notes?: string | null;
   image_thumbnail_url?: string | null;
   image_project?: string | null;
 }

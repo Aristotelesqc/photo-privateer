@@ -65,6 +65,12 @@ class MatchRepository:
             image_project=r["project"] if "project" in r.keys() else None,
             canonical_match_id=r["canonical_match_id"] if "canonical_match_id" in r.keys() else None,
             observation_count=r["observation_count"] if "observation_count" in r.keys() else 1,
+            observed_classification=(
+                r["obs_classification"] if "obs_captured_at" in r.keys() and r["obs_captured_at"] else r["classification"]
+            ),
+            observed_notes=(
+                r["obs_notes"] if "obs_captured_at" in r.keys() and r["obs_captured_at"] else r["notes"]
+            ),
         )
 
     def get_by_id(self, match_id: int) -> Optional[MatchOut]:
@@ -234,13 +240,32 @@ class MatchRepository:
         found = cur.fetchone()
         existing = None
         if found:
+            logical_id = found["canonical_match_id"] or found["id"]
             if found["image_id"] == image_id and found["canonical_match_id"] is not None:
                 # Keep the searched photo's own folded observation current as provenance
                 cur.execute(
                     "UPDATE matches SET last_seen_at = ?, scan_session_id = ? WHERE id = ?",
                     (now, scan_session_id, found["id"]),
                 )
-            logical_id = found["canonical_match_id"] or found["id"]
+            elif found["image_id"] != image_id:
+                # The provider physically searched this photo and returned a web use its group
+                # already knows: record this photo's own observation, folded into the group's
+                # logical discovery, so the fact survives ungrouping or purging the other member.
+                cur.execute("""
+                    INSERT INTO matches (
+                        image_id, scan_session_id, source_kind, page_url, page_title, page_score,
+                        domain, candidate_image_url, match_type, provider,
+                        first_seen_at, last_seen_at, is_new, classification,
+                        classified_at, auto_classified_by_rule_id, notes,
+                        canonical_match_id, fold_kind, folded_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, NULL, ?, 'GROUP', ?)
+                """, (
+                    image_id, scan_session_id, source_kind, page_url, page_title, page_score,
+                    domain, candidate_image_url, match_type, provider,
+                    now, now, default_classification,
+                    now if default_classification != CLASS_UNREVIEWED else None,
+                    rule_id, logical_id, now,
+                ))
             cur.execute("""
                 SELECT id, classification, notes, auto_classified_by_rule_id, is_new, acknowledged_at
                 FROM matches WHERE id = ?

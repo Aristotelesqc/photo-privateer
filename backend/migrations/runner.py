@@ -423,6 +423,26 @@ def migration_011_match_observation_folding(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE matches ADD COLUMN folded_at TEXT;")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_matches_canonical ON matches(canonical_match_id);")
 
+def migration_012_observation_original_triage(conn: sqlite3.Connection) -> None:
+    """Preserves a physical observation's own triage before its row starts carrying a merged
+    logical discovery state (it becomes the canonical row of a group or receives a handover).
+    obs_captured_at marks rows whose original triage lives in the obs_* columns.
+    """
+    cur = conn.cursor()
+    cur.execute("PRAGMA table_info(matches)")
+    cols = {row[1] for row in cur.fetchall()}
+    for name, sql_type in (
+        ("obs_classification", "TEXT"),
+        ("obs_classified_at", "TEXT"),
+        ("obs_rule_id", "INTEGER"),
+        ("obs_notes", "TEXT"),
+        ("obs_is_new", "INTEGER"),
+        ("obs_acknowledged_at", "TEXT"),
+        ("obs_captured_at", "TEXT"),
+    ):
+        if name not in cols:
+            conn.execute(f"ALTER TABLE matches ADD COLUMN {name} {sql_type};")
+
 MIGRATIONS: list[Migration] = [
     Migration(1, "001_initial_schema", migration_001_initial_schema),
     Migration(2, "002_library_archiving_and_disk_presence", migration_002_library_archiving_and_disk_presence),
@@ -435,6 +455,7 @@ MIGRATIONS: list[Migration] = [
     Migration(9, "009_perceptual_grouping", migration_009_perceptual_grouping),
     Migration(10, "010_group_candidate_generation", migration_010_group_candidate_generation),
     Migration(11, "011_match_observation_folding", migration_011_match_observation_folding),
+    Migration(12, "012_observation_original_triage", migration_012_observation_original_triage),
 ]
 
 def run_migrations(conn: sqlite3.Connection) -> list[int]:

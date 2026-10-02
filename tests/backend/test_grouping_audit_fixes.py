@@ -902,3 +902,82 @@ def test_rescan_through_a_member_with_a_folded_observation_updates_the_logical_d
     review = _group_review(client, web.id)
     identities = [_identity(m) for m in review]
     assert len(identities) == len(set(identities)) == len(rows) // 2
+
+
+# --- Follow-up review on c84891f: physical observation on first group rediscovery, original triage ---
+
+
+def _two_library_pair(conn, temp_dir: Path):
+    lib_repo = LibraryRepository(conn)
+    img_repo = ImageRepository(conn)
+    thumbs = ThumbnailCache(temp_dir / "thumbs")
+    dirs = [temp_dir / "lib_a", temp_dir / "lib_b"]
+    for d in dirs:
+        d.mkdir()
+    p1, p2 = dirs[0] / "multi_master.jpg", dirs[1] / "multi_web.jpg"
+    _create_sample_image(p1, (120, 90, 60), "Master")
+    with Image.open(p1) as img:
+        img.resize((170, 170)).save(p2, format="JPEG", quality=84)
+    lib_a = lib_repo.create(str(dirs[0]), name="A")
+    lib_b = lib_repo.create(str(dirs[1]), name="B")
+    LibraryIndexer(lib_repo, img_repo, thumbs).index_library(lib_a.id)
+    LibraryIndexer(lib_repo, img_repo, thumbs).index_library(lib_b.id)
+    return lib_a, lib_b, img_repo.get_by_path(str(p1.resolve())), img_repo.get_by_path(str(p2.resolve()))
+
+
+def test_first_rediscovery_through_a_group_member_records_its_own_observation(client, db_conn, temp_dir: Path):
+    lib_a, _lib_b, master, web = _two_library_pair(db_conn, temp_dir)
+    _assert_provider_returns_same_discoveries(master.file_path, web.file_path)
+    _scan(db_conn, [master.id])
+    a_rows = _matches_of(db_conn, [master.id])
+    assert a_rows and _matches_of(db_conn, [web.id]) == []  # B has never observed anything
+
+    group_repo = PhotoGroupRepository(db_conn)
+    group = group_repo.create_group([master.id, web.id], preferred_image_id=master.id)
+    group_repo.set_preferred_image(group.id, web.id)
+    _scan(db_conn, [web.id])
+
+    review = _group_review(client, web.id)
+    identities = [_identity(m) for m in review]
+    assert len(identities) == len(set(identities)) == len(a_rows)  # one logical discovery each
+    b_rows = _matches_of(db_conn, [web.id])
+    assert sorted(_row_identity(r) for r in b_rows) == sorted(_row_identity(r) for r in a_rows)
+    logical_ids = {m["id"] for m in review}
+    assert all(r["canonical_match_id"] in logical_ids for r in b_rows)  # folded under logical X
+    assert all(r["fold_kind"] == "GROUP" for r in b_rows)
+    assert all(m["observation_count"] == 2 for m in review)
+    assert ImageRepository(db_conn).get_by_id(web.id).match_count == 0  # folded rows are not counted twice
+
+    # Purging A's library keeps X through B's own observation
+    LibraryRepository(db_conn).purge(lib_a.id)
+    review = _group_review(client, web.id)
+    assert sorted(_identity(m) for m in review) == sorted(_row_identity(r) for r in a_rows)
+    assert {m["id"] for m in review} == {r["id"] for r in b_rows}  # B's observations became the discoveries
+    assert ImageRepository(db_conn).get_by_id(web.id).match_count == len(review)
+
+
+def test_canonical_observation_keeps_its_own_original_triage(client, db_conn, temp_dir: Path):
+    _lib, master, web, _p1, _p2 = _indexed_pair(db_conn, temp_dir)
+    _rows, x_master, x_web = _x_rows(db_conn, master, web)
+    match_repo = MatchRepository(db_conn)
+    match_repo.update_classification_and_notes(x_master["id"], classification="APPROVED", notes="Licensed")
+    match_repo.update_classification_and_notes(x_web["id"], classification="UNAUTHORIZED", notes="Stolen")
+    db_conn.commit()
+
+    group = PhotoGroupRepository(db_conn).create_group([master.id, web.id], preferred_image_id=master.id)
+    logical = next(m for m in _group_review(client, master.id) if _identity(m) == _row_identity(x_master))
+    assert logical["classification"] == "UNREVIEWED"  # conflict -> explicit re-review
+
+    observations = {o["image_id"]: o for o in client.get(f"/api/matches/{logical['id']}/observations").json()}
+    assert observations[master.id]["observed_classification"] == "APPROVED"
+    assert observations[master.id]["observed_notes"] == "Licensed"
+    assert observations[web.id]["observed_classification"] == "UNAUTHORIZED"
+    assert observations[web.id]["observed_notes"] == "Stolen"
+
+    # Dissolving the group: the folded observation returns to its own decision; the canonical row
+    # keeps exposing its own original decision as provenance
+    PhotoGroupRepository(db_conn).delete_group(group.id)
+    b_x = next(m for m in _group_review(client, web.id) if _identity(m) == _row_identity(x_web))
+    assert b_x["classification"] == "UNAUTHORIZED" and b_x["observed_classification"] == "UNAUTHORIZED"
+    a_x = next(m for m in _group_review(client, master.id) if _identity(m) == _row_identity(x_master))
+    assert a_x["observed_classification"] == "APPROVED" and a_x["observed_notes"] == "Licensed"
