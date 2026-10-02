@@ -514,6 +514,26 @@ def migration_016_cycle_rollback_state(conn: sqlite3.Connection) -> None:
         """
     )
 
+
+def migration_017_cycle_rollback_inheritance(conn: sqlite3.Connection) -> None:
+    """Adds inheritance provenance to the per-cycle rollback state: inheritance that existed
+    before a grouping cycle rolls back with it, while a decision inherited from a photo purged
+    during the cycle (a later inherited_at) is kept."""
+    cur = conn.cursor()
+    cur.execute("PRAGMA table_info(matches)")
+    cols = {row[1] for row in cur.fetchall()}
+    for name in ("rb_inherited_at", "rb_inherited_from"):
+        if name not in cols:
+            conn.execute(f"ALTER TABLE matches ADD COLUMN {name} TEXT;")
+    conn.execute(
+        """
+        UPDATE matches
+        SET rb_inherited_at = inherited_at, rb_inherited_from = inherited_from
+        WHERE rb_captured_at IS NOT NULL AND inherited_at IS NOT NULL
+          AND inherited_at < COALESCE(merged_at, rb_captured_at)
+        """
+    )
+
 MIGRATIONS: list[Migration] = [
     Migration(1, "001_initial_schema", migration_001_initial_schema),
     Migration(2, "002_library_archiving_and_disk_presence", migration_002_library_archiving_and_disk_presence),
@@ -531,6 +551,7 @@ MIGRATIONS: list[Migration] = [
     Migration(14, "014_match_explicit_review", migration_014_match_explicit_review),
     Migration(15, "015_discovery_inheritance", migration_015_discovery_inheritance),
     Migration(16, "016_cycle_rollback_state", migration_016_cycle_rollback_state),
+    Migration(17, "017_cycle_rollback_inheritance", migration_017_cycle_rollback_inheritance),
 ]
 
 def run_migrations(conn: sqlite3.Connection) -> list[int]:

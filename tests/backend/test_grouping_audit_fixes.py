@@ -1623,3 +1623,99 @@ def test_successive_purges_keep_every_original_purged_source(db_conn, temp_dir: 
     if repo.get_group(group.id):  # a single surviving member may already have dissolved it
         repo.delete_group(group.id)
     assert _match_row(db_conn, matches[2])["classification"] == "APPROVED"
+
+
+def _inherited_carrier(db_conn, temp_dir: Path):
+    """A/X APPROVED "licensed client", B/X UNREVIEWED; group A+B, purge A: B carries A's decision."""
+    lib_a = _make_library(db_conn, temp_dir, name="purged")
+    lib_b = _make_library(db_conn, temp_dir, name="kept")
+    a = _insert_image(db_conn, lib_a, 1, 0xA5A55A5A0FF0F00F)
+    b = _insert_image(db_conn, lib_b, 2, 0xA5A55A5A0FF0F00F)
+    ma, mb = _shared_observation(db_conn, a), _shared_observation(db_conn, b)
+    MatchRepository(db_conn).update_classification_and_notes(ma, classification="APPROVED", notes="licensed client")
+    db_conn.commit()
+    PhotoGroupRepository(db_conn).create_group([a, b], preferred_image_id=a)
+    LibraryRepository(db_conn).purge(lib_a)
+    row = _match_row(db_conn, mb)
+    assert row["classification"] == "APPROVED" and f"photo #{a}" in row["inherited_from"]
+    return lib_b, a, b, mb
+
+
+def test_pre_cycle_inheritance_rolls_back_with_a_later_reversible_group(db_conn, temp_dir: Path):
+    """The inherited carrier stays canonical in a later conflicting group; dissolving it without
+    review restores the inherited decision it had before that cycle."""
+    lib_b, a, b, mb = _inherited_carrier(db_conn, temp_dir)
+    c = _insert_image(db_conn, lib_b, 3, 0xA5A55A5A0FF0F00F)
+    mc = _shared_observation(db_conn, c)  # observed after B
+    MatchRepository(db_conn).update_classification_and_notes(mc, classification="UNAUTHORIZED")
+    db_conn.commit()
+    repo = PhotoGroupRepository(db_conn)
+    group = repo.create_group([b, c], preferred_image_id=b)
+    row = _match_row(db_conn, mb)
+    assert row["canonical_match_id"] is None and row["classification"] == "UNREVIEWED" and row["triage_conflict"]
+
+    repo.delete_group(group.id)  # no explicit review during this cycle
+
+    row = _match_row(db_conn, mb)
+    assert row["classification"] == "APPROVED" and row["notes"] == "licensed client"
+    assert row["triage_conflict"] == 0 and f"photo #{a}" in row["inherited_from"]
+    assert row["obs_classification"] == "UNREVIEWED"  # original observation stays provenance
+    assert _match_row(db_conn, mc)["classification"] == "UNAUTHORIZED"
+
+
+def test_inheritance_merged_from_a_temporary_sibling_does_not_leak_after_ungroup(db_conn, temp_dir: Path):
+    lib_b, a, b, mb = _inherited_carrier(db_conn, temp_dir)
+    c = _insert_image(db_conn, lib_b, 3, 0xA5A55A5A0FF0F00F)
+    mc = _shared_observation(db_conn, c)
+    # C observed X first, so C's row becomes canonical and carries the merged (inherited) state
+    db_conn.execute("UPDATE matches SET first_seen_at = '2000-01-01T00:00:00+00:00' WHERE id = ?", (mc,))
+    db_conn.commit()
+    repo = PhotoGroupRepository(db_conn)
+    group = repo.create_group([c, b], preferred_image_id=c)
+    row = _match_row(db_conn, mc)
+    assert row["canonical_match_id"] is None and f"photo #{a}" in row["inherited_from"]
+    repo.delete_group(group.id)
+    c_row = _match_row(db_conn, mc)
+    assert c_row["classification"] == "UNREVIEWED" and c_row["inherited_from"] is None
+    assert _match_row(db_conn, mb)["classification"] == "APPROVED"
+
+
+def test_purge_during_the_current_cycle_keeps_the_newly_inherited_decision(db_conn, temp_dir: Path):
+    libs = [_make_library(db_conn, temp_dir, name=f"cyc{i}") for i in range(3)]
+    ids = [_insert_image(db_conn, lib, i, 0xA5A55A5A0FF0F00F) for i, lib in enumerate(libs)]
+    matches = [_shared_observation(db_conn, i) for i in ids]
+    MatchRepository(db_conn).update_classification_and_notes(matches[0], classification="APPROVED", notes="licensed client")
+    db_conn.commit()
+    repo = PhotoGroupRepository(db_conn)
+    group = repo.create_group(ids, preferred_image_id=ids[0])
+    LibraryRepository(db_conn).purge(libs[0])  # inheritance acquired during this cycle
+    repo.delete_group(group.id)
+    row = _match_row(db_conn, matches[1])
+    assert row["classification"] == "APPROVED" and row["notes"] == "licensed client"
+    assert f"photo #{ids[0]}" in row["inherited_from"]
+
+
+def test_in_cycle_inheritance_survives_when_the_carrier_is_later_folded_in_the_same_cycle(db_conn, temp_dir: Path):
+    """B inherits A's decision during the cycle, then a photo with an earlier observation joins and
+    folds B's discovery under its own; dissolving must not roll B back to its pre-cycle state."""
+    libs = [_make_library(db_conn, temp_dir, name=f"fold{i}") for i in range(4)]
+    a, b, d = (_insert_image(db_conn, libs[i], i, 0xA5A55A5A0FF0F00F) for i in range(3))
+    ma, mb, _md = (_shared_observation(db_conn, i) for i in (a, b, d))
+    MatchRepository(db_conn).update_classification_and_notes(ma, classification="APPROVED", notes="licensed client")
+    db_conn.commit()
+    repo = PhotoGroupRepository(db_conn)
+    group = repo.create_group([a, b, d], preferred_image_id=a)
+    LibraryRepository(db_conn).purge(libs[0])
+    assert _match_row(db_conn, mb)["inherited_at"]
+
+    c = _insert_image(db_conn, libs[3], 3, 0xA5A55A5A0FF0F00F)
+    mc = _shared_observation(db_conn, c)
+    db_conn.execute("UPDATE matches SET first_seen_at = '2000-01-01T00:00:00+00:00' WHERE id = ?", (mc,))
+    db_conn.commit()
+    repo.add_image_to_group(group.id, c)
+    assert _match_row(db_conn, mb)["canonical_match_id"] == mc  # B is now a folded observation
+
+    repo.delete_group(group.id)
+    row = _match_row(db_conn, mb)
+    assert row["classification"] == "APPROVED" and row["notes"] == "licensed client"
+    assert f"photo #{a}" in row["inherited_from"]

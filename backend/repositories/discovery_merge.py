@@ -132,7 +132,9 @@ def _merged_state(rows: list[sqlite3.Row], survivor: sqlite3.Row) -> dict[str, o
         ),
         # A decision inherited from a permanently purged photo stays inherited through every later
         # coalescence, with each original purged source kept
-        "inherited_at": min((r["inherited_at"] for r in rows if r["inherited_at"]), default=None),
+        # inherited_at is the latest inheritance event: a dissolution may roll back only a cycle
+        # that started after it (_ROLLBACK_ALLOWED)
+        "inherited_at": max((r["inherited_at"] for r in rows if r["inherited_at"]), default=None),
         "inherited_from": _merge_provenance(r["inherited_from"] for r in rows),
     }
 
@@ -177,6 +179,8 @@ def _capture_observation_triage(cur: sqlite3.Cursor, match_id: int) -> None:
             rb_notes = notes,
             rb_is_new = is_new,
             rb_acknowledged_at = acknowledged_at,
+            rb_inherited_at = inherited_at,
+            rb_inherited_from = inherited_from,
             rb_captured_at = ?
         WHERE id = ? AND rb_captured_at IS NULL
         """,
@@ -184,14 +188,21 @@ def _capture_observation_triage(cur: sqlite3.Cursor, match_id: int) -> None:
     )
 
 
+# A row may roll back to its pre-cycle state (rb_*) unless it inherited a decision from a photo
+# permanently purged during this cycle: that is a new permanent event, not part of the reversible
+# grouping. Inheritance that already existed before the cycle is part of rb_* and rolls back too.
+# The cycle starts when the logical discovery began carrying merged state (merged_at, which travels
+# with handovers, so a member that took over the discovery after the purge still keeps it).
+_ROLLBACK_ALLOWED = "(inherited_at IS NULL OR inherited_at < COALESCE(merged_at, rb_captured_at))"
+
+
 def _restore_observation_triage(cur: sqlite3.Cursor, match_id: int) -> None:
     """When a row stops carrying a logical discovery (it becomes an independent discovery again
-    after ungrouping), it rolls back to its state right before this grouping cycle. Never for a
-    row that inherited the logical triage of a permanently purged photo (inherited_at): that
-    decision has no other row left to return to, so it stays, whether the row leaves a group as
-    canonical or as a folded observation. The original observation (obs_*) stays as provenance."""
+    after ungrouping), it rolls back to its state right before this grouping cycle, inheritance
+    provenance included, unless it inherited a purged photo's decision during this cycle
+    (_ROLLBACK_ALLOWED). The original observation (obs_*) stays as provenance."""
     cur.execute(
-        """
+        f"""
         UPDATE matches
         SET classification = rb_classification,
             classified_at = rb_classified_at,
@@ -200,8 +211,10 @@ def _restore_observation_triage(cur: sqlite3.Cursor, match_id: int) -> None:
             notes = rb_notes,
             is_new = rb_is_new,
             acknowledged_at = rb_acknowledged_at,
+            inherited_at = rb_inherited_at,
+            inherited_from = rb_inherited_from,
             triage_conflict = 0
-        WHERE id = ? AND rb_captured_at IS NOT NULL AND inherited_at IS NULL
+        WHERE id = ? AND rb_captured_at IS NOT NULL AND {_ROLLBACK_ALLOWED}
         """,
         (match_id,),
     )
@@ -216,7 +229,8 @@ def _end_cycle(cur: sqlite3.Cursor, match_id: int) -> None:
         UPDATE matches
         SET explicit_review_at = NULL, merged_at = NULL,
             rb_classification = NULL, rb_classified_at = NULL, rb_rule_id = NULL,
-            rb_notes = NULL, rb_is_new = NULL, rb_acknowledged_at = NULL, rb_captured_at = NULL
+            rb_notes = NULL, rb_is_new = NULL, rb_acknowledged_at = NULL,
+            rb_inherited_at = NULL, rb_inherited_from = NULL, rb_captured_at = NULL
         WHERE id = ?
         """,
         (match_id,),
@@ -413,7 +427,6 @@ def release_discoveries(conn: sqlite3.Connection, image_ids: Iterable[int]) -> s
             survivors[r["gid"]] = row["id"] if row else None
     cur.execute("DELETE FROM _released_images")
 
-    now = datetime.now(timezone.utc).isoformat()
     filenames: dict[int, str] = {}
 
     def provenance(image_id: int) -> str:
@@ -427,9 +440,10 @@ def release_discoveries(conn: sqlite3.Connection, image_ids: Iterable[int]) -> s
         # Permanent inheritance: never "restored" away when the group later dissolves
         cur.execute("SELECT inherited_from FROM matches WHERE id = ?", (match_id,))
         earlier = cur.fetchone()["inherited_from"]
+        # A new inheritance event, timed after any rollback state captured by this handover
         cur.execute(
-            "UPDATE matches SET inherited_at = COALESCE(inherited_at, ?), inherited_from = ? WHERE id = ?",
-            (now, _merge_provenance([earlier, provenance(from_image)]), match_id),
+            "UPDATE matches SET inherited_at = ?, inherited_from = ? WHERE id = ?",
+            (datetime.now(timezone.utc).isoformat(), _merge_provenance([earlier, provenance(from_image)]), match_id),
         )
 
     affected: set[int] = set()
@@ -532,7 +546,7 @@ def reconcile_group_folds(conn: sqlite3.Connection) -> set[int]:
     cur.execute(
         """
         SELECT m.id, m.image_id,
-               (m.inherited_at IS NULL
+               ((m.inherited_at IS NULL OR m.inherited_at < COALESCE(m.merged_at, m.rb_captured_at))  -- _ROLLBACK_ALLOWED
                 AND (m.explicit_review_at IS NULL
                      OR m.explicit_review_at < COALESCE(m.merged_at, m.rb_captured_at))) AS restorable
         FROM matches m
