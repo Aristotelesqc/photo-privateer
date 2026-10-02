@@ -1719,3 +1719,128 @@ def test_in_cycle_inheritance_survives_when_the_carrier_is_later_folded_in_the_s
     row = _match_row(db_conn, mb)
     assert row["classification"] == "APPROVED" and row["notes"] == "licensed client"
     assert f"photo #{a}" in row["inherited_from"]
+
+
+def _conflicting_pair(conn, temp_dir: Path, a_class: str = "APPROVED", b_class: str = "UNAUTHORIZED"):
+    lib = _make_library(conn, temp_dir)
+    a = _insert_image(conn, lib, 1, 0xA5A55A5A0FF0F00F)
+    b = _insert_image(conn, lib, 2, 0xA5A55A5A0FF0F00F)
+    ma, mb = _shared_observation(conn, a), _shared_observation(conn, b)
+    match_repo = MatchRepository(conn)
+    match_repo.update_classification_and_notes(ma, classification=a_class, notes="A note")
+    match_repo.update_classification_and_notes(mb, classification=b_class, notes="B note")
+    conn.commit()
+    return a, b, ma, mb
+
+
+def test_rollback_preserves_an_unresolved_pre_cycle_conflict(db_conn, temp_dir: Path):
+    """A conflict kept open by an acknowledgement (no classification) is part of the next
+    cycle's rollback state: a reversible grouping never lets a domain rule resolve it."""
+    a, b, ma, _mb = _conflicting_pair(db_conn, temp_dir)
+    repo = PhotoGroupRepository(db_conn)
+    first = repo.create_group([a, b], preferred_image_id=a)
+    MatchRepository(db_conn).update_classification_and_notes(ma, acknowledged=True)
+    db_conn.commit()
+    repo.delete_group(first.id)
+    assert _match_row(db_conn, ma)["triage_conflict"] == 1
+
+    second = repo.create_group([a, b], preferred_image_id=a)
+    repo.delete_group(second.id)  # no explicit classification in either cycle
+    rule = DomainRuleRepository(db_conn).upsert_rule("audit.example", "IRRELEVANT")
+    MatchRepository(db_conn).apply_rule_to_unreviewed_matches("audit.example", "IRRELEVANT", rule.id)
+    db_conn.commit()
+    row = _match_row(db_conn, ma)
+    assert (row["classification"], row["triage_conflict"]) == ("UNREVIEWED", 1)
+
+
+def test_lineage_observation_does_not_prevent_group_rollback(db_conn, temp_dir: Path):
+    """Codex reproduction: re-export provenance (LINEAGE) is permanent, not an active group."""
+    lib, master, web, master_path, _ = _indexed_pair(db_conn, temp_dir)
+    known_path = master_path.with_name("known_export.jpg")
+    with Image.open(master_path) as im:
+        im.resize((160, 160)).save(known_path, format="JPEG", quality=84)
+    images = ImageRepository(db_conn)
+    indexer = LibraryIndexer(LibraryRepository(db_conn), images, ThumbnailCache(temp_dir / "thumbs"))
+    indexer.index_library(lib.id)
+    known = images.get_by_path(str(known_path.resolve()))
+    ma, mb, mk = [_shared_observation(db_conn, i) for i in (master.id, web.id, known.id)]
+    match_repo = MatchRepository(db_conn)
+    match_repo.update_classification_and_notes(ma, classification="APPROVED")
+    match_repo.update_classification_and_notes(mb, classification="UNAUTHORIZED")
+    match_repo.update_classification_and_notes(mk, classification="APPROVED")
+    db_conn.commit()
+    repo = PhotoGroupRepository(db_conn)
+    first = repo.create_group([master.id, web.id], preferred_image_id=master.id)
+    master_path.write_bytes(known_path.read_bytes())  # re-export of a test fixture in place
+    known_path.unlink()
+    indexer.index_library(lib.id)
+    current = images.get_by_path(str(master_path.resolve()))
+    assert current.id == known.id
+    assert _match_row(db_conn, ma)["fold_kind"] == "LINEAGE" and _match_row(db_conn, ma)["canonical_match_id"] == mk
+    match_repo.update_classification_and_notes(mk, classification="APPROVED", notes="latest decision")
+    db_conn.commit()
+    repo.delete_group(first.id)
+    assert _match_row(db_conn, mk)["classification"] == "APPROVED"
+
+    second = repo.create_group([current.id, web.id], preferred_image_id=current.id)
+    assert _match_row(db_conn, mk)["classification"] == "UNREVIEWED"
+    repo.delete_group(second.id)
+    row = _match_row(db_conn, mk)
+    assert (row["classification"], row["notes"]) == ("APPROVED", "latest decision")
+    assert _match_row(db_conn, ma)["fold_kind"] == "LINEAGE"  # provenance kept
+    assert _match_row(db_conn, mb)["classification"] == "UNAUTHORIZED"
+
+
+def test_migration_closes_completed_legacy_cycles(temp_dir: Path):
+    """A group dissolved before migration 016 leaves an independent row with that finished cycle's
+    merged_at / explicit_review_at and no rb_*. Migration 018 closes such cycles, so a new
+    unreviewed cycle rolls back to the current state instead of counting the old review."""
+    import backend.migrations.runner as runner
+
+    db_file = temp_dir / "legacy.sqlite"
+    init_db(db_file)
+    with get_db(db_file) as conn:
+        a, b, ma, _mb = _conflicting_pair(conn, temp_dir, "APPROVED", "APPROVED")
+        conn.execute(
+            "UPDATE matches SET notes = 'latest decision', merged_at = '2026-01-01T00:00:00+00:00', "
+            "explicit_review_at = '2026-01-02T00:00:00+00:00', obs_captured_at = '2026-01-01T00:00:00+00:00', "
+            "obs_classification = 'APPROVED', obs_notes = 'A note' WHERE id = ?",
+            (ma,),
+        )
+        runner.migration_018_close_completed_cycles(conn)
+        conn.commit()
+        row = _match_row(conn, ma)
+        assert row["merged_at"] is None and row["explicit_review_at"] is None
+        assert row["notes"] == "latest decision" and row["obs_notes"] == "A note"  # triage and provenance kept
+
+        repo = PhotoGroupRepository(conn)
+        group = repo.create_group([a, b], preferred_image_id=a)
+        repo.delete_group(group.id)  # no review after upgrading
+        assert _match_row(conn, ma)["notes"] == "latest decision"
+
+
+def test_dissolving_after_a_reexport_keeps_the_lineage_merged_decision(db_conn, temp_dir: Path):
+    """A validated re-export is a permanent identity transition: dissolving the group without a
+    review must not roll the replacement back to its own pre-re-export state."""
+    lib, master, web, master_path, _ = _indexed_pair(db_conn, temp_dir)
+    known_path = master_path.with_name("known_export.jpg")
+    with Image.open(master_path) as im:
+        im.resize((160, 160)).save(known_path, format="JPEG", quality=84)
+    images = ImageRepository(db_conn)
+    indexer = LibraryIndexer(LibraryRepository(db_conn), images, ThumbnailCache(temp_dir / "thumbs"))
+    indexer.index_library(lib.id)
+    known = images.get_by_path(str(known_path.resolve()))
+    ma, _mb, mk = [_shared_observation(db_conn, i) for i in (master.id, web.id, known.id)]
+    MatchRepository(db_conn).update_classification_and_notes(ma, classification="APPROVED", notes="licensed")
+    db_conn.commit()
+    repo = PhotoGroupRepository(db_conn)
+    group = repo.create_group([master.id, web.id], preferred_image_id=master.id)
+    master_path.write_bytes(known_path.read_bytes())
+    known_path.unlink()
+    indexer.index_library(lib.id)
+    assert _match_row(db_conn, ma)["fold_kind"] == "LINEAGE"
+    assert _match_row(db_conn, mk)["classification"] == "APPROVED"
+
+    repo.delete_group(group.id)  # no review
+    row = _match_row(db_conn, mk)
+    assert row["classification"] == "APPROVED" and "licensed" in (row["notes"] or "")

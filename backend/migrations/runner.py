@@ -534,6 +534,30 @@ def migration_017_cycle_rollback_inheritance(conn: sqlite3.Connection) -> None:
         """
     )
 
+
+def migration_018_close_completed_cycles(conn: sqlite3.Connection) -> None:
+    """Adds the pre-cycle conflict flag to the rollback state, and closes grouping cycles that
+    already ended before migration 016: an independent logical discovery (ungrouped photo, no
+    GROUP observation folded under it) keeps its triage and obs_* provenance, but its obsolete
+    merged_at / explicit_review_at no longer count as a review of a later cycle."""
+    cur = conn.cursor()
+    cur.execute("PRAGMA table_info(matches)")
+    if "rb_triage_conflict" not in {row[1] for row in cur.fetchall()}:
+        conn.execute("ALTER TABLE matches ADD COLUMN rb_triage_conflict INTEGER;")
+    conn.execute(
+        """
+        UPDATE matches
+        SET merged_at = NULL, explicit_review_at = NULL
+        WHERE canonical_match_id IS NULL
+          AND rb_captured_at IS NULL
+          AND (merged_at IS NOT NULL OR explicit_review_at IS NOT NULL)
+          AND (SELECT photo_group_id FROM images WHERE images.id = matches.image_id) IS NULL
+          AND NOT EXISTS (
+              SELECT 1 FROM matches f WHERE f.canonical_match_id = matches.id AND f.fold_kind = 'GROUP'
+          )
+        """
+    )
+
 MIGRATIONS: list[Migration] = [
     Migration(1, "001_initial_schema", migration_001_initial_schema),
     Migration(2, "002_library_archiving_and_disk_presence", migration_002_library_archiving_and_disk_presence),
@@ -552,6 +576,7 @@ MIGRATIONS: list[Migration] = [
     Migration(15, "015_discovery_inheritance", migration_015_discovery_inheritance),
     Migration(16, "016_cycle_rollback_state", migration_016_cycle_rollback_state),
     Migration(17, "017_cycle_rollback_inheritance", migration_017_cycle_rollback_inheritance),
+    Migration(18, "018_close_completed_cycles", migration_018_close_completed_cycles),
 ]
 
 def run_migrations(conn: sqlite3.Connection) -> list[int]:

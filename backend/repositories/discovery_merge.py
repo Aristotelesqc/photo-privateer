@@ -181,6 +181,7 @@ def _capture_observation_triage(cur: sqlite3.Cursor, match_id: int) -> None:
             rb_acknowledged_at = acknowledged_at,
             rb_inherited_at = inherited_at,
             rb_inherited_from = inherited_from,
+            rb_triage_conflict = triage_conflict,
             rb_captured_at = ?
         WHERE id = ? AND rb_captured_at IS NULL
         """,
@@ -213,7 +214,8 @@ def _restore_observation_triage(cur: sqlite3.Cursor, match_id: int) -> None:
             acknowledged_at = rb_acknowledged_at,
             inherited_at = rb_inherited_at,
             inherited_from = rb_inherited_from,
-            triage_conflict = 0
+            -- an unresolved conflict that predates the cycle stays unresolved
+            triage_conflict = COALESCE(rb_triage_conflict, 0)
         WHERE id = ? AND rb_captured_at IS NOT NULL AND {_ROLLBACK_ALLOWED}
         """,
         (match_id,),
@@ -230,7 +232,8 @@ def _end_cycle(cur: sqlite3.Cursor, match_id: int) -> None:
         SET explicit_review_at = NULL, merged_at = NULL,
             rb_classification = NULL, rb_classified_at = NULL, rb_rule_id = NULL,
             rb_notes = NULL, rb_is_new = NULL, rb_acknowledged_at = NULL,
-            rb_inherited_at = NULL, rb_inherited_from = NULL, rb_captured_at = NULL
+            rb_inherited_at = NULL, rb_inherited_from = NULL, rb_triage_conflict = NULL,
+            rb_captured_at = NULL
         WHERE id = ?
         """,
         (match_id,),
@@ -243,6 +246,17 @@ def _write_state(cur: sqlite3.Cursor, match_id: int, state: dict[str, object]) -
         f"UPDATE matches SET {', '.join(f'{k} = ?' for k in _LOGICAL_FIELDS)} WHERE id = ?",
         tuple(state[k] for k in _LOGICAL_FIELDS) + (match_id,),
     )
+
+
+def _write_merge(cur: sqlite3.Cursor, match_id: int, state: dict[str, object], kind: str) -> None:
+    """Writes a merged logical state. A validated re-export (LINEAGE) is a permanent identity
+    transition, not a reversible grouping: unless the row already belongs to an open grouping
+    cycle, it does not open one (no rollback state, no cycle markers)."""
+    cur.execute("SELECT rb_captured_at FROM matches WHERE id = ?", (match_id,))
+    in_cycle = cur.fetchone()["rb_captured_at"] is not None
+    _write_state(cur, match_id, state)
+    if kind == FOLD_LINEAGE and not in_cycle:
+        _end_cycle(cur, match_id)
 
 
 def _fold(cur: sqlite3.Cursor, head_id: int, match_id: int, kind: str, now: str) -> None:
@@ -310,7 +324,7 @@ def coalesce_discoveries(
         ))
         survivor = rows[0]
         if len(rows) > 1:
-            _write_state(cur, survivor["id"], _merged_state(rows, survivor))
+            _write_merge(cur, survivor["id"], _merged_state(rows, survivor), kind)
             for other in rows[1:]:
                 _fold(cur, survivor["id"], other["id"], kind, now)
             affected.update(r["image_id"] for r in rows)
@@ -333,7 +347,7 @@ def coalesce_discoveries(
                 head_id = existing["canonical_match_id"] or existing["id"]
                 cur.execute("SELECT * FROM matches WHERE id = ?", (head_id,))
                 head = cur.fetchone()
-                _write_state(cur, head_id, _merged_state([head, survivor], head))
+                _write_merge(cur, head_id, _merged_state([head, survivor], head), kind)
                 _fold(cur, head_id, survivor["id"], kind, now)
                 affected.add(head["image_id"])
             affected.update((survivor["image_id"], target_image_id))
@@ -554,8 +568,10 @@ def reconcile_group_folds(conn: sqlite3.Connection) -> set[int]:
         WHERE m.canonical_match_id IS NULL
           AND m.rb_captured_at IS NOT NULL
           AND i.photo_group_id IS NULL
-          AND NOT EXISTS (SELECT 1 FROM matches f WHERE f.canonical_match_id = m.id)
-        """
+          -- re-export provenance (LINEAGE) is permanent and never keeps a grouping cycle open
+          AND NOT EXISTS (SELECT 1 FROM matches f WHERE f.canonical_match_id = m.id AND f.fold_kind = ?)
+        """,
+        (FOLD_GROUP,),
     )
     for r in cur.fetchall():
         if r["restorable"]:
