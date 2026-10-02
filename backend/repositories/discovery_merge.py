@@ -154,7 +154,10 @@ def _capture_observation_triage(cur: sqlite3.Cursor, match_id: int) -> None:
 
 def _restore_observation_triage(cur: sqlite3.Cursor, match_id: int) -> None:
     """When a row stops carrying a logical discovery (it becomes an independent discovery again
-    after ungrouping), it returns to its own original triage."""
+    after ungrouping), it returns to its own original triage. Never for a row that inherited the
+    logical triage of a permanently purged photo (inherited_at): that decision has no other row
+    left to return to, so it stays, whether the row leaves a group as canonical or as a folded
+    observation."""
     cur.execute(
         """
         UPDATE matches
@@ -169,7 +172,7 @@ def _restore_observation_triage(cur: sqlite3.Cursor, match_id: int) -> None:
             merged_at = NULL,
             obs_classification = NULL, obs_classified_at = NULL, obs_rule_id = NULL,
             obs_notes = NULL, obs_is_new = NULL, obs_acknowledged_at = NULL, obs_captured_at = NULL
-        WHERE id = ? AND obs_captured_at IS NOT NULL
+        WHERE id = ? AND obs_captured_at IS NOT NULL AND inherited_at IS NULL
         """,
         (match_id,),
     )

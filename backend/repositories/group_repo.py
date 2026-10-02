@@ -28,6 +28,11 @@ MAX_CANDIDATES_PER_PHOTO = 8
 CANDIDATE_COMPARISON_BUDGET = 20_000_000
 _DENSE_BUCKET_SIZE = 256
 
+
+class _BudgetExhausted(Exception):
+    """Internal stop signal: the candidate comparison budget is spent."""
+
+
 # (priority, hamming_distance, min_image_id, max_image_id, is_exact_duplicate)
 # priority 0 = exact SHA-256 duplicate, 1 = perceptual dHash variant. Tuples sort naturally.
 CandidateTuple = Tuple[int, int, int, int, bool]
@@ -431,6 +436,7 @@ class PhotoGroupRepository:
             if is_informative_dhash_value(value):
                 entries.append((r["id"], value, r["photo_group_id"]))
 
+        budget = CANDIDATE_COMPARISON_BUDGET
         comparisons = 0
         truncated = False
         found: dict[Tuple[int, int], int] = {}
@@ -455,6 +461,8 @@ class PhotoGroupRepository:
                 if degree[pos_a] >= MAX_CANDIDATES_PER_PHOTO:
                     truncated = True
                     return
+                if comparisons >= budget:
+                    raise _BudgetExhausted
                 comparisons += 1
                 if (h_a ^ hashes[j]).bit_count() <= threshold:
                     if degree[targets[j]] >= MAX_CANDIDATES_PER_PHOTO:
@@ -462,48 +470,59 @@ class PhotoGroupRepository:
                         continue
                     record(pos_a, targets[j])
 
-        for shift, mask in _band_layout(threshold):
-            if comparisons > CANDIDATE_COMPARISON_BUDGET:
-                truncated = True
-                break
-            buckets: dict[int, list[int]] = defaultdict(list)
-            for pos, entry in enumerate(entries):
-                buckets[(entry[1] >> shift) & mask].append(pos)
-            for bucket in buckets.values():
-                if len(bucket) < 2:
-                    continue
-                if comparisons > CANDIDATE_COMPARISON_BUDGET:
-                    truncated = True
-                    break
-                loose = [pos for pos in bucket if entries[pos][2] is None]
-                if not loose:
-                    continue
-                grouped = [pos for pos in bucket if entries[pos][2] is not None]
-                loose_hashes = [entries[pos][1] for pos in loose]
-                n_loose = len(loose)
-                if n_loose <= _DENSE_BUCKET_SIZE and all(degree[p] < MAX_CANDIDATES_PER_PHOTO for p in bucket):
-                    # Small bucket: distance first in a tight comprehension (fast path)
-                    for i in range(n_loose - 1):
-                        h_a = loose_hashes[i]
-                        comparisons += n_loose - i - 1
-                        for j in [j for j in range(i + 1, n_loose) if (h_a ^ loose_hashes[j]).bit_count() <= threshold]:
-                            if degree[loose[i]] >= MAX_CANDIDATES_PER_PHOTO or degree[loose[j]] >= MAX_CANDIDATES_PER_PHOTO:
-                                truncated = True
-                                continue
-                            record(loose[i], loose[j])
-                    for pos in grouped:
-                        h_a = entries[pos][1]
-                        comparisons += n_loose
-                        for j in [j for j in range(n_loose) if (h_a ^ loose_hashes[j]).bit_count() <= threshold]:
-                            if degree[pos] >= MAX_CANDIDATES_PER_PHOTO or degree[loose[j]] >= MAX_CANDIDATES_PER_PHOTO:
-                                truncated = True
-                                continue
-                            record(pos, loose[j])
-                else:
-                    for i in range(n_loose - 1):
-                        scan(loose[i], loose_hashes[i], loose, loose_hashes, i + 1)
-                    for pos in grouped:
-                        scan(pos, entries[pos][1], loose, loose_hashes, 0)
+        def take(span: int) -> int:
+            """Reserves up to `span` comparisons from the budget; returns how many may run."""
+            nonlocal comparisons
+            allowed = max(0, min(span, budget - comparisons))
+            comparisons += allowed
+            return allowed
+
+        # The budget is a hard ceiling checked at each comparison: a large bucket of hashes that
+        # share a band but are mostly beyond the threshold never saturates the per-photo cap, so
+        # the cap alone would not bound it
+        try:
+            for shift, mask in _band_layout(threshold):
+                buckets: dict[int, list[int]] = defaultdict(list)
+                for pos, entry in enumerate(entries):
+                    buckets[(entry[1] >> shift) & mask].append(pos)
+                for bucket in buckets.values():
+                    if len(bucket) < 2:
+                        continue
+                    loose = [pos for pos in bucket if entries[pos][2] is None]
+                    if not loose:
+                        continue
+                    grouped = [pos for pos in bucket if entries[pos][2] is not None]
+                    loose_hashes = [entries[pos][1] for pos in loose]
+                    n_loose = len(loose)
+                    if n_loose <= _DENSE_BUCKET_SIZE and all(degree[p] < MAX_CANDIDATES_PER_PHOTO for p in bucket):
+                        # Small bucket: distance first in a tight comprehension (fast path)
+                        for i in range(n_loose - 1):
+                            h_a = loose_hashes[i]
+                            stop = i + 1 + take(n_loose - i - 1)
+                            for j in [j for j in range(i + 1, stop) if (h_a ^ loose_hashes[j]).bit_count() <= threshold]:
+                                if degree[loose[i]] >= MAX_CANDIDATES_PER_PHOTO or degree[loose[j]] >= MAX_CANDIDATES_PER_PHOTO:
+                                    truncated = True
+                                    continue
+                                record(loose[i], loose[j])
+                            if stop < n_loose:
+                                raise _BudgetExhausted
+                        for pos in grouped:
+                            h_a = entries[pos][1]
+                            stop = take(n_loose)
+                            for j in [j for j in range(stop) if (h_a ^ loose_hashes[j]).bit_count() <= threshold]:
+                                if degree[pos] >= MAX_CANDIDATES_PER_PHOTO or degree[loose[j]] >= MAX_CANDIDATES_PER_PHOTO:
+                                    truncated = True
+                                    continue
+                                record(pos, loose[j])
+                            if stop < n_loose:
+                                raise _BudgetExhausted
+                    else:
+                        for i in range(n_loose - 1):
+                            scan(loose[i], loose_hashes[i], loose, loose_hashes, i + 1)
+                        for pos in grouped:
+                            scan(pos, entries[pos][1], loose, loose_hashes, 0)
+        except _BudgetExhausted:
+            truncated = True
 
         self._last_compute_truncated = truncated
         self.last_candidate_comparisons = comparisons

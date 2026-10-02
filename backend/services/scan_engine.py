@@ -361,9 +361,6 @@ class ScanEngine:
             failed = 0
             cancelled = False
             aborted_due_to_accounting_failure = False
-            # Photo groups already searched in this session: a photo grouped while the scan is
-            # running is covered by that search and must not cost another provider call
-            searched_groups: set[int] = set()
 
             for img_id in ordered_image_ids:
                 # 1. Check cooperative cancellation before initiating next external request
@@ -415,7 +412,18 @@ class ScanEngine:
                     conn.commit()
                     continue
 
-                if img.photo_group_id is not None and img.photo_group_id in searched_groups:
+                # A photo grouped while the scan is running is covered when another current member
+                # of its group was already searched successfully in this session, whether it was
+                # grouped before, during or after that search: resolved against current membership
+                if img.photo_group_id is not None and conn.execute(
+                    """
+                    SELECT 1 FROM scan_items s JOIN images i ON i.id = s.image_id
+                    WHERE s.scan_session_id = ? AND s.status = 'SUCCESS'
+                      AND i.photo_group_id = ? AND s.image_id != ?
+                    LIMIT 1
+                    """,
+                    (session_id, img.photo_group_id, img.id),
+                ).fetchone():
                     processed += 1
                     successful += 1
                     usage_repo.record_scan_item(
@@ -565,9 +573,6 @@ class ScanEngine:
                         # Physical per-file history only: siblings are covered through derived
                         # group coverage (MAX over members), never by writing scans they did not get
                         image_repo.record_scan_completed(img.id)
-                        current = image_repo.get_by_id(img.id)
-                        if current and current.photo_group_id is not None:
-                            searched_groups.add(current.photo_group_id)
                         usage_repo.record_scan_item(
                             session_id=session_id,
                             image_id=img.id,

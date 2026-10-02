@@ -1412,3 +1412,111 @@ def test_creating_a_library_invalidates_the_candidate_cache(temp_dir: Path):
         before = conn.execute("SELECT generation FROM group_candidate_state").fetchone()[0]
         _make_library(conn, temp_dir, name="fresh")
         assert conn.execute("SELECT generation FROM group_candidate_state").fetchone()[0] == before + 1
+
+
+@pytest.mark.parametrize("n_entries", [200, 3_000])  # small-bucket fast path and scan path
+def test_comparison_budget_is_a_hard_ceiling_in_false_positive_buckets(temp_dir: Path, monkeypatch, n_entries: int):
+    """Hashes sharing one pigeonhole band but mostly beyond the threshold never saturate the
+    per-photo cap: the comparison budget alone must stop the bucket walk."""
+    import backend.repositories.group_repo as group_repo_module
+
+    budget = 1_000
+    monkeypatch.setattr(group_repo_module, "CANDIDATE_COMPARISON_BUDGET", budget)
+    db_file = temp_dir / "false_positive.sqlite"
+    init_db(db_file)
+    with get_db(db_file) as conn:
+        lib_id = _make_library(conn, temp_dir)
+        rng = random.Random(5)
+        for i in range(n_entries):
+            # Same low 16 bits (the first bands), random high bits: ~24 bits apart on average
+            _insert_image(conn, lib_id, i, (rng.getrandbits(48) << 16) | 0x5A3C)
+        conn.commit()
+        repo = PhotoGroupRepository(conn)
+        repo.find_candidates_page(limit=50)
+        assert repo.last_candidates_truncated is True
+        assert repo.last_candidate_comparisons <= budget
+        assert repo.last_candidate_comparisons < n_entries * (n_entries - 1) // 2
+
+
+def test_inherited_triage_survives_regroup_then_ungroup_as_a_folded_observation(client, db_conn, temp_dir: Path):
+    """A/X APPROVED, B/X UNREVIEWED; group A+B, purge A: B inherits APPROVED. Grouping B with C
+    (earlier X, so C's discovery becomes canonical and B's is folded) then dissolving must not
+    restore B's own pre-inheritance observation over the inherited decision."""
+    lib_a, lib_b, master, web = _two_library_pair(db_conn, temp_dir)
+    _rows, x_master, x_web = _x_rows(db_conn, master, web)
+    match_repo = MatchRepository(db_conn)
+    match_repo.update_classification_and_notes(x_master["id"], classification="APPROVED")
+    db_conn.commit()
+    group_repo = PhotoGroupRepository(db_conn)
+    group_repo.create_group([master.id, web.id], preferred_image_id=master.id)
+    LibraryRepository(db_conn).purge(lib_a.id)
+
+    b_x = db_conn.execute("SELECT * FROM matches WHERE id = ?", (x_web["id"],)).fetchone()
+    assert b_x["classification"] == "APPROVED" and b_x["inherited_at"] is not None
+
+    # C observed X earlier than B
+    c_id = _insert_image(db_conn, lib_b.id, 9_001, int(web.dhash, 16))
+    columns = [k for k in b_x.keys() if k != "id"]
+    c_row = dict(b_x)
+    c_row.update(
+        image_id=c_id, first_seen_at="2000-01-01T00:00:00+00:00", classification="UNREVIEWED",
+        classified_at=None, notes=None, canonical_match_id=None, fold_kind=None, folded_at=None,
+        inherited_at=None, inherited_from=None, merged_at=None, explicit_review_at=None,
+        obs_classification=None, obs_classified_at=None, obs_rule_id=None, obs_notes=None,
+        obs_is_new=None, obs_acknowledged_at=None, obs_captured_at=None, triage_conflict=0,
+    )
+    db_conn.execute(
+        f"INSERT INTO matches ({', '.join(columns)}) VALUES ({', '.join('?' for _ in columns)})",
+        tuple(c_row[k] for k in columns),
+    )
+    db_conn.commit()
+    group = group_repo.create_group([web.id, c_id], preferred_image_id=web.id)
+    b_x = db_conn.execute("SELECT * FROM matches WHERE id = ?", (x_web["id"],)).fetchone()
+    assert b_x["canonical_match_id"] is not None  # B's discovery is now a folded observation
+
+    group_repo.delete_group(group.id)
+
+    x = next(m for m in _group_review(client, web.id) if _identity(m) == _row_identity(x_web))
+    assert x["id"] == x_web["id"]
+    assert x["classification"] == "APPROVED"
+    assert x["inherited_from"] and f"photo #{master.id}" in x["inherited_from"]
+    assert x["observed_classification"] == "UNREVIEWED"
+
+
+def test_photo_grouped_after_an_earlier_search_in_the_same_scan_is_not_searched_again(db_conn, temp_dir: Path):
+    """A completes while ungrouped, the user then groups A+B before the worker reaches B."""
+    lib, master, web, p1, _p2 = _indexed_pair(db_conn, temp_dir)
+    filler_path = p1.with_name("filler.jpg")
+    _create_sample_image(filler_path, (30, 140, 200), "Filler")
+    img_repo = ImageRepository(db_conn)
+    LibraryIndexer(LibraryRepository(db_conn), img_repo, ThumbnailCache(temp_dir / "thumbs")).index_library(lib.id)
+    filler = img_repo.get_by_path(str(filler_path.resolve()))
+    engine = _scan_engine(db_conn)
+    calls: list[str] = []
+    from backend.providers.mock_provider import MockSearchProvider
+
+    original_search = MockSearchProvider.search
+
+    def counting_search(self, image_path, **kwargs):
+        calls.append(Path(image_path).name)
+        if Path(image_path).name == filler_path.name:
+            # A was searched (and recorded) while ungrouped; the user groups A+B now
+            side = get_connection_for(db_conn)
+            PhotoGroupRepository(side).create_group([master.id, web.id], preferred_image_id=master.id)
+            side.close()
+        return original_search(self, image_path, **kwargs)
+
+    import backend.providers.mock_provider as mock_module
+    mock_module.MockSearchProvider.search = counting_search
+    try:
+        session = engine.start_background_scan(image_ids=[master.id, filler.id, web.id], provider_override="mock")
+        _wait_for_scan(session.id)
+    finally:
+        mock_module.MockSearchProvider.search = original_search
+    db_conn.commit()
+    assert Path(web.file_path).name not in calls
+    items = {
+        r["image_id"]: r["status"]
+        for r in db_conn.execute("SELECT image_id, status FROM scan_items WHERE scan_session_id = ?", (session.id,))
+    }
+    assert items == {master.id: "SUCCESS", filler.id: "SUCCESS", web.id: "SKIPPED"}
