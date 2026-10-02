@@ -117,6 +117,8 @@ export interface MatchItem {
   observed_rule_id?: number | null;
   /** Merged observations carry incompatible decisions awaiting an explicit review */
   triage_conflict?: boolean;
+  /** Last explicit review action by the user */
+  explicit_review_at?: string | null;
   image_thumbnail_url?: string | null;
   image_project?: string | null;
 }

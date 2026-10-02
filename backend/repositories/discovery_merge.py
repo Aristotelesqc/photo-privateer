@@ -44,7 +44,7 @@ FOLD_LINEAGE = "LINEAGE"
 _LOGICAL_FIELDS = (
     "first_seen_at", "last_seen_at", "scan_session_id", "page_title", "page_score",
     "classification", "classified_at", "auto_classified_by_rule_id", "notes", "is_new", "acknowledged_at",
-    "triage_conflict",
+    "triage_conflict", "explicit_review_at", "merged_at",
 )
 
 
@@ -81,8 +81,11 @@ def _merged_state(rows: list[sqlite3.Row], survivor: sqlite3.Row) -> dict[str, o
             notes = f"{conflict}\n---\n{notes}" if notes else conflict
         classification, classified_at, rule_id = CLASS_UNREVIEWED, None, None
         is_new, acknowledged_at, triage_conflict = 1, None, 1
+        # A conflict needs a new explicit review: earlier reviews no longer stand for the merge
+        explicit_review_at = None
     else:
         triage_conflict = 0
+        explicit_review_at = max((r["explicit_review_at"] for r in rows if r["explicit_review_at"]), default=None)
         if decisions:
             same = [r for r in reviewed if r["classification"] == decisions[0]]
             classification = decisions[0]
@@ -110,6 +113,11 @@ def _merged_state(rows: list[sqlite3.Row], survivor: sqlite3.Row) -> dict[str, o
         "is_new": is_new,
         "acknowledged_at": acknowledged_at,
         "triage_conflict": triage_conflict,
+        "explicit_review_at": explicit_review_at,
+        "merged_at": min(
+            (r["merged_at"] for r in rows if r["merged_at"]),
+            default=datetime.now(timezone.utc).isoformat(),
+        ),
     }
 
 
@@ -145,6 +153,8 @@ def _restore_observation_triage(cur: sqlite3.Cursor, match_id: int) -> None:
             is_new = obs_is_new,
             acknowledged_at = obs_acknowledged_at,
             triage_conflict = 0,
+            explicit_review_at = NULL,
+            merged_at = NULL,
             obs_classification = NULL, obs_classified_at = NULL, obs_rule_id = NULL,
             obs_notes = NULL, obs_is_new = NULL, obs_acknowledged_at = NULL, obs_captured_at = NULL
         WHERE id = ? AND obs_captured_at IS NOT NULL
@@ -368,4 +378,24 @@ def reconcile_group_folds(conn: sqlite3.Connection) -> set[int]:
 
     for gid in regroup:
         affected |= coalesce_group_discoveries(conn, gid)
+
+    # A former canonical discovery whose photo is no longer grouped and that no longer represents
+    # other observations returns to its own original triage, unless the user explicitly reviewed
+    # the logical discovery since it began carrying merged state (merged_at, which travels with
+    # handovers) (then that decision stays and the original triage
+    # remains available as provenance in obs_*).
+    cur.execute(
+        """
+        SELECT m.id, m.image_id FROM matches m
+        JOIN images i ON i.id = m.image_id
+        WHERE m.canonical_match_id IS NULL
+          AND m.obs_captured_at IS NOT NULL
+          AND i.photo_group_id IS NULL
+          AND NOT EXISTS (SELECT 1 FROM matches f WHERE f.canonical_match_id = m.id)
+          AND (m.explicit_review_at IS NULL OR m.explicit_review_at < COALESCE(m.merged_at, m.obs_captured_at))
+        """
+    )
+    for r in cur.fetchall():
+        _restore_observation_triage(cur, r["id"])
+        affected.add(r["image_id"])
     return affected

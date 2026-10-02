@@ -84,6 +84,7 @@ class MatchRepository:
                 else r["auto_classified_by_rule_id"]
             ),
             triage_conflict=bool(r["triage_conflict"]) if "triage_conflict" in r.keys() else False,
+            explicit_review_at=r["explicit_review_at"] if "explicit_review_at" in r.keys() else None,
         )
 
     def get_by_id(self, match_id: int) -> Optional[MatchOut]:
@@ -358,6 +359,11 @@ class MatchRepository:
 
         if not fields:
             return self.get_by_id(match_id)
+
+        # Any review action by the user counts as explicit, even when it re-selects the value
+        # already displayed (values alone cannot tell an explicit review from an automatic merge)
+        fields.append("explicit_review_at = ?")
+        params.append(now)
 
         params.append(match_id)
         cur.execute(f"UPDATE matches SET {', '.join(fields)} WHERE id = ?", tuple(params))

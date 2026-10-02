@@ -453,6 +453,20 @@ def migration_013_match_triage_conflict(conn: sqlite3.Connection) -> None:
     if "triage_conflict" not in cols:
         conn.execute("ALTER TABLE matches ADD COLUMN triage_conflict INTEGER NOT NULL DEFAULT 0;")
 
+def migration_014_match_explicit_review(conn: sqlite3.Connection) -> None:
+    """Records when the user explicitly reviewed a discovery (classification, acknowledgement or
+    notes through the API), independently of the resulting values. Automatic merges and domain
+    rules never set it. Used to decide whether a dissolved group's former canonical discovery
+    returns to its original triage."""
+    cur = conn.cursor()
+    cur.execute("PRAGMA table_info(matches)")
+    cols = {row[1] for row in cur.fetchall()}
+    if "explicit_review_at" not in cols:
+        conn.execute("ALTER TABLE matches ADD COLUMN explicit_review_at TEXT;")
+    # When the logical discovery began carrying merged state (travels with handovers)
+    if "merged_at" not in cols:
+        conn.execute("ALTER TABLE matches ADD COLUMN merged_at TEXT;")
+
 MIGRATIONS: list[Migration] = [
     Migration(1, "001_initial_schema", migration_001_initial_schema),
     Migration(2, "002_library_archiving_and_disk_presence", migration_002_library_archiving_and_disk_presence),
@@ -467,6 +481,7 @@ MIGRATIONS: list[Migration] = [
     Migration(11, "011_match_observation_folding", migration_011_match_observation_folding),
     Migration(12, "012_observation_original_triage", migration_012_observation_original_triage),
     Migration(13, "013_match_triage_conflict", migration_013_match_triage_conflict),
+    Migration(14, "014_match_explicit_review", migration_014_match_explicit_review),
 ]
 
 def run_migrations(conn: sqlite3.Connection) -> list[int]:

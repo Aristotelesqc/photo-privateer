@@ -1104,3 +1104,90 @@ def test_perceptual_pass_work_is_linear_in_duplicate_and_grouped_clusters(temp_d
         pairs, total = repo.find_candidates_page(limit=1000)
         assert total == 300 and all(loose in (p.image_a.id, p.image_b.id) for p in pairs)
         assert repo.last_candidate_comparisons <= 11 * 300  # grouped x grouped pairs are never compared
+
+
+# --- Triage restoration on group dissolution (owner's decision on 6a59c22) ---
+
+
+def _triaged_pair(client, db_conn, temp_dir, a_class, a_notes, b_class, b_notes):
+    _lib, master, web, _p1, _p2 = _indexed_pair(db_conn, temp_dir)
+    _rows, x_master, x_web = _x_rows(db_conn, master, web)
+    match_repo = MatchRepository(db_conn)
+    match_repo.update_classification_and_notes(x_master["id"], classification=a_class, notes=a_notes)
+    match_repo.update_classification_and_notes(x_web["id"], classification=b_class, notes=b_notes)
+    db_conn.commit()
+    group = PhotoGroupRepository(db_conn).create_group([master.id, web.id], preferred_image_id=master.id)
+
+    def x_of(image_id, x_row):
+        return next(m for m in _group_review(client, image_id) if _identity(m) == _row_identity(x_row))
+
+    return master, web, x_master, x_web, group, x_of
+
+
+def test_dissolving_without_explicit_review_restores_original_triage(client, db_conn, temp_dir: Path):
+    master, web, x_master, x_web, group, x_of = _triaged_pair(
+        client, db_conn, temp_dir, "APPROVED", "A note", "UNAUTHORIZED", "B note"
+    )
+    logical = x_of(master.id, x_master)
+    assert logical["classification"] == "UNREVIEWED" and logical["triage_conflict"] is True
+    assert logical["explicit_review_at"] is None  # automatic coalescence is not a review
+
+    PhotoGroupRepository(db_conn).delete_group(group.id)
+    a_x, b_x = x_of(master.id, x_master), x_of(web.id, x_web)
+    assert (a_x["classification"], a_x["notes"]) == ("APPROVED", "A note")
+    assert (b_x["classification"], b_x["notes"]) == ("UNAUTHORIZED", "B note")
+    assert a_x["triage_conflict"] is False
+    assert ImageRepository(db_conn).get_by_id(master.id).unreviewed_count == len(_group_review(client, master.id)) - 1
+
+
+def test_dissolving_after_explicit_review_keeps_the_groups_decision(client, db_conn, temp_dir: Path):
+    master, web, x_master, x_web, group, x_of = _triaged_pair(
+        client, db_conn, temp_dir, "APPROVED", "A note", "UNAUTHORIZED", "B note"
+    )
+    logical = x_of(master.id, x_master)
+    resp = client.patch(f"/api/matches/{logical['id']}", json={"classification": "IRRELEVANT"})
+    assert resp.status_code == 200 and resp.json()["explicit_review_at"]
+
+    PhotoGroupRepository(db_conn).delete_group(group.id)
+    a_x, b_x = x_of(master.id, x_master), x_of(web.id, x_web)
+    assert a_x["classification"] == "IRRELEVANT"  # the explicit group decision stays
+    assert a_x["observed_classification"] == "APPROVED" and a_x["observed_notes"] == "A note"  # provenance kept
+    assert (b_x["classification"], b_x["notes"]) == ("UNAUTHORIZED", "B note")
+
+
+@pytest.mark.parametrize("explicit", [False, True])
+def test_explicit_review_selecting_the_unchanged_classification_counts(client, db_conn, temp_dir: Path, explicit: bool):
+    master, web, x_master, x_web, group, x_of = _triaged_pair(
+        client, db_conn, temp_dir, "APPROVED", "A note", "APPROVED", "B note"
+    )
+    logical = x_of(master.id, x_master)
+    assert logical["classification"] == "APPROVED" and "B note" in logical["notes"]  # merged automatically
+    if explicit:
+        resp = client.patch(f"/api/matches/{logical['id']}", json={"classification": "APPROVED"})
+        assert resp.status_code == 200
+
+    PhotoGroupRepository(db_conn).delete_group(group.id)
+    a_x = x_of(master.id, x_master)
+    assert a_x["classification"] == "APPROVED"
+    assert a_x["observed_notes"] == "A note"
+    if explicit:
+        # Same value, but an explicit review: the group's discovery (merged notes) stays as decided
+        assert "B note" in a_x["notes"]
+    else:
+        # No review since the merge: back to the photo's own original state
+        assert a_x["notes"] == "A note"
+
+
+def test_automatic_merges_never_advance_the_explicit_review_marker(client, db_conn, temp_dir: Path):
+    master, web, x_master, _x_web, group, x_of = _triaged_pair(
+        client, db_conn, temp_dir, "APPROVED", None, "APPROVED", None
+    )
+    logical = x_of(master.id, x_master)
+    before = logical["explicit_review_at"]
+    # Pre-group reviews happened before the merge: they do not count as a review of the group
+    row = db_conn.execute(
+        "SELECT explicit_review_at, merged_at FROM matches WHERE id = ?", (logical["id"],)
+    ).fetchone()
+    assert row["explicit_review_at"] < row["merged_at"]
+    PhotoGroupRepository(db_conn).remove_image_from_group(group.id, web.id)
+    assert x_of(master.id, x_master)["explicit_review_at"] in (None, before)

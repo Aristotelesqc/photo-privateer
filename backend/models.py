@@ -158,6 +158,8 @@ class MatchOut(BaseModel):
     observed_rule_id: Optional[int] = None
     # Merged observations carry incompatible decisions; cleared only by an explicit classification
     triage_conflict: bool = False
+    # Last explicit review action by the user (classification, acknowledgement or notes)
+    explicit_review_at: Optional[str] = None
     image_filename: Optional[str] = None
     image_thumbnail_url: Optional[str] = None
     image_project: Optional[str] = None
