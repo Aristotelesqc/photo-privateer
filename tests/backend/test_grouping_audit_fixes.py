@@ -981,3 +981,126 @@ def test_canonical_observation_keeps_its_own_original_triage(client, db_conn, te
     assert b_x["classification"] == "UNAUTHORIZED" and b_x["observed_classification"] == "UNAUTHORIZED"
     a_x = next(m for m in _group_review(client, master.id) if _identity(m) == _row_identity(x_master))
     assert a_x["observed_classification"] == "APPROVED" and a_x["observed_notes"] == "Licensed"
+
+
+# --- Audit of c84891f: group-first scans, persistent conflicts, active preview, perceptual work ---
+
+
+def test_grouped_scan_of_new_representative_retains_physical_observation(client, db_conn, temp_dir: Path):
+    lib_a, _lib_b, master, web = _two_library_pair(db_conn, temp_dir)
+    _assert_provider_returns_same_discoveries(master.file_path, web.file_path)
+    group_repo = PhotoGroupRepository(db_conn)
+    group = group_repo.create_group([master.id, web.id], preferred_image_id=master.id)  # grouped before any scan
+    _scan(db_conn, [master.id])
+    group_repo.set_preferred_image(group.id, web.id)
+    _scan(db_conn, [web.id])
+
+    a_rows, b_rows = _matches_of(db_conn, [master.id]), _matches_of(db_conn, [web.id])
+    assert a_rows and sorted(_row_identity(r) for r in b_rows) == sorted(_row_identity(r) for r in a_rows)
+    total_before = len(_group_review(client, web.id))
+    LibraryRepository(db_conn).purge(lib_a.id)
+    assert len(_group_review(client, web.id)) == total_before == len(a_rows)
+
+
+def test_joining_third_photo_cannot_silently_resolve_existing_conflict(client, db_conn, temp_dir: Path):
+    lib, master, web, p1, _p2 = _indexed_pair(db_conn, temp_dir)
+    p3 = p1.with_name("multi_third.jpg")
+    with Image.open(p1) as img:
+        img.resize((160, 160)).save(p3, format="JPEG", quality=84)
+    img_repo = ImageRepository(db_conn)
+    LibraryIndexer(LibraryRepository(db_conn), img_repo, ThumbnailCache(temp_dir / "thumbs")).index_library(lib.id)
+    third = img_repo.get_by_path(str(p3.resolve()))
+    _assert_provider_returns_same_discoveries(master.file_path, third.file_path)
+    _rows, x_master, x_web = _x_rows(db_conn, master, web)
+    _scan(db_conn, [third.id])
+    x_third = next(r for r in _matches_of(db_conn, [third.id]) if _row_identity(r) == _row_identity(x_master))
+
+    match_repo = MatchRepository(db_conn)
+    match_repo.update_classification_and_notes(x_master["id"], classification="APPROVED")
+    match_repo.update_classification_and_notes(x_web["id"], classification="UNAUTHORIZED")
+    match_repo.update_classification_and_notes(x_third["id"], classification="APPROVED")
+    db_conn.commit()
+
+    group_repo = PhotoGroupRepository(db_conn)
+    group = group_repo.create_group([master.id, web.id], preferred_image_id=master.id)
+
+    def logical_x():
+        return next(m for m in _group_review(client, master.id) if _identity(m) == _row_identity(x_master))
+
+    assert logical_x()["classification"] == "UNREVIEWED" and logical_x()["triage_conflict"] is True
+    group_repo.add_image_to_group(group.id, third.id)
+    assert logical_x()["classification"] == "UNREVIEWED"  # not silently resolved by C's APPROVED
+    assert logical_x()["triage_conflict"] is True
+    assert logical_x()["observation_count"] == 3
+
+    # Domain rules never auto-resolve an open conflict
+    rule = DomainRuleRepository(db_conn).upsert_rule(x_master["domain"], "IRRELEVANT")
+    match_repo.apply_rule_to_unreviewed_matches(rule.domain, "IRRELEVANT", rule_id=rule.id)
+    assert logical_x()["classification"] == "UNREVIEWED"
+
+    # Only an explicit decision resolves it; later merges then use that decision
+    resp = client.patch(f"/api/matches/{logical_x()['id']}", json={"classification": "UNAUTHORIZED"})
+    assert resp.status_code == 200
+    assert logical_x()["classification"] == "UNAUTHORIZED" and logical_x()["triage_conflict"] is False
+
+
+def test_canonical_original_decision_remains_inspectable_after_conflict(client, db_conn, temp_dir: Path):
+    _lib, master, web, _p1, _p2 = _indexed_pair(db_conn, temp_dir)
+    _rows, x_master, x_web = _x_rows(db_conn, master, web)
+    match_repo = MatchRepository(db_conn)
+    approved = match_repo.update_classification_and_notes(x_master["id"], classification="APPROVED")
+    match_repo.update_classification_and_notes(x_web["id"], classification="UNAUTHORIZED")
+    db_conn.commit()
+    PhotoGroupRepository(db_conn).create_group([master.id, web.id], preferred_image_id=master.id)
+    logical = next(m for m in _group_review(client, master.id) if _identity(m) == _row_identity(x_master))
+    assert logical["classified_at"] is None  # logical state requires review
+    obs = {o["image_id"]: o for o in client.get(f"/api/matches/{logical['id']}/observations").json()}
+    assert obs[master.id]["observed_classification"] == "APPROVED"
+    assert obs[master.id]["observed_classified_at"] == approved.classified_at
+    assert obs[master.id]["observed_rule_id"] is None
+    assert obs[web.id]["observed_classification"] == "UNAUTHORIZED"
+
+
+def test_preview_of_active_member_avoids_archived_group_owner(client, db_conn, temp_dir: Path):
+    lib_a, _lib_b, master, web = _two_library_pair(db_conn, temp_dir)
+    _assert_provider_returns_same_discoveries(master.file_path, web.file_path)
+    PhotoGroupRepository(db_conn).create_group([master.id, web.id], preferred_image_id=master.id)
+    _scan(db_conn, [master.id])
+    LibraryRepository(db_conn).archive(lib_a.id)
+    _scan(db_conn, [web.id])
+
+    review = _group_review(client, web.id)
+    assert review
+    for m in review:
+        assert m["display_image_id"] == web.id
+    assert client.get(f"/api/photos/{review[0]['display_image_id']}/file").status_code == 200
+
+
+def test_perceptual_pass_work_is_linear_in_duplicate_and_grouped_clusters(temp_dir: Path):
+    db_file = temp_dir / "work.sqlite"
+    init_db(db_file)
+    with get_db(db_file) as conn:
+        lib_id = _make_library(conn, temp_dir)
+        value = 0xA5A5_5A5A_0FF0_F00F
+        for i in range(1000):  # byte-identical copies with an identical informative dHash
+            _insert_image(conn, lib_id, i, value, sha="same")
+        conn.commit()
+        repo = PhotoGroupRepository(conn)
+        _pairs, total = repo.find_candidates_page(limit=10)
+        assert total == 999
+        assert repo.last_candidate_comparisons == 0  # 11 * n * (n - 1) / 2 = 5,494,500 before
+
+        # 300 near-identical photos already in one group plus one loose variant
+        db2 = temp_dir / "work2.sqlite"
+        init_db(db2)
+    with get_db(db2) as conn:
+        lib_id = _make_library(conn, temp_dir, name="lib2")
+        ids = [_insert_image(conn, lib_id, i, value ^ (i % 3)) for i in range(300)]
+        conn.commit()
+        repo = PhotoGroupRepository(conn)
+        repo.create_group(ids)
+        loose = _insert_image(conn, lib_id, 999, value ^ 0b1000)
+        conn.commit()
+        pairs, total = repo.find_candidates_page(limit=1000)
+        assert total == 300 and all(loose in (p.image_a.id, p.image_b.id) for p in pairs)
+        assert repo.last_candidate_comparisons <= 11 * 300  # grouped x grouped pairs are never compared

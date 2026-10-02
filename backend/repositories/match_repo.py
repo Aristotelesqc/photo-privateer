@@ -7,17 +7,22 @@ from typing import Optional
 from backend.models import MatchOut
 from backend.config import CLASS_UNREVIEWED
 
-# Photo to preview for a discovery: the owning record when present on disk, otherwise an available
-# member of its photo group (primary first), so a discovery rediscovered through a fallback member
+# Photo to preview for a discovery: the owning record when present on disk in an active (enabled,
+# non-archived) library, the same rule the original-file service applies, otherwise such a member
+# of its photo group (primary first), so a discovery rediscovered through a fallback member
 # still previews when its original owner is missing. `image_id` stays the provenance owner.
 DISPLAY_IMAGE_SQL = """
     COALESCE(
-        CASE WHEN i.is_present_on_disk = 1 THEN i.id END,
+        CASE WHEN i.is_present_on_disk = 1 AND EXISTS (
+            SELECT 1 FROM libraries il WHERE il.id = i.library_id AND il.enabled = 1 AND il.is_archived = 0
+        ) THEN i.id END,
         (
             SELECT g.id FROM images g
+            JOIN libraries gl ON gl.id = g.library_id
             WHERE i.photo_group_id IS NOT NULL
               AND g.photo_group_id = i.photo_group_id
               AND g.is_present_on_disk = 1
+              AND gl.enabled = 1 AND gl.is_archived = 0
             ORDER BY g.is_primary_representation DESC, g.id ASC
             LIMIT 1
         ),
@@ -71,6 +76,14 @@ class MatchRepository:
             observed_notes=(
                 r["obs_notes"] if "obs_captured_at" in r.keys() and r["obs_captured_at"] else r["notes"]
             ),
+            observed_classified_at=(
+                r["obs_classified_at"] if "obs_captured_at" in r.keys() and r["obs_captured_at"] else r["classified_at"]
+            ),
+            observed_rule_id=(
+                r["obs_rule_id"] if "obs_captured_at" in r.keys() and r["obs_captured_at"]
+                else r["auto_classified_by_rule_id"]
+            ),
+            triage_conflict=bool(r["triage_conflict"]) if "triage_conflict" in r.keys() else False,
         )
 
     def get_by_id(self, match_id: int) -> Optional[MatchOut]:
@@ -325,6 +338,8 @@ class MatchRepository:
             params.append(now)
             # Manual user classification clears auto_classified_by_rule_id provenance
             fields.append("auto_classified_by_rule_id = NULL")
+            # An explicit decision by the user resolves a merged triage conflict
+            fields.append("triage_conflict = 0")
             if classification != CLASS_UNREVIEWED:
                 fields.append("is_new = 0")
                 fields.append("acknowledged_at = COALESCE(acknowledged_at, ?)")
@@ -380,6 +395,7 @@ class MatchRepository:
             WHERE (domain = ? OR domain LIKE '%.' || ?) 
               AND classification = 'UNREVIEWED'
               AND canonical_match_id IS NULL
+              AND triage_conflict = 0
         """, (classification, now, rule_id, domain, domain))
         updated_count = cur.rowcount
 

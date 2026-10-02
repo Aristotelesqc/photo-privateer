@@ -44,6 +44,7 @@ FOLD_LINEAGE = "LINEAGE"
 _LOGICAL_FIELDS = (
     "first_seen_at", "last_seen_at", "scan_session_id", "page_title", "page_score",
     "classification", "classified_at", "auto_classified_by_rule_id", "notes", "is_new", "acknowledged_at",
+    "triage_conflict",
 )
 
 
@@ -68,15 +69,20 @@ def _merged_state(rows: list[sqlite3.Row], survivor: sqlite3.Row) -> dict[str, o
     notes = _merge_notes(rows)
     acknowledged = [r["acknowledged_at"] for r in rows if r["acknowledged_at"]]
 
-    if len(decisions) > 1:
-        detail = ", ".join(
-            f"{r['classification']} (photo #{r['image_id']})" for r in sorted(reviewed, key=lambda r: r["id"])
-        )
-        conflict = f"{CONFLICT_NOTE_PREFIX} Previous decisions: {detail}. Please review again."
-        notes = f"{conflict}\n---\n{notes}" if notes else conflict
+    # An unresolved conflict carried by any merged discovery stays unresolved: only an explicit
+    # classification by the user clears it (MatchRepository.update_classification_and_notes)
+    unresolved = any(r["triage_conflict"] for r in rows)
+    if len(decisions) > 1 or unresolved:
+        if reviewed:
+            detail = ", ".join(
+                f"{r['classification']} (photo #{r['image_id']})" for r in sorted(reviewed, key=lambda r: r["id"])
+            )
+            conflict = f"{CONFLICT_NOTE_PREFIX} Previous decisions: {detail}. Please review again."
+            notes = f"{conflict}\n---\n{notes}" if notes else conflict
         classification, classified_at, rule_id = CLASS_UNREVIEWED, None, None
-        is_new, acknowledged_at = 1, None
+        is_new, acknowledged_at, triage_conflict = 1, None, 1
     else:
+        triage_conflict = 0
         if decisions:
             same = [r for r in reviewed if r["classification"] == decisions[0]]
             classification = decisions[0]
@@ -103,6 +109,7 @@ def _merged_state(rows: list[sqlite3.Row], survivor: sqlite3.Row) -> dict[str, o
         "notes": notes,
         "is_new": is_new,
         "acknowledged_at": acknowledged_at,
+        "triage_conflict": triage_conflict,
     }
 
 
@@ -137,6 +144,7 @@ def _restore_observation_triage(cur: sqlite3.Cursor, match_id: int) -> None:
             notes = obs_notes,
             is_new = obs_is_new,
             acknowledged_at = obs_acknowledged_at,
+            triage_conflict = 0,
             obs_classification = NULL, obs_classified_at = NULL, obs_rule_id = NULL,
             obs_notes = NULL, obs_is_new = NULL, obs_acknowledged_at = NULL, obs_captured_at = NULL
         WHERE id = ? AND obs_captured_at IS NOT NULL

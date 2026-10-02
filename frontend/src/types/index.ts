@@ -113,6 +113,10 @@ export interface MatchItem {
   /** This physical observation's own original triage (provenance) */
   observed_classification?: string | null;
   observed_notes?: string | null;
+  observed_classified_at?: string | null;
+  observed_rule_id?: number | null;
+  /** Merged observations carry incompatible decisions awaiting an explicit review */
+  triage_conflict?: boolean;
   image_thumbnail_url?: string | null;
   image_project?: string | null;
 }

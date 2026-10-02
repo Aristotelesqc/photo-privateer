@@ -53,6 +53,8 @@ class PhotoGroupRepository:
     def __init__(self, conn: sqlite3.Connection):
         self.conn = conn
         self.image_repo = ImageRepository(conn)
+        # Distance computations performed by the last uncached candidate search (diagnostics/tests)
+        self.last_candidate_comparisons = 0
 
     def get_preferred_image_id(self, group_id: int) -> Optional[int]:
         """Returns the preferred image ID for a group in O(1) without loading images."""
@@ -381,13 +383,17 @@ class PhotoGroupRepository:
             if r["sha256"]:
                 sha_groups[r["sha256"]].append((r["id"], r["photo_group_id"]))
 
-        for members in sha_groups.values():
+        sha_representative: dict[str, int] = {}
+        for sha, members in sha_groups.items():
+            anchors = sorted(members, key=lambda m: (m[1] is None, m[0]))
+            sha_representative[sha] = anchors[0][0]
             if len(members) < 2:
                 continue
-            anchors = sorted(members, key=lambda m: (m[1] is None, m[0]))
+            # A grouped copy can only pair with an ungrouped anchor: never walk grouped anchors for it
+            ungrouped_anchors = [a for a in anchors if a[1] is None]
             for id_b, g_b in members:
-                for id_a, g_a in anchors:
-                    if id_a == id_b or (g_a is not None and g_b is not None):
+                for id_a, _g_a in (anchors if g_b is None else ungrouped_anchors):
+                    if id_a == id_b:
                         continue
                     pair_key = (id_a, id_b) if id_a < id_b else (id_b, id_a)
                     if pair_key in dismissed:
@@ -397,12 +403,15 @@ class PhotoGroupRepository:
                         candidates.append((0, 0, pair_key[0], pair_key[1], True))
                     break
 
-        # 2. Perceptual dHash variants via pigeonhole band bucketing
+        # 2. Perceptual dHash variants via pigeonhole band bucketing. Each byte-identical cluster
+        # takes part through its representative only (its other copies already pair with it in the
+        # exact pass), and pairs of two already-grouped photos are never compared.
         entries: list[tuple[int, int, Optional[int]]] = []
-        sha_by_id = {r["id"]: r["sha256"] for r in rows}
         for r in rows:
             dh = r["dhash"]
             if not dh:
+                continue
+            if r["sha256"] and sha_representative.get(r["sha256"]) != r["id"]:
                 continue
             try:
                 value = int(dh, 16)
@@ -411,35 +420,43 @@ class PhotoGroupRepository:
             if is_informative_dhash_value(value):
                 entries.append((r["id"], value, r["photo_group_id"]))
 
+        comparisons = 0
         found: dict[Tuple[int, int], int] = {}
+
+        def record(pos_a: int, pos_b: int) -> None:
+            id_a, h_a, _ga = entries[pos_a]
+            id_b, h_b, _gb = entries[pos_b]
+            pair_key = (id_a, id_b) if id_a < id_b else (id_b, id_a)
+            if pair_key in found or pair_key in exact_pairs_seen or pair_key in dismissed:
+                return
+            found[pair_key] = (h_a ^ h_b).bit_count()
+
         for shift, mask in _band_layout(threshold):
             buckets: dict[int, list[int]] = defaultdict(list)
             for pos, entry in enumerate(entries):
                 buckets[(entry[1] >> shift) & mask].append(pos)
             for bucket in buckets.values():
-                size = len(bucket)
-                if size < 2:
+                if len(bucket) < 2:
                     continue
-                hashes = [entries[pos][1] for pos in bucket]
-                for i in range(size - 1):
-                    h_a = hashes[i]
-                    # Distance first: by far the most selective and cheapest test
-                    hits = [j for j in range(i + 1, size) if (h_a ^ hashes[j]).bit_count() <= threshold]
-                    if not hits:
-                        continue
-                    id_a, _h, g_a = entries[bucket[i]]
-                    for j in hits:
-                        id_b, h_b, g_b = entries[bucket[j]]
-                        if g_a is not None and g_b is not None:
-                            continue
-                        # Byte-identical copies are handled by the linear exact-duplicate pass
-                        if sha_by_id[id_a] and sha_by_id[id_a] == sha_by_id[id_b]:
-                            continue
-                        pair_key = (id_a, id_b) if id_a < id_b else (id_b, id_a)
-                        if pair_key in found or pair_key in exact_pairs_seen or pair_key in dismissed:
-                            continue
-                        found[pair_key] = (h_a ^ h_b).bit_count()
+                loose = [pos for pos in bucket if entries[pos][2] is None]
+                if not loose:
+                    continue
+                grouped = [pos for pos in bucket if entries[pos][2] is not None]
+                loose_hashes = [entries[pos][1] for pos in loose]
+                n_loose = len(loose)
+                # Distance first: by far the most selective and cheapest test
+                for i in range(n_loose - 1):
+                    h_a = loose_hashes[i]
+                    comparisons += n_loose - i - 1
+                    for j in [j for j in range(i + 1, n_loose) if (h_a ^ loose_hashes[j]).bit_count() <= threshold]:
+                        record(loose[i], loose[j])
+                for pos in grouped:
+                    h_a = entries[pos][1]
+                    comparisons += n_loose
+                    for j in [j for j in range(n_loose) if (h_a ^ loose_hashes[j]).bit_count() <= threshold]:
+                        record(pos, loose[j])
 
+        self.last_candidate_comparisons = comparisons
         candidates.extend((1, dist, a, b, False) for (a, b), dist in found.items())
         candidates.sort()
         return candidates

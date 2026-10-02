@@ -443,6 +443,16 @@ def migration_012_observation_original_triage(conn: sqlite3.Connection) -> None:
         if name not in cols:
             conn.execute(f"ALTER TABLE matches ADD COLUMN {name} {sql_type};")
 
+def migration_013_match_triage_conflict(conn: sqlite3.Connection) -> None:
+    """Marks a logical discovery whose merged observations carry incompatible reviewed decisions.
+    The mark persists through further merges until the user explicitly classifies the discovery.
+    """
+    cur = conn.cursor()
+    cur.execute("PRAGMA table_info(matches)")
+    cols = {row[1] for row in cur.fetchall()}
+    if "triage_conflict" not in cols:
+        conn.execute("ALTER TABLE matches ADD COLUMN triage_conflict INTEGER NOT NULL DEFAULT 0;")
+
 MIGRATIONS: list[Migration] = [
     Migration(1, "001_initial_schema", migration_001_initial_schema),
     Migration(2, "002_library_archiving_and_disk_presence", migration_002_library_archiving_and_disk_presence),
@@ -456,6 +466,7 @@ MIGRATIONS: list[Migration] = [
     Migration(10, "010_group_candidate_generation", migration_010_group_candidate_generation),
     Migration(11, "011_match_observation_folding", migration_011_match_observation_folding),
     Migration(12, "012_observation_original_triage", migration_012_observation_original_triage),
+    Migration(13, "013_match_triage_conflict", migration_013_match_triage_conflict),
 ]
 
 def run_migrations(conn: sqlite3.Connection) -> list[int]:

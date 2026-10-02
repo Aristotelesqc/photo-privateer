@@ -84,7 +84,13 @@ test.describe.serial('Photo Privateer End-to-End Test Suite', () => {
     // Fill folder path and add library
     await page.fill('[data-testid="input-folder-path"]', testPhotoDir);
     await page.fill('[data-testid="input-folder-name"]', testLibraryName);
+    // Wait for the indexing request to finish before opening the library (avoids an indexing race)
+    const indexed = page.waitForResponse(
+      (resp) => /\/api\/libraries\/\d+\/index$/.test(new URL(resp.url()).pathname) && resp.request().method() === 'POST',
+      { timeout: 20000 }
+    );
     await page.click('button:has-text("Add & Index")');
+    expect((await indexed).ok()).toBeTruthy();
 
     // Confirm folder is listed in monitored folders
     await expect(

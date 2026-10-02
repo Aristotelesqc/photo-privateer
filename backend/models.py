@@ -154,6 +154,10 @@ class MatchOut(BaseModel):
     # the row carries a merged logical discovery state)
     observed_classification: Optional[str] = None
     observed_notes: Optional[str] = None
+    observed_classified_at: Optional[str] = None
+    observed_rule_id: Optional[int] = None
+    # Merged observations carry incompatible decisions; cleared only by an explicit classification
+    triage_conflict: bool = False
     image_filename: Optional[str] = None
     image_thumbnail_url: Optional[str] = None
     image_project: Optional[str] = None
