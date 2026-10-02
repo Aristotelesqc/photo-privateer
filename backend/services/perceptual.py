@@ -45,9 +45,24 @@ def compute_dhash(image_input: Union[str, Path, Image.Image]) -> Optional[str]:
         return None
 
 
+def _flatten_alpha(img: Image.Image) -> Image.Image:
+    """Composites images with transparency onto an opaque white matte. Fully transparent pixels
+    may store any RGB value (black in one export, white in another); without a matte those hidden
+    values would drive the luminance gradients and make two exports of one cut-out unrelated."""
+    has_alpha = img.mode in ("RGBA", "LA", "PA", "La", "RGBa") or (
+        img.mode == "P" and "transparency" in img.info
+    )
+    if not has_alpha:
+        return img
+    rgba = img.convert("RGBA")
+    matte = Image.new("RGBA", rgba.size, (255, 255, 255, 255))
+    matte.alpha_composite(rgba)
+    return matte.convert("RGB")
+
+
 def _dhash_from_pil(img: Image.Image) -> str:
     """Internal helper to compute 64-bit dHash from an open PIL image."""
-    gray = img.convert("L")
+    gray = _flatten_alpha(img).convert("L")
     resized = gray.resize((9, 8), Image.Resampling.LANCZOS)
     pixels = list(resized.tobytes())
 

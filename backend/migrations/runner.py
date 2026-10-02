@@ -467,6 +467,22 @@ def migration_014_match_explicit_review(conn: sqlite3.Connection) -> None:
     if "merged_at" not in cols:
         conn.execute("ALTER TABLE matches ADD COLUMN merged_at TEXT;")
 
+def migration_015_discovery_inheritance(conn: sqlite3.Connection) -> None:
+    """Records discoveries inherited from a permanently purged photo of the same group (handover
+    or re-homing), which must never be "restored" away later, and adds the missing candidate
+    generation trigger for new libraries."""
+    cur = conn.cursor()
+    cur.execute("PRAGMA table_info(matches)")
+    cols = {row[1] for row in cur.fetchall()}
+    if "inherited_at" not in cols:
+        conn.execute("ALTER TABLE matches ADD COLUMN inherited_at TEXT;")
+    if "inherited_from" not in cols:
+        conn.execute("ALTER TABLE matches ADD COLUMN inherited_from TEXT;")
+    conn.execute(
+        "CREATE TRIGGER IF NOT EXISTS trg_candidates_libraries_insert AFTER INSERT ON libraries "
+        "BEGIN UPDATE group_candidate_state SET generation = generation + 1 WHERE id = 1; END;"
+    )
+
 MIGRATIONS: list[Migration] = [
     Migration(1, "001_initial_schema", migration_001_initial_schema),
     Migration(2, "002_library_archiving_and_disk_presence", migration_002_library_archiving_and_disk_presence),
@@ -482,6 +498,7 @@ MIGRATIONS: list[Migration] = [
     Migration(12, "012_observation_original_triage", migration_012_observation_original_triage),
     Migration(13, "013_match_triage_conflict", migration_013_match_triage_conflict),
     Migration(14, "014_match_explicit_review", migration_014_match_explicit_review),
+    Migration(15, "015_discovery_inheritance", migration_015_discovery_inheritance),
 ]
 
 def run_migrations(conn: sqlite3.Connection) -> list[int]:

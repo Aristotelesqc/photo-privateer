@@ -276,7 +276,7 @@ class ScanEngine:
                 count = len(plan.grouped_variant_ids)
                 notes.append(
                     f"{count} selected {'photo is' if count == 1 else 'photos are'} covered by "
-                    f"the primary representation of {'its' if count == 1 else 'their'} photo group."
+                    f"the search of another photo in {'its' if count == 1 else 'their'} photo group."
                 )
             note_str = " ".join(notes) if notes else None
 
@@ -361,6 +361,9 @@ class ScanEngine:
             failed = 0
             cancelled = False
             aborted_due_to_accounting_failure = False
+            # Photo groups already searched in this session: a photo grouped while the scan is
+            # running is covered by that search and must not cost another provider call
+            searched_groups: set[int] = set()
 
             for img_id in ordered_image_ids:
                 # 1. Check cooperative cancellation before initiating next external request
@@ -406,6 +409,20 @@ class ScanEngine:
                         image_id=img.id,
                         status="ERROR",
                         error_message=f"Containment check failed: {str(p_err)}",
+                        matches_found=0,
+                    )
+                    usage_repo.update_scan_session_progress(session_id, processed, successful, failed)
+                    conn.commit()
+                    continue
+
+                if img.photo_group_id is not None and img.photo_group_id in searched_groups:
+                    processed += 1
+                    successful += 1
+                    usage_repo.record_scan_item(
+                        session_id=session_id,
+                        image_id=img.id,
+                        status="SKIPPED",
+                        error_message=f"Covered by this session's search of photo group #{img.photo_group_id}",
                         matches_found=0,
                     )
                     usage_repo.update_scan_session_progress(session_id, processed, successful, failed)
@@ -548,6 +565,9 @@ class ScanEngine:
                         # Physical per-file history only: siblings are covered through derived
                         # group coverage (MAX over members), never by writing scans they did not get
                         image_repo.record_scan_completed(img.id)
+                        current = image_repo.get_by_id(img.id)
+                        if current and current.photo_group_id is not None:
+                            searched_groups.add(current.photo_group_id)
                         usage_repo.record_scan_item(
                             session_id=session_id,
                             image_id=img.id,

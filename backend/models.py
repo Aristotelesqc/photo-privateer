@@ -117,6 +117,8 @@ class AddImageToGroupRequest(BaseModel):
 class GroupCandidateListOut(BaseModel):
     total: int
     pairs: List[GroupCandidatePairOut]
+    # True when the list is not exhaustive (per-photo candidate cap or comparison budget reached)
+    truncated: bool = False
 
 # --- Matches ---
 ClassificationLiteral = Literal["UNREVIEWED", "APPROVED", "UNAUTHORIZED", "IRRELEVANT"]
@@ -160,6 +162,8 @@ class MatchOut(BaseModel):
     triage_conflict: bool = False
     # Last explicit review action by the user (classification, acknowledgement or notes)
     explicit_review_at: Optional[str] = None
+    # Discovery inherited from a permanently purged photo of the same group (provenance)
+    inherited_from: Optional[str] = None
     image_filename: Optional[str] = None
     image_thumbnail_url: Optional[str] = None
     image_project: Optional[str] = None

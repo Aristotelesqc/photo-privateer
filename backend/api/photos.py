@@ -88,6 +88,7 @@ def get_photo_thumbnail(
     photo_id: int,
     repo: ImageRepository = Depends(get_image_repo),
     thumb_cache: ThumbnailCache = Depends(get_thumbnail_cache),
+    img_service: ImageService = Depends(get_image_service),
 ):
     img = repo.get_by_id(photo_id)
     if not img:
@@ -95,8 +96,11 @@ def get_photo_thumbnail(
     
     thumb_path = thumb_cache.get_thumbnail_path(img.sha256)
     if not thumb_path.is_file():
+        # Reading the original requires the same containment check as the original-file route:
+        # the file must resolve inside an enabled, non-archived library
+        safe_path = img_service.validate_and_resolve_image_path(img.file_path)
         try:
-            thumb_path = thumb_cache.get_or_create_thumbnail(img.file_path, img.sha256)
+            thumb_path = thumb_cache.get_or_create_thumbnail(str(safe_path), img.sha256)
         except Exception:
             raise HTTPException(status_code=404, detail="Thumbnail could not be generated")
 

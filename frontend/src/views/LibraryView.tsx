@@ -64,6 +64,7 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
   // Candidate variants state
   const [candidates, setCandidates] = useState<GroupCandidatePair[]>([]);
   const [candidateTotal, setCandidateTotal] = useState(0);
+  const [candidatesTruncated, setCandidatesTruncated] = useState(false);
   const [candidateModalOpen, setCandidateModalOpen] = useState(false);
   const [managingGroupPhoto, setManagingGroupPhoto] = useState<ImageItem | null>(null);
 
@@ -81,6 +82,7 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
       );
       setCandidates(result.pairs);
       setCandidateTotal(result.total);
+      setCandidatesTruncated(Boolean(result.truncated));
     } catch (err) {
       console.error('Failed loading candidate variants', err);
     }
@@ -250,6 +252,7 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
       {/* Candidate Variants Banner */}
       <CandidateBanner
         count={candidateTotal}
+        truncated={candidatesTruncated}
         onReview={() => setCandidateModalOpen(true)}
       />
 

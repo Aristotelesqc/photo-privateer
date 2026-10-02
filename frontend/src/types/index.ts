@@ -64,6 +64,8 @@ export interface GroupCandidateList {
   /** Total number of candidate pairs, independent of the returned page size */
   total: number;
   pairs: GroupCandidatePair[];
+  /** More pairs may exist (per-photo candidate cap or comparison budget reached) */
+  truncated?: boolean;
 }
 
 export interface PhotoGroupCreatePayload {
@@ -119,6 +121,8 @@ export interface MatchItem {
   triage_conflict?: boolean;
   /** Last explicit review action by the user */
   explicit_review_at?: string | null;
+  /** Discovery inherited from a permanently purged photo of the same group */
+  inherited_from?: string | null;
   image_thumbnail_url?: string | null;
   image_project?: string | null;
 }

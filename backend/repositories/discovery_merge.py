@@ -73,12 +73,24 @@ def _merged_state(rows: list[sqlite3.Row], survivor: sqlite3.Row) -> dict[str, o
     # classification by the user clears it (MatchRepository.update_classification_and_notes)
     unresolved = any(r["triage_conflict"] for r in rows)
     if len(decisions) > 1 or unresolved:
-        if reviewed:
-            detail = ", ".join(
-                f"{r['classification']} (photo #{r['image_id']})" for r in sorted(reviewed, key=lambda r: r["id"])
-            )
-            conflict = f"{CONFLICT_NOTE_PREFIX} Previous decisions: {detail}. Please review again."
-            notes = f"{conflict}\n---\n{notes}" if notes else conflict
+        # One conflict banner: decisions listed by earlier conflict notes are carried into it
+        # instead of stacking a new banner on every further merge
+        segments = notes.split("\n---\n") if notes else []
+        previous: list[str] = []
+        kept: list[str] = []
+        for seg in segments:
+            if seg.startswith(CONFLICT_NOTE_PREFIX):
+                body = seg.split("Previous decisions: ", 1)[-1].rsplit(". Please review again.", 1)[0]
+                previous.extend(item.strip() for item in body.split(", ") if item.strip())
+            else:
+                kept.append(seg)
+        items = previous + [
+            f"{r['classification']} (photo #{r['image_id']})" for r in sorted(reviewed, key=lambda r: r["id"])
+        ]
+        items = list(dict.fromkeys(items))
+        if items:
+            conflict = f"{CONFLICT_NOTE_PREFIX} Previous decisions: {', '.join(items)}. Please review again."
+            notes = "\n---\n".join([conflict] + kept)
         classification, classified_at, rule_id = CLASS_UNREVIEWED, None, None
         is_new, acknowledged_at, triage_conflict = 1, None, 1
         # A conflict needs a new explicit review: earlier reviews no longer stand for the merge
@@ -293,9 +305,17 @@ def _promote(cur: sqlite3.Cursor, head: sqlite3.Row, new_head_id: int, sibling_i
 
 
 def release_discoveries(conn: sqlite3.Connection, image_ids: Iterable[int]) -> set[int]:
-    """Before `image_ids` are permanently deleted: every logical discovery they hold that has
-    observations on other photos is handed over to one of those observations (with its logical
-    triage), so no other photo loses a discovery it observed. Returns affected image IDs."""
+    """Before `image_ids` are permanently deleted, keep every logical discovery their photo group
+    still needs:
+
+    - a discovery that other photos also observed is handed over to one of those observations,
+      with its logical triage (explicit decisions included);
+    - a discovery only the purged photo observed, but whose group has surviving members, is
+      re-homed to a surviving member (the group was searched through the purged photo).
+
+    Both are marked as inherited (inherited_at / inherited_from), so a later group dissolution
+    never "restores" them back to a state that would drop decisions about the purged photo.
+    Returns affected image IDs. Does not commit."""
     ids = sorted(set(image_ids))
     if not ids:
         return set()
@@ -315,14 +335,89 @@ def release_discoveries(conn: sqlite3.Connection, image_ids: Iterable[int]) -> s
     by_head: dict[int, list[sqlite3.Row]] = defaultdict(list)
     for r in cur.fetchall():
         by_head[r["hid"]].append(r)
+
+    # Logical discoveries of purged photos that no surviving photo observed, but whose photo group
+    # has surviving members (e.g. the group was only searched through the purged photo)
+    cur.execute(
+        """
+        SELECT h.id AS hid, h.image_id AS himg, i.photo_group_id AS gid
+        FROM matches h JOIN images i ON i.id = h.image_id
+        WHERE h.image_id IN (SELECT id FROM _released_images)
+          AND h.canonical_match_id IS NULL
+          AND i.photo_group_id IS NOT NULL
+        """
+    )
+    unobserved = [r for r in cur.fetchall() if r["hid"] not in by_head]
+    survivors: dict[int, Optional[int]] = {}
+    for r in unobserved:
+        if r["gid"] not in survivors:
+            cur.execute(
+                """
+                SELECT g.id FROM images g JOIN libraries l ON l.id = g.library_id
+                WHERE g.photo_group_id = ? AND g.id NOT IN (SELECT id FROM _released_images)
+                ORDER BY (g.is_present_on_disk = 1 AND l.enabled = 1 AND l.is_archived = 0) DESC,
+                         g.is_primary_representation DESC, g.id ASC
+                LIMIT 1
+                """,
+                (r["gid"],),
+            )
+            row = cur.fetchone()
+            survivors[r["gid"]] = row["id"] if row else None
     cur.execute("DELETE FROM _released_images")
+
+    now = datetime.now(timezone.utc).isoformat()
+    filenames: dict[int, str] = {}
+
+    def provenance(image_id: int) -> str:
+        if image_id not in filenames:
+            cur.execute("SELECT filename FROM images WHERE id = ?", (image_id,))
+            row = cur.fetchone()
+            filenames[image_id] = row["filename"] if row else "unknown"
+        return f"photo #{image_id} ({filenames[image_id]}), permanently purged"
+
+    def mark_inherited(match_id: int, from_image: int) -> None:
+        # Permanent inheritance: never "restored" away when the group later dissolves
+        cur.execute(
+            "UPDATE matches SET inherited_at = ?, inherited_from = ? WHERE id = ?",
+            (now, provenance(from_image), match_id),
+        )
+
     affected: set[int] = set()
     for hid, children in by_head.items():
         children.sort(key=lambda r: (r["ffirst"] or "", r["fid"]))
         cur.execute("SELECT * FROM matches WHERE id = ?", (hid,))
         head = cur.fetchone()
         _promote(cur, head, children[0]["fid"], [c["fid"] for c in children[1:]])
+        mark_inherited(children[0]["fid"], head["image_id"])
         affected.update(c["fimg"] for c in children)
+
+    for r in unobserved:
+        survivor = survivors.get(r["gid"])
+        if survivor is None:
+            continue
+        cur.execute("SELECT * FROM matches WHERE id = ?", (r["hid"],))
+        head = cur.fetchone()
+        cur.execute(
+            """
+            SELECT id, canonical_match_id FROM matches
+            WHERE image_id = ? AND source_kind = ?
+              AND COALESCE(page_url, '') = ? AND COALESCE(candidate_image_url, '') = ?
+            """,
+            (survivor, *_identity(head)),
+        )
+        existing = cur.fetchone()
+        if existing is None:
+            # The group's discovery (about the shared source photograph) stays with the group,
+            # attributed to the surviving member with explicit inheritance provenance
+            cur.execute("UPDATE matches SET image_id = ? WHERE id = ?", (survivor, r["hid"]))
+            mark_inherited(r["hid"], r["himg"])
+        else:
+            target_id = existing["canonical_match_id"] or existing["id"]
+            cur.execute("SELECT * FROM matches WHERE id = ?", (target_id,))
+            target = cur.fetchone()
+            _write_state(cur, target_id, _merged_state([target, head], target))
+            mark_inherited(target_id, r["himg"])
+        affected.add(survivor)
     return affected
 
 
@@ -392,6 +487,7 @@ def reconcile_group_folds(conn: sqlite3.Connection) -> set[int]:
           AND m.obs_captured_at IS NOT NULL
           AND i.photo_group_id IS NULL
           AND NOT EXISTS (SELECT 1 FROM matches f WHERE f.canonical_match_id = m.id)
+          AND m.inherited_at IS NULL
           AND (m.explicit_review_at IS NULL OR m.explicit_review_at < COALESCE(m.merged_at, m.obs_captured_at))
         """
     )

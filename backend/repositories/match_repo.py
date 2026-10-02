@@ -85,6 +85,7 @@ class MatchRepository:
             ),
             triage_conflict=bool(r["triage_conflict"]) if "triage_conflict" in r.keys() else False,
             explicit_review_at=r["explicit_review_at"] if "explicit_review_at" in r.keys() else None,
+            inherited_from=r["inherited_from"] if "inherited_from" in r.keys() else None,
         )
 
     def get_by_id(self, match_id: int) -> Optional[MatchOut]:

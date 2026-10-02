@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { render } from '@testing-library/react';
+import { render, fireEvent, screen } from '@testing-library/react';
 import React from 'react';
 import { MatchInspectModal } from '../../engines/review/MatchInspectModal';
 import { MatchItem } from '../../types';
@@ -45,4 +45,17 @@ describe('MatchInspectModal original preview', () => {
     const { container } = render(<MatchInspectModal match={baseMatch} onClose={vi.fn()} onClassify={vi.fn()} />);
     expect(originalSrcs(container)).toContain('/api/photos/101/file');
   });
+
+  it('shows an explicit unavailable state when the original cannot be loaded', () => {
+    const { container } = render(
+      <MatchInspectModal match={{ ...baseMatch, display_image_id: 102 }} onClose={vi.fn()} onClassify={vi.fn()} />
+    );
+    const original = Array.from(container.querySelectorAll('img')).find(
+      (img) => img.getAttribute('src') === '/api/photos/102/file'
+    );
+    expect(original).toBeDefined();
+    fireEvent.error(original!);
+    expect(screen.getByTestId('original-unavailable')).toBeInTheDocument();
+  });
 });
+

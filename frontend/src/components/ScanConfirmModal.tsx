@@ -57,8 +57,8 @@ export const ScanConfirmModal: React.FC<ScanConfirmModalProps> = ({
                 <p data-testid="scan-grouped-variant-note" className="text-[10px] text-accent-300 mt-0.5">
                   {projection.usable_count} {projection.usable_count === 1 ? 'search' : 'searches'}:{' '}
                   {projection.grouped_variant_count} grouped{' '}
-                  {projection.grouped_variant_count === 1 ? 'photo is' : 'photos are'} covered by{' '}
-                  {projection.grouped_variant_count === 1 ? 'its' : 'their'} group's primary representation
+                  {projection.grouped_variant_count === 1 ? 'photo is' : 'photos are'} covered by the search of
+                  another photo in {projection.grouped_variant_count === 1 ? 'its' : 'their'} group
                 </p>
               )}
             </div>

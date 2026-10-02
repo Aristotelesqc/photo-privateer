@@ -26,10 +26,12 @@ export const MatchInspectModal: React.FC<MatchInspectModalProps> = ({
 }) => {
   const [inspectRemoteError, setInspectRemoteError] = useState(false);
   const [inspectRemoteRevealed, setInspectRemoteRevealed] = useState(false);
+  const [originalError, setOriginalError] = useState(false);
 
   useEffect(() => {
     setInspectRemoteError(false);
     setInspectRemoteRevealed(false);
+    setOriginalError(false);
   }, [inspectingMatch?.id]);
 
   if (!inspectingMatch) return null;
@@ -80,11 +82,22 @@ export const MatchInspectModal: React.FC<MatchInspectModalProps> = ({
               </div>
             </div>
             <div className="flex-1 min-h-[280px] max-h-[50vh] flex items-center justify-center overflow-hidden rounded bg-carbon-900/60 border border-carbon-800/80">
-              <img
-                src={`/api/photos/${inspectingMatch.display_image_id ?? inspectingMatch.image_id}/file`}
-                alt={inspectingMatch.image_filename || 'Original photo'}
-                className="max-h-[48vh] max-w-full object-contain rounded"
-              />
+              {originalError ? (
+                <div
+                  data-testid="original-unavailable"
+                  className="flex flex-col items-center gap-2 text-carbon-400 text-xs p-4 text-center"
+                >
+                  <ImageOff className="w-6 h-6" />
+                  <span>The original photo is unavailable (moved, unmounted or in an archived library).</span>
+                </div>
+              ) : (
+                <img
+                  src={`/api/photos/${inspectingMatch.display_image_id ?? inspectingMatch.image_id}/file`}
+                  alt={inspectingMatch.image_filename || 'Original photo'}
+                  className="max-h-[48vh] max-w-full object-contain rounded"
+                  onError={() => setOriginalError(true)}
+                />
+              )}
             </div>
           </div>
 

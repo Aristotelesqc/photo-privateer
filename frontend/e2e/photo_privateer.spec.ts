@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect, type Page } from '@playwright/test';
 import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
@@ -62,7 +62,27 @@ test.describe.serial('Photo Privateer End-to-End Test Suite', () => {
     });
   });
 
-  const selectTestLibrary = async (page: any) => {
+  // Makes a scenario runnable on its own (e.g. `npx playwright test -g "Scenario 7"`): registers,
+  // unarchives and indexes the fixture library through the API when an earlier scenario did not.
+  const ensureTestLibrary = async (page: Page) => {
+    const listed = await page.request.get('/api/libraries');
+    expect(listed.ok()).toBeTruthy();
+    const libraries = (await listed.json()) as Array<{ id: number; name: string | null; is_archived: boolean }>;
+    let library = libraries.find((lib) => lib.name === testLibraryName);
+    if (!library) {
+      const created = await page.request.post('/api/libraries', {
+        data: { path: testPhotoDir, name: testLibraryName },
+      });
+      expect(created.ok()).toBeTruthy();
+      library = (await created.json()) as { id: number; name: string | null; is_archived: boolean };
+    }
+    if (library.is_archived) {
+      expect((await page.request.post(`/api/libraries/${library.id}/unarchive`)).ok()).toBeTruthy();
+    }
+    expect((await page.request.post(`/api/libraries/${library.id}/index`)).ok()).toBeTruthy();
+  };
+
+  const selectTestLibrary = async (page: Page) => {
     const option = page.locator('select option', { hasText: testLibraryName });
     await expect(option).toBeAttached({ timeout: 10000 });
     const val = await option.getAttribute('value');
@@ -289,6 +309,7 @@ test.describe.serial('Photo Privateer End-to-End Test Suite', () => {
 
   test('Scenario 7: Perceptual grouping candidate review and representation consolidation', async ({ page }) => {
     await page.goto('/');
+    await ensureTestLibrary(page);
     await page.locator('[data-testid="nav-library"]').click();
     await selectTestLibrary(page);
 

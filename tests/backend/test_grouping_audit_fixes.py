@@ -13,7 +13,7 @@ from PIL import Image
 from backend.database import get_db, init_db
 from backend.repositories.library_repo import LibraryRepository
 from backend.repositories.image_repo import ImageRepository
-from backend.repositories.group_repo import PhotoGroupRepository
+from backend.repositories.group_repo import PhotoGroupRepository, MAX_CANDIDATES_PER_PHOTO
 from backend.repositories.match_repo import MatchRepository
 from backend.repositories.domain_rule_repo import DomainRuleRepository
 from backend.repositories.usage_repo import UsageRepository
@@ -265,7 +265,7 @@ def test_scan_plan_reports_grouped_variants_and_session_notes(client, db_conn, t
     assert projection["grouped_variant_count"] == 1
 
     session = _scan_engine(db_conn).start_background_scan(image_ids=[web.id], provider_override="mock")
-    assert "covered by the primary representation" in (session.notes or "")
+    assert "covered by the search of another photo in its photo group" in (session.notes or "")
     _wait_for_scan(session.id)
 
 
@@ -1102,7 +1102,10 @@ def test_perceptual_pass_work_is_linear_in_duplicate_and_grouped_clusters(temp_d
         loose = _insert_image(conn, lib_id, 999, value ^ 0b1000)
         conn.commit()
         pairs, total = repo.find_candidates_page(limit=1000)
-        assert total == 300 and all(loose in (p.image_a.id, p.image_b.id) for p in pairs)
+        # The loose photo gets at most MAX_CANDIDATES_PER_PHOTO candidates (one suffices to join)
+        assert 1 <= total <= MAX_CANDIDATES_PER_PHOTO
+        assert all(loose in (p.image_a.id, p.image_b.id) for p in pairs)
+        assert repo.last_candidates_truncated is True
         assert repo.last_candidate_comparisons <= 11 * 300  # grouped x grouped pairs are never compared
 
 
@@ -1191,3 +1194,221 @@ def test_automatic_merges_never_advance_the_explicit_review_marker(client, db_co
     assert row["explicit_review_at"] < row["merged_at"]
     PhotoGroupRepository(db_conn).remove_image_from_group(group.id, web.id)
     assert x_of(master.id, x_master)["explicit_review_at"] in (None, before)
+
+
+# --- Multi-agent audit of 1b5a627 ---
+
+
+def test_dense_burst_cluster_work_and_memory_are_bounded(temp_dir: Path):
+    """10,000 distinct burst frames, all within the threshold of each other (PERF-01)."""
+    db_file = temp_dir / "burst.sqlite"
+    init_db(db_file)
+    with get_db(db_file) as conn:
+        lib_id = _make_library(conn, temp_dir)
+        base = 0xA5A5_5A5A_0FF0_F00F
+        rng = random.Random(3)
+        n = 10_000
+        for i in range(n):
+            value = base
+            for bit in rng.sample(range(64), 3):
+                value ^= 1 << bit
+            _insert_image(conn, lib_id, i, value)  # unique SHA per frame
+        conn.commit()
+        repo = PhotoGroupRepository(conn)
+        started = time.time()
+        _pairs, total = repo.find_candidates_page(limit=50)
+        elapsed = time.time() - started
+        assert total <= n * MAX_CANDIDATES_PER_PHOTO // 2 + n  # linear, not n^2 / 2 ~ 50M pairs
+        assert repo.last_candidate_comparisons <= 11 * n * MAX_CANDIDATES_PER_PHOTO * 4
+        assert repo.last_candidates_truncated is True
+        assert elapsed < 30
+
+
+def test_candidate_pagination_offset(client, db_conn, temp_dir: Path):
+    lib_id = _make_library(db_conn, temp_dir)
+    for i in range(6):
+        _insert_image(db_conn, lib_id, i, 0xA5A5_5A5A_0FF0_F00F, sha="same")
+    db_conn.commit()
+    first = client.get("/api/groups/candidates", params={"limit": 3}).json()
+    second = client.get("/api/groups/candidates", params={"limit": 3, "offset": 3}).json()
+    assert first["total"] == second["total"] == 5
+    ids_first = {(p["image_a"]["id"], p["image_b"]["id"]) for p in first["pairs"]}
+    ids_second = {(p["image_a"]["id"], p["image_b"]["id"]) for p in second["pairs"]}
+    assert len(ids_first) == 3 and len(ids_second) == 2 and not ids_first & ids_second
+    assert first["truncated"] is False
+
+
+def test_purging_canonical_keeps_pre_group_human_triage(client, db_conn, temp_dir: Path):
+    """DATA-01: A/X explicitly APPROVED before grouping, B observed X; purging A must not let a
+    later dissolution restore B's own UNREVIEWED state over the inherited decision."""
+    lib_a, _lib_b, master, web = _two_library_pair(db_conn, temp_dir)
+    rows, x_master, x_web = _x_rows(db_conn, master, web)
+    MatchRepository(db_conn).update_classification_and_notes(
+        x_master["id"], classification="APPROVED", notes="Client sous licence"
+    )
+    db_conn.commit()
+    PhotoGroupRepository(db_conn).create_group([master.id, web.id], preferred_image_id=master.id)
+
+    LibraryRepository(db_conn).purge(lib_a.id)  # group dissolves: B is alone
+
+    x = next(m for m in _group_review(client, web.id) if _identity(m) == _row_identity(x_master))
+    assert x["image_id"] == web.id
+    assert x["classification"] == "APPROVED" and x["notes"] == "Client sous licence"
+    assert x["inherited_from"] and f"photo #{master.id}" in x["inherited_from"]
+    assert x["observed_classification"] == "UNREVIEWED"  # B's own observation remains provenance
+
+
+def test_purging_the_only_searched_member_keeps_the_groups_discoveries(client, db_conn, temp_dir: Path):
+    """DATA-02: the group was searched only through A; purging A's library keeps the group's
+    discoveries with the surviving member, with inheritance provenance."""
+    lib_a, _lib_b, master, web = _two_library_pair(db_conn, temp_dir)
+    PhotoGroupRepository(db_conn).create_group([master.id, web.id], preferred_image_id=master.id)
+    _scan(db_conn, [master.id])
+    a_rows = _matches_of(db_conn, [master.id])
+    assert a_rows and _matches_of(db_conn, [web.id]) == []
+    MatchRepository(db_conn).update_classification_and_notes(a_rows[0]["id"], classification="UNAUTHORIZED")
+    db_conn.commit()
+
+    LibraryRepository(db_conn).purge(lib_a.id)
+
+    review = _group_review(client, web.id)
+    assert sorted(_identity(m) for m in review) == sorted(_row_identity(r) for r in a_rows)
+    assert all(m["image_id"] == web.id and f"photo #{master.id}" in (m["inherited_from"] or "") for m in review)
+    kept = next(m for m in review if m["id"] == a_rows[0]["id"])
+    assert kept["classification"] == "UNAUTHORIZED"
+    assert ImageRepository(db_conn).get_by_id(web.id).match_count == len(review)
+
+
+def test_repeated_conflicts_keep_a_single_banner(client, db_conn, temp_dir: Path):
+    """DATA-03: adding further reviewed photos updates one conflict banner instead of stacking."""
+    lib, master, web, p1, _p2 = _indexed_pair(db_conn, temp_dir)
+    p3 = p1.with_name("multi_third.jpg")
+    with Image.open(p1) as img:
+        img.resize((160, 160)).save(p3, format="JPEG", quality=84)
+    img_repo = ImageRepository(db_conn)
+    LibraryIndexer(LibraryRepository(db_conn), img_repo, ThumbnailCache(temp_dir / "thumbs")).index_library(lib.id)
+    third = img_repo.get_by_path(str(p3.resolve()))
+    _rows, x_master, x_web = _x_rows(db_conn, master, web)
+    _scan(db_conn, [third.id])
+    x_third = next(r for r in _matches_of(db_conn, [third.id]) if _row_identity(r) == _row_identity(x_master))
+    match_repo = MatchRepository(db_conn)
+    match_repo.update_classification_and_notes(x_master["id"], classification="APPROVED")
+    match_repo.update_classification_and_notes(x_web["id"], classification="UNAUTHORIZED")
+    match_repo.update_classification_and_notes(x_third["id"], classification="IRRELEVANT")
+    db_conn.commit()
+    group_repo = PhotoGroupRepository(db_conn)
+    group = group_repo.create_group([master.id, web.id], preferred_image_id=master.id)
+    group_repo.add_image_to_group(group.id, third.id)
+
+    logical = next(m for m in _group_review(client, master.id) if _identity(m) == _row_identity(x_master))
+    assert logical["notes"].count("[Merged discovery: conflicting decisions]") == 1
+    for decision in (f"APPROVED (photo #{master.id})", f"UNAUTHORIZED (photo #{web.id})", f"IRRELEVANT (photo #{third.id})"):
+        assert decision in logical["notes"]
+
+
+def test_photo_grouped_during_an_active_scan_is_not_searched_twice(db_conn, temp_dir: Path):
+    """COST-01: a photo whose group was already searched in the running session is skipped."""
+    _lib, master, web, _p1, _p2 = _indexed_pair(db_conn, temp_dir)
+    engine = _scan_engine(db_conn)
+    calls: list[str] = []
+    from backend.providers.mock_provider import MockSearchProvider
+
+    original_search = MockSearchProvider.search
+
+    def counting_search(self, image_path, **kwargs):
+        calls.append(Path(image_path).name)
+        if len(calls) == 1:
+            # The user groups both photos while the first one is being searched
+            side = get_connection_for(db_conn)
+            PhotoGroupRepository(side).create_group([master.id, web.id], preferred_image_id=master.id)
+            side.close()
+        return original_search(self, image_path, **kwargs)
+
+    import backend.providers.mock_provider as mock_module
+    mock_module.MockSearchProvider.search = counting_search
+    try:
+        session = engine.start_background_scan(image_ids=[master.id, web.id], provider_override="mock")
+        _wait_for_scan(session.id)
+    finally:
+        mock_module.MockSearchProvider.search = original_search
+    db_conn.commit()
+    assert calls == [Path(master.file_path).name]
+    items = db_conn.execute(
+        "SELECT image_id, status FROM scan_items WHERE scan_session_id = ? ORDER BY id", (session.id,)
+    ).fetchall()
+    assert [(r["image_id"], r["status"]) for r in items] == [(master.id, "SUCCESS"), (web.id, "SKIPPED")]
+    assert UsageRepository(db_conn).get_scan_session(session.id).failed_images == 0
+
+
+def get_connection_for(conn):
+    from backend.database import get_connection
+
+    path = conn.execute("PRAGMA database_list").fetchall()[0][2]
+    return get_connection(path)
+
+
+def test_grouping_keeps_a_scan_under_the_free_tier_guard(db_conn, temp_dir: Path):
+    """COST-02: the free-tier guard counts one search per group."""
+    lib, master, web, _p1, _p2 = _indexed_pair(db_conn, temp_dir)
+    settings_repo = SettingsRepository(db_conn)
+    usage_repo = UsageRepository(db_conn)
+    from backend.repositories.usage_repo import get_current_billing_period
+
+    allowance = settings_repo.get_app_settings().free_tier_monthly_units
+    usage_repo.record_call(
+        provider="google_vision", billing_period=get_current_billing_period(), scan_session_id=None,
+        image_id=None, attempted_units=allowance - 1, successful_units=allowance - 1, failed_units=0,
+        request_status="SUCCESS", estimated_cost=0.0,
+    )
+    db_conn.commit()
+    engine = _scan_engine(db_conn)
+    with pytest.raises(ValueError, match="free tier"):
+        engine.plan_scan(image_ids=[master.id, web.id], provider_override="google_vision")
+    PhotoGroupRepository(db_conn).create_group([master.id, web.id], preferred_image_id=master.id)
+    plan = engine.plan_scan(image_ids=[master.id, web.id], provider_override="google_vision")
+    assert [img.id for img in plan.scannable_images] == [master.id]
+
+
+def test_transparent_cutouts_hash_identically_whatever_hidden_rgb(temp_dir: Path):
+    """ALGO-01: two exports of one cut-out whose fully transparent pixels store different RGB."""
+    from PIL import ImageDraw
+
+    def cutout(path: Path, hidden: tuple[int, int, int]) -> None:
+        img = Image.new("RGBA", (240, 200), hidden + (0,))
+        draw = ImageDraw.Draw(img)
+        rng = random.Random(11)
+        for _ in range(25):
+            x0, y0 = rng.randrange(40, 160), rng.randrange(30, 130)
+            draw.ellipse((x0, y0, x0 + rng.randrange(20, 60), y0 + rng.randrange(20, 60)),
+                         fill=(rng.randrange(256), rng.randrange(256), rng.randrange(256), 255))
+        img.save(path, format="PNG")
+
+    black, white = temp_dir / "cut_black.png", temp_dir / "cut_white.png"
+    cutout(black, (0, 0, 0))
+    cutout(white, (255, 255, 255))
+    h_black, h_white = compute_dhash(black), compute_dhash(white)
+    assert h_black == h_white
+    assert is_candidate_representation(h_black, h_white)
+
+
+def test_cold_thumbnail_generation_requires_an_active_library(client, db_conn, temp_dir: Path):
+    """SEC-01: a missing thumbnail is only generated for photos inside an active library."""
+    lib, master, _web, _p1, _p2 = _indexed_pair(db_conn, temp_dir)
+    thumbs = ThumbnailCache(temp_dir / "thumbs")
+    LibraryRepository(db_conn).archive(lib.id)
+    for path in (temp_dir / "thumbs").rglob("*.webp"):
+        path.unlink()
+    assert not thumbs.get_thumbnail_path(master.sha256).is_file()
+    resp = client.get(f"/api/photos/{master.id}/thumbnail")
+    assert resp.status_code == 403
+    assert not thumbs.get_thumbnail_path(master.sha256).is_file()
+
+
+def test_creating_a_library_invalidates_the_candidate_cache(temp_dir: Path):
+    """CACHE-01: migration 015 adds the library insert trigger."""
+    db_file = temp_dir / "lib_trigger.sqlite"
+    assert 15 in init_db(db_file)
+    with get_db(db_file) as conn:
+        before = conn.execute("SELECT generation FROM group_candidate_state").fetchone()[0]
+        _make_library(conn, temp_dir, name="fresh")
+        assert conn.execute("SELECT generation FROM group_candidate_state").fetchone()[0] == before + 1

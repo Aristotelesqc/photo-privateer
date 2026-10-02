@@ -25,17 +25,20 @@ router = APIRouter(prefix="/api/groups", tags=["groups"])
 def get_group_candidates(
     threshold: int = Query(default=10, ge=0, le=16),
     limit: int = Query(default=50, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
     library_id: Optional[int] = Query(default=None),
     repo: PhotoGroupRepository = Depends(get_group_repo),
 ):
     """Returns the top candidate photo representation pairs (perceptual distance <= threshold or
     exact SHA) together with the total number of candidate pairs."""
     try:
-        pairs, total = repo.find_candidates_page(threshold=threshold, limit=limit, library_id=library_id)
+        pairs, total = repo.find_candidates_page(
+            threshold=threshold, limit=limit, library_id=library_id, offset=offset
+        )
     except Exception:
         logger.exception("Failed finding candidate pairs")
         raise HTTPException(status_code=500, detail="Failed finding candidate pairs. See server log for details.")
-    return GroupCandidateListOut(total=total, pairs=pairs)
+    return GroupCandidateListOut(total=total, pairs=pairs, truncated=repo.last_candidates_truncated)
 
 
 @router.post("/candidates/dismiss")

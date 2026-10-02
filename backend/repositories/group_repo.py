@@ -20,6 +20,14 @@ class PhotoGroupNotFoundError(LookupError):
     pass
 
 
+# Bounds for the perceptual pass. A photo is offered at most this many perceptual candidates (its
+# closest ones are not guaranteed beyond that point); dense clusters such as bursts or timelapses,
+# where every photo is within the threshold of every other, then cost ~ N x cap instead of N^2 / 2.
+MAX_CANDIDATES_PER_PHOTO = 8
+# Hard ceiling on distance computations per search, as a guard against pathological catalogues.
+CANDIDATE_COMPARISON_BUDGET = 20_000_000
+_DENSE_BUCKET_SIZE = 256
+
 # (priority, hamming_distance, min_image_id, max_image_id, is_exact_duplicate)
 # priority 0 = exact SHA-256 duplicate, 1 = perceptual dHash variant. Tuples sort naturally.
 CandidateTuple = Tuple[int, int, int, int, bool]
@@ -28,7 +36,7 @@ CandidateTuple = Tuple[int, int, int, int, bool]
 # library scope. Each entry stores the group_candidate_state generation it was computed at;
 # SQLite triggers (migration 010) bump the generation whenever any search input changes.
 _CANDIDATE_CACHE_MAX_ENTRIES = 16
-_candidate_cache: dict[tuple[str, int, Optional[int]], tuple[int, list[CandidateTuple]]] = {}
+_candidate_cache: dict[tuple[str, int, Optional[int]], tuple[int, list[CandidateTuple], bool]] = {}
 _candidate_cache_lock = threading.Lock()
 
 
@@ -55,6 +63,9 @@ class PhotoGroupRepository:
         self.image_repo = ImageRepository(conn)
         # Distance computations performed by the last uncached candidate search (diagnostics/tests)
         self.last_candidate_comparisons = 0
+        # Whether the last candidate list is not exhaustive (per-photo cap or comparison budget)
+        self.last_candidates_truncated = False
+        self._last_compute_truncated = False
 
     def get_preferred_image_id(self, group_id: int) -> Optional[int]:
         """Returns the preferred image ID for a group in O(1) without loading images."""
@@ -421,7 +432,9 @@ class PhotoGroupRepository:
                 entries.append((r["id"], value, r["photo_group_id"]))
 
         comparisons = 0
+        truncated = False
         found: dict[Tuple[int, int], int] = {}
+        degree: dict[int, int] = defaultdict(int)
 
         def record(pos_a: int, pos_b: int) -> None:
             id_a, h_a, _ga = entries[pos_a]
@@ -430,32 +443,69 @@ class PhotoGroupRepository:
             if pair_key in found or pair_key in exact_pairs_seen or pair_key in dismissed:
                 return
             found[pair_key] = (h_a ^ h_b).bit_count()
+            degree[pos_a] += 1
+            degree[pos_b] += 1
+
+        def scan(pos_a: int, h_a: int, targets: list[int], hashes: list[int], start: int) -> None:
+            """Records pairs from pos_a to targets[start:] within the threshold, at most
+            MAX_CANDIDATES_PER_PHOTO per photo. Dense clusters (bursts, timelapses) stop as soon as
+            a photo is saturated, so the work stays ~ N x cap instead of N^2 / 2."""
+            nonlocal comparisons, truncated
+            for j in range(start, len(targets)):
+                if degree[pos_a] >= MAX_CANDIDATES_PER_PHOTO:
+                    truncated = True
+                    return
+                comparisons += 1
+                if (h_a ^ hashes[j]).bit_count() <= threshold:
+                    if degree[targets[j]] >= MAX_CANDIDATES_PER_PHOTO:
+                        truncated = True
+                        continue
+                    record(pos_a, targets[j])
 
         for shift, mask in _band_layout(threshold):
+            if comparisons > CANDIDATE_COMPARISON_BUDGET:
+                truncated = True
+                break
             buckets: dict[int, list[int]] = defaultdict(list)
             for pos, entry in enumerate(entries):
                 buckets[(entry[1] >> shift) & mask].append(pos)
             for bucket in buckets.values():
                 if len(bucket) < 2:
                     continue
+                if comparisons > CANDIDATE_COMPARISON_BUDGET:
+                    truncated = True
+                    break
                 loose = [pos for pos in bucket if entries[pos][2] is None]
                 if not loose:
                     continue
                 grouped = [pos for pos in bucket if entries[pos][2] is not None]
                 loose_hashes = [entries[pos][1] for pos in loose]
                 n_loose = len(loose)
-                # Distance first: by far the most selective and cheapest test
-                for i in range(n_loose - 1):
-                    h_a = loose_hashes[i]
-                    comparisons += n_loose - i - 1
-                    for j in [j for j in range(i + 1, n_loose) if (h_a ^ loose_hashes[j]).bit_count() <= threshold]:
-                        record(loose[i], loose[j])
-                for pos in grouped:
-                    h_a = entries[pos][1]
-                    comparisons += n_loose
-                    for j in [j for j in range(n_loose) if (h_a ^ loose_hashes[j]).bit_count() <= threshold]:
-                        record(pos, loose[j])
+                if n_loose <= _DENSE_BUCKET_SIZE and all(degree[p] < MAX_CANDIDATES_PER_PHOTO for p in bucket):
+                    # Small bucket: distance first in a tight comprehension (fast path)
+                    for i in range(n_loose - 1):
+                        h_a = loose_hashes[i]
+                        comparisons += n_loose - i - 1
+                        for j in [j for j in range(i + 1, n_loose) if (h_a ^ loose_hashes[j]).bit_count() <= threshold]:
+                            if degree[loose[i]] >= MAX_CANDIDATES_PER_PHOTO or degree[loose[j]] >= MAX_CANDIDATES_PER_PHOTO:
+                                truncated = True
+                                continue
+                            record(loose[i], loose[j])
+                    for pos in grouped:
+                        h_a = entries[pos][1]
+                        comparisons += n_loose
+                        for j in [j for j in range(n_loose) if (h_a ^ loose_hashes[j]).bit_count() <= threshold]:
+                            if degree[pos] >= MAX_CANDIDATES_PER_PHOTO or degree[loose[j]] >= MAX_CANDIDATES_PER_PHOTO:
+                                truncated = True
+                                continue
+                            record(pos, loose[j])
+                else:
+                    for i in range(n_loose - 1):
+                        scan(loose[i], loose_hashes[i], loose, loose_hashes, i + 1)
+                    for pos in grouped:
+                        scan(pos, entries[pos][1], loose, loose_hashes, 0)
 
+        self._last_compute_truncated = truncated
         self.last_candidate_comparisons = comparisons
         candidates.extend((1, dist, a, b, False) for (a, b), dist in found.items())
         candidates.sort()
@@ -464,20 +514,24 @@ class PhotoGroupRepository:
     def _get_candidate_tuples(self, threshold: int, library_id: Optional[int]) -> list[CandidateTuple]:
         state = None if self.conn.in_transaction else self._candidate_state()
         if state is None:
-            return self._compute_candidate_tuples(threshold, library_id)
+            tuples = self._compute_candidate_tuples(threshold, library_id)
+            self.last_candidates_truncated = self._last_compute_truncated
+            return tuples
 
         token, generation = state
         key = (token, threshold, library_id)
         with _candidate_cache_lock:
             cached = _candidate_cache.get(key)
         if cached is not None and cached[0] == generation:
+            self.last_candidates_truncated = cached[2]
             return cached[1]
 
         tuples = self._compute_candidate_tuples(threshold, library_id)
         with _candidate_cache_lock:
             if len(_candidate_cache) >= _CANDIDATE_CACHE_MAX_ENTRIES and key not in _candidate_cache:
                 _candidate_cache.clear()
-            _candidate_cache[key] = (generation, tuples)
+            _candidate_cache[key] = (generation, tuples, self._last_compute_truncated)
+        self.last_candidates_truncated = self._last_compute_truncated
         return tuples
 
     def find_candidates_page(
@@ -485,14 +539,16 @@ class PhotoGroupRepository:
         threshold: int = DHASH_CANDIDATE_THRESHOLD,
         limit: int = 50,
         library_id: Optional[int] = None,
+        offset: int = 0,
     ) -> tuple[List[GroupCandidatePairOut], int]:
-        """Returns (top `limit` candidate pairs, total number of candidate pairs).
+        """Returns (candidate pairs [offset, offset + limit), total number of candidate pairs).
 
         Pairs where both images are already grouped or that the user dismissed are excluded.
-        Results are cached until any search input changes (see migration 010).
+        Results are cached until any search input changes (see migration 010). Whether the list
+        is exhaustive is reported by `last_candidates_truncated`.
         """
         tuples = self._get_candidate_tuples(threshold, library_id)
-        top = tuples[:limit]
+        top = tuples[offset:offset + limit]
         if not top:
             return [], len(tuples)
 

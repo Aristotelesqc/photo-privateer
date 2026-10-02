@@ -198,7 +198,7 @@ export const PhotoGroupActionsModal: React.FC<PhotoGroupActionsModalProps> = ({
                     className={`relative rounded border p-1 bg-carbon-950 ${
                       img.id === photo.id
                         ? 'border-accent-500 ring-1 ring-accent-500/40'
-                        : 'border-carbon-800 opacity-70 hover:opacity-100'
+                        : 'border-carbon-800 opacity-70'
                     }`}
                     title={img.filename}
                   >

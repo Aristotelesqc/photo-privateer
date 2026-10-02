@@ -162,7 +162,7 @@ describe('ScanConfirmModal Component', () => {
     };
     render(<ScanConfirmModal projection={projection} onConfirm={vi.fn()} onClose={vi.fn()} />);
     expect(screen.getByTestId('scan-grouped-variant-note')).toHaveTextContent(
-      "1 search: 2 grouped photos are covered by their group's primary representation"
+      "1 search: 2 grouped photos are covered by the search of another photo in their group"
     );
   });
 });
