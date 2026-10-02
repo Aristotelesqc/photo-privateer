@@ -3,13 +3,16 @@ from __future__ import annotations
 
 import pytest
 
+from backend.repositories.usage_repo import get_current_billing_period
+
 def test_usage_summary_and_cost_calculation(repos):
     usage_repo = repos["usage_repo"]
     tracker = repos["tracker"]
     settings_repo = repos["settings_repo"]
 
     # Free tier default: 1000 units, price $0.0035
-    period = "2026-09"
+    # The projection always reads the current billing period, so the fixture must use it too
+    period = get_current_billing_period()
 
     # 1. Zero usage state
     summary0 = usage_repo.get_usage_summary(period=period)
