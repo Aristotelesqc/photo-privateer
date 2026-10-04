@@ -9,7 +9,7 @@ open PR; an implemented slice is not considered delivered on main until merge.
 | 1 | #23 global loopback Host validation | Implemented; local four-tier verification |
 | 2 | #24 reference-aware thumbnail purge | Implemented; local four-tier verification |
 | 3 | #27 atomic concurrent thumbnail generation | Implemented; local four-tier verification |
-| 4 | #26 index/scan coordination | Planned |
+| 4 | #26 index/scan coordination | Implemented; local four-tier verification |
 | 5 | #28 deterministic API contract checking | Planned |
 | 6 | #25 active-library browsing and scan eligibility | Planned |
 | 7 | #30 durable photo identity contract | Planned before WebUse schema work |
@@ -69,3 +69,23 @@ transmission authorization; local implementation and verification can proceed.
   failure, cleanup limits, response/purge interleaving, orientation and alpha.
 - Local verification: backend 236 passed; frontend 51 passed; production build
   and Playwright 8/8 passed.
+
+## Slice 4 — #26
+
+- A per-database coordinator reserves indexing and scans atomically across
+  request/service instances and connections. The reservation covers a whole
+  synchronous scan or transfers to the background worker until it exits.
+- Index/project detection refuses persisted RUNNING sessions; scan preparation
+  refuses an active index. API conflicts return 409 with retry/cancel guidance
+  already displayed by the UI's error/feedback paths. Group edits during scans
+  retain their existing supported semantics.
+- Index exceptions rollback outstanding work and release reservations. Launch
+  failures mark their created session FAILED. Worker bootstrap failures release
+  reservations and attempt durable failure recording. Cancellation releases only
+  after the worker exits. Reservations live in memory, while existing startup
+  recovery marks previous-process RUNNING sessions INTERRUPTED.
+- Ten deterministic tests cover both start orders, a barrier-controlled
+  simultaneous start, independent connections, exceptions, launch/worker failure,
+  cancellation, 409 responses and startup recovery; no timing sleeps.
+- Local verification: backend 246 passed; frontend 51 passed; build and
+  Playwright 8/8 passed.

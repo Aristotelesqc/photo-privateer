@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from backend.models import LibraryCreate, LibraryUpdate, LibraryOut
 from backend.repositories.library_repo import LibraryRepository
 from backend.services.library_indexer import LibraryIndexer
+from backend.services.catalog_coordinator import CatalogOperationConflict
 from backend.api.deps import get_library_repo, get_library_indexer
 
 router = APIRouter(prefix="/api/libraries", tags=["libraries"])
@@ -102,6 +103,8 @@ def index_library(library_id: int, indexer: LibraryIndexer = Depends(get_library
     try:
         results = indexer.index_library(library_id)
         return {"status": "success", "results": results}
+    except CatalogOperationConflict as e:
+        raise HTTPException(status_code=409, detail=str(e))
     except FileNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
@@ -112,6 +115,8 @@ def detect_projects(library_id: int, indexer: LibraryIndexer = Depends(get_libra
     try:
         updated = indexer.detect_and_apply_subfolder_projects(library_id)
         return {"status": "success", "updated_count": updated}
+    except CatalogOperationConflict as e:
+        raise HTTPException(status_code=409, detail=str(e))
     except FileNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:

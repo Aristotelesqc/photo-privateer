@@ -12,6 +12,7 @@ from backend.repositories.library_repo import LibraryRepository
 from backend.repositories.image_repo import ImageRepository
 from backend.services.thumbnail_cache import ThumbnailCache
 from backend.services.perceptual import compute_dhash, is_candidate_representation, DHASH_UNAVAILABLE
+from backend.services.catalog_coordinator import coordinator_for
 
 def calculate_sha256(file_path: Path) -> str:
     hasher = hashlib.sha256()
@@ -30,6 +31,7 @@ class LibraryIndexer:
         self.library_repo = library_repo
         self.image_repo = image_repo
         self.thumbnail_cache = thumbnail_cache
+        self.coordinator = coordinator_for(image_repo.conn)
 
     def _discover_files(self, root_dir: Path, recursive: bool) -> Generator[Path, None, None]:
         if not root_dir.is_dir():
@@ -58,6 +60,14 @@ class LibraryIndexer:
                         continue
 
     def index_library(self, library_id: int) -> dict[str, int]:
+        with self.coordinator.indexing(self.image_repo.conn):
+            try:
+                return self._index_library(library_id)
+            except Exception:
+                self.image_repo.conn.rollback()
+                raise
+
+    def _index_library(self, library_id: int) -> dict[str, int]:
         lib = self.library_repo.get_by_id(library_id)
         if not lib:
             raise ValueError(f"Library with id {library_id} not found")
@@ -286,6 +296,14 @@ class LibraryIndexer:
         }
 
     def detect_and_apply_subfolder_projects(self, library_id: int) -> int:
+        with self.coordinator.indexing(self.image_repo.conn):
+            try:
+                return self._detect_and_apply_subfolder_projects(library_id)
+            except Exception:
+                self.image_repo.conn.rollback()
+                raise
+
+    def _detect_and_apply_subfolder_projects(self, library_id: int) -> int:
         """Retroactively detects and sets project names based on immediate parent subfolders.
         Preserves manually assigned projects (never overwrites project_source == 'manual').
         """
