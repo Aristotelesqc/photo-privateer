@@ -1846,16 +1846,18 @@ def test_dissolving_after_a_reexport_keeps_the_lineage_merged_decision(db_conn, 
     assert row["classification"] == "APPROVED" and "licensed" in (row["notes"] or "")
 
 
-def test_upgrade_preserves_conflict_in_an_open_cycle(db_conn, temp_dir: Path):
+@pytest.mark.parametrize("clear_notes", [False, True])
+def test_upgrade_preserves_conflict_in_an_open_cycle(db_conn, temp_dir: Path, clear_notes: bool):
     """A cycle opened before migration 018 has a rollback state without rb_triage_conflict.
     Migration 019 backfills it, so an unresolved pre-cycle conflict is never cleared by the
-    rollback, then resolved by a domain rule."""
+    rollback, then resolved by a domain rule, even when the user cleared the conflict banner
+    from the notes (editable content is not evidence that there was no conflict)."""
     import backend.migrations.runner as runner
 
     a, b, ma, _mb = _conflicting_pair(db_conn, temp_dir)
     repo = PhotoGroupRepository(db_conn)
     first = repo.create_group([a, b], preferred_image_id=a)
-    MatchRepository(db_conn).update_classification_and_notes(ma, acknowledged=True)
+    MatchRepository(db_conn).update_classification_and_notes(ma, acknowledged=True, clear_notes=clear_notes)
     db_conn.commit()
     repo.delete_group(first.id)
     assert _match_row(db_conn, ma)["triage_conflict"] == 1
@@ -1865,6 +1867,7 @@ def test_upgrade_preserves_conflict_in_an_open_cycle(db_conn, temp_dir: Path):
     db_conn.commit()
     saved = _match_row(db_conn, ma)
     assert saved["rb_classification"] == "UNREVIEWED" and saved["rb_captured_at"]
+    assert (saved["rb_notes"] is None) == clear_notes
     runner.migration_019_open_cycle_conflict_backfill(db_conn)
     db_conn.commit()
     assert _match_row(db_conn, ma)["rb_triage_conflict"] == 1
@@ -1912,3 +1915,29 @@ def test_reexport_does_not_make_a_temporary_group_conflict_permanent(db_conn, te
     assert "master licensed" in row["notes"] and "export licensed" in row["notes"]
     assert "B note" not in row["notes"] and "conflicting decisions" not in row["notes"]
     assert _match_row(db_conn, ma)["fold_kind"] == "LINEAGE"  # provenance kept
+
+
+def test_migration_020_rechecks_legacy_snapshots_conservatively(db_conn, temp_dir: Path):
+    """Databases that applied the earlier banner-only 019 rule get their legacy rollback states
+    re-evaluated: the flag is only ever raised, and only for snapshots older than migration 018."""
+    import backend.migrations.runner as runner
+
+    a, b, ma, mb = _conflicting_pair(db_conn, temp_dir)
+    repo = PhotoGroupRepository(db_conn)
+    first = repo.create_group([a, b], preferred_image_id=a)
+    MatchRepository(db_conn).update_classification_and_notes(ma, acknowledged=True, clear_notes=True)
+    db_conn.commit()
+    repo.delete_group(first.id)
+    repo.create_group([a, b], preferred_image_id=a)
+    # The earlier 019 rule wrote 0 (no banner left in the saved notes)
+    db_conn.execute("UPDATE matches SET rb_triage_conflict = 0 WHERE id = ?", (ma,))
+    db_conn.execute("UPDATE schema_migrations SET applied_at = '2999-01-01T00:00:00+00:00' WHERE version = 18")
+    db_conn.commit()
+    runner.migration_020_legacy_conflict_recheck(db_conn)
+    assert _match_row(db_conn, ma)["rb_triage_conflict"] == 1
+
+    # A snapshot captured after migration 018 is authoritative and is left untouched
+    db_conn.execute("UPDATE matches SET rb_triage_conflict = 0 WHERE id = ?", (ma,))
+    db_conn.execute("UPDATE schema_migrations SET applied_at = '2000-01-01T00:00:00+00:00' WHERE version = 18")
+    runner.migration_020_legacy_conflict_recheck(db_conn)
+    assert _match_row(db_conn, ma)["rb_triage_conflict"] == 0

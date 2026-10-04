@@ -559,20 +559,43 @@ def migration_018_close_completed_cycles(conn: sqlite3.Connection) -> None:
     )
 
 
+# Conflict flag of a rollback state captured before rb_triage_conflict existed. A conflict always
+# leaves the discovery UNREVIEWED, and an unresolved pre-cycle conflict stays set in the merged
+# state of the open cycle: only an explicit classification clears it, and an explicitly reviewed
+# cycle is never rolled back. So whenever such a snapshot can be restored, a pre-cycle conflict
+# is still visible as triage_conflict = 1. The editable notes (conflict banner) are not used as
+# evidence either way. Conservative: a false positive (an unreviewed baseline in a cycle whose
+# conflict came from the siblings) only asks for one explicit review.
+_LEGACY_ROLLBACK_CONFLICT = "CASE WHEN rb_classification = 'UNREVIEWED' AND triage_conflict = 1 THEN 1 ELSE 0 END"
+
+
 def migration_019_open_cycle_conflict_backfill(conn: sqlite3.Connection) -> None:
     """Backfills rb_triage_conflict for rollback states captured before migration 018 (grouping
-    cycles still open during the upgrade). An unreviewed rollback state carrying the conflict
-    banner was an unresolved conflict: a NULL flag must never let a later rollback, then a domain
-    rule, resolve it."""
+    cycles still open during the upgrade), so a NULL flag never lets a later rollback, then a
+    domain rule, resolve a conflict the user never resolved."""
     conn.execute(
-        """
-        UPDATE matches
-        SET rb_triage_conflict = CASE
-            WHEN rb_classification = 'UNREVIEWED'
-                 AND INSTR(COALESCE(rb_notes, ''), '[Merged discovery: conflicting decisions]') > 0
-            THEN 1 ELSE 0 END
+        f"""
+        UPDATE matches SET rb_triage_conflict = {_LEGACY_ROLLBACK_CONFLICT}
         WHERE rb_captured_at IS NOT NULL AND rb_triage_conflict IS NULL
         """
+    )
+
+
+def migration_020_legacy_conflict_recheck(conn: sqlite3.Connection) -> None:
+    """Databases that applied an earlier migration 019 inferred a missing conflict from the
+    absence of the (editable) conflict banner in the saved notes. Re-evaluates rollback states
+    captured before migration 018 with the conservative rule; it only ever raises the flag."""
+    row = conn.execute("SELECT applied_at FROM schema_migrations WHERE version = 18").fetchone()
+    if row is None:
+        return
+    conn.execute(
+        f"""
+        UPDATE matches SET rb_triage_conflict = 1
+        WHERE rb_captured_at IS NOT NULL AND rb_captured_at < ?
+          AND COALESCE(rb_triage_conflict, 0) = 0
+          AND {_LEGACY_ROLLBACK_CONFLICT} = 1
+        """,
+        (row[0],),
     )
 
 MIGRATIONS: list[Migration] = [
@@ -595,6 +618,7 @@ MIGRATIONS: list[Migration] = [
     Migration(17, "017_cycle_rollback_inheritance", migration_017_cycle_rollback_inheritance),
     Migration(18, "018_close_completed_cycles", migration_018_close_completed_cycles),
     Migration(19, "019_open_cycle_conflict_backfill", migration_019_open_cycle_conflict_backfill),
+    Migration(20, "020_legacy_conflict_recheck", migration_020_legacy_conflict_recheck),
 ]
 
 def run_migrations(conn: sqlite3.Connection) -> list[int]:
