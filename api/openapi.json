@@ -1,0 +1,4220 @@
+{
+  "components": {
+    "schemas": {
+      "ActionMessageResponse": {
+        "properties": {
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "message"
+        ],
+        "title": "ActionMessageResponse",
+        "type": "object"
+      },
+      "AddImageToGroupRequest": {
+        "properties": {
+          "image_id": {
+            "title": "Image Id",
+            "type": "integer"
+          },
+          "preferred_image_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Preferred Image Id"
+          },
+          "set_preferred": {
+            "default": false,
+            "title": "Set Preferred",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "image_id"
+        ],
+        "title": "AddImageToGroupRequest",
+        "type": "object"
+      },
+      "AppSettings": {
+        "properties": {
+          "active_provider": {
+            "default": "mock",
+            "enum": [
+              "mock",
+              "google_vision"
+            ],
+            "title": "Active Provider",
+            "type": "string"
+          },
+          "adc_available": {
+            "default": false,
+            "title": "Adc Available",
+            "type": "boolean"
+          },
+          "adc_project_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Adc Project Id"
+          },
+          "auth_mode": {
+            "default": "none",
+            "enum": [
+              "adc",
+              "service_account",
+              "none"
+            ],
+            "title": "Auth Mode",
+            "type": "string"
+          },
+          "block_on_free_tier_exceeded": {
+            "default": true,
+            "title": "Block On Free Tier Exceeded",
+            "type": "boolean"
+          },
+          "free_tier_monthly_units": {
+            "default": 1000,
+            "minimum": 0.0,
+            "title": "Free Tier Monthly Units",
+            "type": "integer"
+          },
+          "google_credentials_error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Google Credentials Error"
+          },
+          "google_credentials_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Google Credentials Path"
+          },
+          "google_credentials_valid": {
+            "default": false,
+            "title": "Google Credentials Valid",
+            "type": "boolean"
+          },
+          "unit_price_usd": {
+            "default": 0.0035,
+            "minimum": 0.0,
+            "title": "Unit Price Usd",
+            "type": "number"
+          }
+        },
+        "required": [
+          "active_provider",
+          "google_credentials_path",
+          "free_tier_monthly_units",
+          "block_on_free_tier_exceeded",
+          "unit_price_usd",
+          "google_credentials_valid",
+          "google_credentials_error",
+          "adc_available",
+          "adc_project_id",
+          "auth_mode"
+        ],
+        "title": "AppSettings",
+        "type": "object"
+      },
+      "BatchProjectResponse": {
+        "properties": {
+          "project": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Project"
+          },
+          "updated": {
+            "title": "Updated",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "updated",
+          "project"
+        ],
+        "title": "BatchProjectResponse",
+        "type": "object"
+      },
+      "BatchProjectUpdate": {
+        "properties": {
+          "photo_ids": {
+            "description": "List of image IDs to assign or clear project",
+            "items": {
+              "type": "integer"
+            },
+            "title": "Photo Ids",
+            "type": "array"
+          },
+          "project": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Project name, or null/empty to clear",
+            "title": "Project"
+          }
+        },
+        "required": [
+          "photo_ids"
+        ],
+        "title": "BatchProjectUpdate",
+        "type": "object"
+      },
+      "CandidateDismissResponse": {
+        "properties": {
+          "image_a_id": {
+            "title": "Image A Id",
+            "type": "integer"
+          },
+          "image_b_id": {
+            "title": "Image B Id",
+            "type": "integer"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "image_a_id",
+          "image_b_id"
+        ],
+        "title": "CandidateDismissResponse",
+        "type": "object"
+      },
+      "DismissCandidateRequest": {
+        "properties": {
+          "image_a_id": {
+            "title": "Image A Id",
+            "type": "integer"
+          },
+          "image_b_id": {
+            "title": "Image B Id",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "image_a_id",
+          "image_b_id"
+        ],
+        "title": "DismissCandidateRequest",
+        "type": "object"
+      },
+      "DomainRuleCreate": {
+        "properties": {
+          "classification": {
+            "enum": [
+              "UNREVIEWED",
+              "APPROVED",
+              "UNAUTHORIZED",
+              "IRRELEVANT"
+            ],
+            "title": "Classification",
+            "type": "string"
+          },
+          "domain": {
+            "minLength": 1,
+            "title": "Domain",
+            "type": "string"
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notes"
+          }
+        },
+        "required": [
+          "domain",
+          "classification"
+        ],
+        "title": "DomainRuleCreate",
+        "type": "object"
+      },
+      "DomainRuleOut": {
+        "properties": {
+          "classification": {
+            "enum": [
+              "UNREVIEWED",
+              "APPROVED",
+              "UNAUTHORIZED",
+              "IRRELEVANT"
+            ],
+            "title": "Classification",
+            "type": "string"
+          },
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "domain": {
+            "title": "Domain",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notes"
+          },
+          "updated_at": {
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "domain",
+          "classification",
+          "created_at",
+          "updated_at",
+          "notes"
+        ],
+        "title": "DomainRuleOut",
+        "type": "object"
+      },
+      "FolderBrowseResponse": {
+        "properties": {
+          "path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Path"
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "title": "FolderBrowseResponse",
+        "type": "object"
+      },
+      "FolderValidateRequest": {
+        "properties": {
+          "path": {
+            "title": "Path",
+            "type": "string"
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "title": "FolderValidateRequest",
+        "type": "object"
+      },
+      "FolderValidateResponse": {
+        "properties": {
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "is_dir": {
+            "title": "Is Dir",
+            "type": "boolean"
+          },
+          "resolved_path": {
+            "title": "Resolved Path",
+            "type": "string"
+          },
+          "valid": {
+            "title": "Valid",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "valid",
+          "resolved_path",
+          "is_dir",
+          "error"
+        ],
+        "title": "FolderValidateResponse",
+        "type": "object"
+      },
+      "GroupCandidateListOut": {
+        "properties": {
+          "pairs": {
+            "items": {
+              "$ref": "#/components/schemas/GroupCandidatePairOut"
+            },
+            "title": "Pairs",
+            "type": "array"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          },
+          "truncated": {
+            "default": false,
+            "title": "Truncated",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "total",
+          "pairs",
+          "truncated"
+        ],
+        "title": "GroupCandidateListOut",
+        "type": "object"
+      },
+      "GroupCandidatePairOut": {
+        "properties": {
+          "hamming_distance": {
+            "title": "Hamming Distance",
+            "type": "integer"
+          },
+          "image_a": {
+            "$ref": "#/components/schemas/ImageOut"
+          },
+          "image_b": {
+            "$ref": "#/components/schemas/ImageOut"
+          },
+          "is_exact_duplicate": {
+            "title": "Is Exact Duplicate",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "image_a",
+          "image_b",
+          "hamming_distance",
+          "is_exact_duplicate"
+        ],
+        "title": "GroupCandidatePairOut",
+        "type": "object"
+      },
+      "GroupDeleteResponse": {
+        "properties": {
+          "group_id": {
+            "title": "Group Id",
+            "type": "integer"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "group_id"
+        ],
+        "title": "GroupDeleteResponse",
+        "type": "object"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "title": "Detail",
+            "type": "array"
+          }
+        },
+        "title": "HTTPValidationError",
+        "type": "object"
+      },
+      "ImageListResponse": {
+        "properties": {
+          "images": {
+            "items": {
+              "$ref": "#/components/schemas/ImageOut"
+            },
+            "title": "Images",
+            "type": "array"
+          },
+          "page": {
+            "title": "Page",
+            "type": "integer"
+          },
+          "page_size": {
+            "title": "Page Size",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "images",
+          "total",
+          "page",
+          "page_size"
+        ],
+        "title": "ImageListResponse",
+        "type": "object"
+      },
+      "ImageOut": {
+        "properties": {
+          "dhash": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dhash"
+          },
+          "file_modified_at": {
+            "title": "File Modified At",
+            "type": "number"
+          },
+          "file_modified_at_ns": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "File Modified At Ns"
+          },
+          "file_path": {
+            "title": "File Path",
+            "type": "string"
+          },
+          "file_size": {
+            "title": "File Size",
+            "type": "integer"
+          },
+          "filename": {
+            "title": "Filename",
+            "type": "string"
+          },
+          "format": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Format"
+          },
+          "group_last_scanned_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Group Last Scanned At"
+          },
+          "group_match_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Group Match Count"
+          },
+          "group_scan_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Group Scan Count"
+          },
+          "group_unreviewed_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Group Unreviewed Count"
+          },
+          "height": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Height"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "indexed_at": {
+            "title": "Indexed At",
+            "type": "string"
+          },
+          "is_present_on_disk": {
+            "default": true,
+            "title": "Is Present On Disk",
+            "type": "boolean"
+          },
+          "is_primary_representation": {
+            "default": 1,
+            "title": "Is Primary Representation",
+            "type": "integer"
+          },
+          "last_scanned_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Scanned At"
+          },
+          "last_seen_on_disk": {
+            "title": "Last Seen On Disk",
+            "type": "string"
+          },
+          "library_id": {
+            "title": "Library Id",
+            "type": "integer"
+          },
+          "match_count": {
+            "default": 0,
+            "title": "Match Count",
+            "type": "integer"
+          },
+          "photo_group_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Photo Group Id"
+          },
+          "project": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Project"
+          },
+          "project_source": {
+            "default": "auto",
+            "enum": [
+              "auto",
+              "manual"
+            ],
+            "title": "Project Source",
+            "type": "string"
+          },
+          "scan_count": {
+            "default": 0,
+            "title": "Scan Count",
+            "type": "integer"
+          },
+          "sha256": {
+            "title": "Sha256",
+            "type": "string"
+          },
+          "thumbnail_url": {
+            "title": "Thumbnail Url",
+            "type": "string"
+          },
+          "unreviewed_count": {
+            "default": 0,
+            "title": "Unreviewed Count",
+            "type": "integer"
+          },
+          "width": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Width"
+          }
+        },
+        "required": [
+          "id",
+          "library_id",
+          "sha256",
+          "dhash",
+          "photo_group_id",
+          "is_primary_representation",
+          "file_path",
+          "filename",
+          "file_size",
+          "file_modified_at",
+          "file_modified_at_ns",
+          "width",
+          "height",
+          "format",
+          "indexed_at",
+          "last_seen_on_disk",
+          "is_present_on_disk",
+          "project",
+          "project_source",
+          "last_scanned_at",
+          "scan_count",
+          "match_count",
+          "unreviewed_count",
+          "group_match_count",
+          "group_unreviewed_count",
+          "group_scan_count",
+          "group_last_scanned_at",
+          "thumbnail_url"
+        ],
+        "title": "ImageOut",
+        "type": "object"
+      },
+      "IndexResponse": {
+        "properties": {
+          "results": {
+            "$ref": "#/components/schemas/IndexResults"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "results"
+        ],
+        "title": "IndexResponse",
+        "type": "object"
+      },
+      "IndexResults": {
+        "properties": {
+          "added_or_updated": {
+            "title": "Added Or Updated",
+            "type": "integer"
+          },
+          "missing": {
+            "title": "Missing",
+            "type": "integer"
+          },
+          "scanned": {
+            "title": "Scanned",
+            "type": "integer"
+          },
+          "unchanged": {
+            "title": "Unchanged",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "scanned",
+          "added_or_updated",
+          "unchanged",
+          "missing"
+        ],
+        "title": "IndexResults",
+        "type": "object"
+      },
+      "LibraryCreate": {
+        "properties": {
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Optional nickname for the library",
+            "title": "Name"
+          },
+          "path": {
+            "description": "Absolute path to directory on local disk",
+            "title": "Path",
+            "type": "string"
+          },
+          "recursive": {
+            "default": true,
+            "description": "Whether to index subfolders recursively",
+            "title": "Recursive",
+            "type": "boolean"
+          },
+          "subfolders_as_projects": {
+            "default": true,
+            "description": "Whether to auto-detect subfolders as distinct projects",
+            "title": "Subfolders As Projects",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "title": "LibraryCreate",
+        "type": "object"
+      },
+      "LibraryOut": {
+        "properties": {
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "image_count": {
+            "default": 0,
+            "title": "Image Count",
+            "type": "integer"
+          },
+          "is_archived": {
+            "default": false,
+            "title": "Is Archived",
+            "type": "boolean"
+          },
+          "last_indexed_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Indexed At"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "path": {
+            "title": "Path",
+            "type": "string"
+          },
+          "recursive": {
+            "title": "Recursive",
+            "type": "boolean"
+          },
+          "subfolders_as_projects": {
+            "default": true,
+            "title": "Subfolders As Projects",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "path",
+          "name",
+          "enabled",
+          "recursive",
+          "is_archived",
+          "subfolders_as_projects",
+          "created_at",
+          "last_indexed_at",
+          "image_count"
+        ],
+        "title": "LibraryOut",
+        "type": "object"
+      },
+      "LibraryUpdate": {
+        "properties": {
+          "enabled": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Enabled"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "recursive": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recursive"
+          },
+          "subfolders_as_projects": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Subfolders As Projects"
+          }
+        },
+        "title": "LibraryUpdate",
+        "type": "object"
+      },
+      "MatchListResponse": {
+        "properties": {
+          "matches": {
+            "items": {
+              "$ref": "#/components/schemas/MatchOut"
+            },
+            "title": "Matches",
+            "type": "array"
+          },
+          "page": {
+            "title": "Page",
+            "type": "integer"
+          },
+          "page_size": {
+            "title": "Page Size",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "matches",
+          "total",
+          "page",
+          "page_size"
+        ],
+        "title": "MatchListResponse",
+        "type": "object"
+      },
+      "MatchOut": {
+        "properties": {
+          "acknowledged_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Acknowledged At"
+          },
+          "auto_classified_by_rule_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Auto Classified By Rule Id"
+          },
+          "candidate_image_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Candidate Image Url"
+          },
+          "canonical_match_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Canonical Match Id"
+          },
+          "classification": {
+            "default": "UNREVIEWED",
+            "enum": [
+              "UNREVIEWED",
+              "APPROVED",
+              "UNAUTHORIZED",
+              "IRRELEVANT"
+            ],
+            "title": "Classification",
+            "type": "string"
+          },
+          "classified_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Classified At"
+          },
+          "display_image_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display Image Id"
+          },
+          "domain": {
+            "title": "Domain",
+            "type": "string"
+          },
+          "explicit_review_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Explicit Review At"
+          },
+          "first_seen_at": {
+            "title": "First Seen At",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "image_filename": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Image Filename"
+          },
+          "image_id": {
+            "title": "Image Id",
+            "type": "integer"
+          },
+          "image_project": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Image Project"
+          },
+          "image_thumbnail_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Image Thumbnail Url"
+          },
+          "inherited_from": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Inherited From"
+          },
+          "is_new": {
+            "title": "Is New",
+            "type": "boolean"
+          },
+          "last_seen_at": {
+            "title": "Last Seen At",
+            "type": "string"
+          },
+          "match_type": {
+            "default": "FULL",
+            "enum": [
+              "FULL",
+              "PARTIAL",
+              "PAGE",
+              "OTHER"
+            ],
+            "title": "Match Type",
+            "type": "string"
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notes"
+          },
+          "observation_count": {
+            "default": 1,
+            "title": "Observation Count",
+            "type": "integer"
+          },
+          "observed_classification": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Observed Classification"
+          },
+          "observed_classified_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Observed Classified At"
+          },
+          "observed_notes": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Observed Notes"
+          },
+          "observed_rule_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Observed Rule Id"
+          },
+          "page_score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Page Score"
+          },
+          "page_title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Page Title"
+          },
+          "page_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Page Url"
+          },
+          "provider": {
+            "title": "Provider",
+            "type": "string"
+          },
+          "scan_session_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scan Session Id"
+          },
+          "source_kind": {
+            "default": "PAGE",
+            "enum": [
+              "PAGE",
+              "ASSET_ONLY"
+            ],
+            "title": "Source Kind",
+            "type": "string"
+          },
+          "triage_conflict": {
+            "default": false,
+            "title": "Triage Conflict",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "image_id",
+          "scan_session_id",
+          "source_kind",
+          "page_url",
+          "page_title",
+          "page_score",
+          "domain",
+          "candidate_image_url",
+          "match_type",
+          "provider",
+          "first_seen_at",
+          "last_seen_at",
+          "is_new",
+          "acknowledged_at",
+          "classification",
+          "classified_at",
+          "auto_classified_by_rule_id",
+          "notes",
+          "display_image_id",
+          "canonical_match_id",
+          "observation_count",
+          "observed_classification",
+          "observed_notes",
+          "observed_classified_at",
+          "observed_rule_id",
+          "triage_conflict",
+          "explicit_review_at",
+          "inherited_from",
+          "image_filename",
+          "image_thumbnail_url",
+          "image_project"
+        ],
+        "title": "MatchOut",
+        "type": "object"
+      },
+      "MatchUpdate": {
+        "properties": {
+          "acknowledged": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Acknowledged"
+          },
+          "classification": {
+            "anyOf": [
+              {
+                "enum": [
+                  "UNREVIEWED",
+                  "APPROVED",
+                  "UNAUTHORIZED",
+                  "IRRELEVANT"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Classification"
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notes"
+          }
+        },
+        "title": "MatchUpdate",
+        "type": "object"
+      },
+      "PhotoGroupCreate": {
+        "properties": {
+          "image_ids": {
+            "description": "At least two image IDs to group",
+            "items": {
+              "type": "integer"
+            },
+            "minItems": 2,
+            "title": "Image Ids",
+            "type": "array"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notes"
+          },
+          "preferred_image_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Preferred Image Id"
+          }
+        },
+        "required": [
+          "image_ids"
+        ],
+        "title": "PhotoGroupCreate",
+        "type": "object"
+      },
+      "PhotoGroupOut": {
+        "properties": {
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "images": {
+            "items": {
+              "$ref": "#/components/schemas/ImageOut"
+            },
+            "title": "Images",
+            "type": "array"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notes"
+          },
+          "preferred_image_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Preferred Image Id"
+          },
+          "updated_at": {
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "created_at",
+          "updated_at",
+          "preferred_image_id",
+          "notes",
+          "images"
+        ],
+        "title": "PhotoGroupOut",
+        "type": "object"
+      },
+      "ProjectDetectionResponse": {
+        "properties": {
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "updated_count": {
+            "title": "Updated Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "status",
+          "updated_count"
+        ],
+        "title": "ProjectDetectionResponse",
+        "type": "object"
+      },
+      "ProviderCallOut": {
+        "properties": {
+          "attempted_units": {
+            "title": "Attempted Units",
+            "type": "integer"
+          },
+          "billing_period": {
+            "title": "Billing Period",
+            "type": "string"
+          },
+          "error_message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Message"
+          },
+          "estimated_cost": {
+            "title": "Estimated Cost",
+            "type": "number"
+          },
+          "failed_units": {
+            "title": "Failed Units",
+            "type": "integer"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "image_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Image Id"
+          },
+          "provider": {
+            "title": "Provider",
+            "type": "string"
+          },
+          "request_status": {
+            "title": "Request Status",
+            "type": "string"
+          },
+          "scan_session_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scan Session Id"
+          },
+          "successful_units": {
+            "title": "Successful Units",
+            "type": "integer"
+          },
+          "timestamp": {
+            "title": "Timestamp",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "provider",
+          "timestamp",
+          "billing_period",
+          "scan_session_id",
+          "image_id",
+          "attempted_units",
+          "successful_units",
+          "failed_units",
+          "request_status",
+          "estimated_cost",
+          "error_message"
+        ],
+        "title": "ProviderCallOut",
+        "type": "object"
+      },
+      "ScanPrepareRequest": {
+        "properties": {
+          "image_ids": {
+            "items": {
+              "type": "integer"
+            },
+            "minItems": 1,
+            "title": "Image Ids",
+            "type": "array"
+          },
+          "provider": {
+            "anyOf": [
+              {
+                "enum": [
+                  "mock",
+                  "google_vision"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Provider"
+          }
+        },
+        "required": [
+          "image_ids"
+        ],
+        "title": "ScanPrepareRequest",
+        "type": "object"
+      },
+      "ScanPrepareResponse": {
+        "properties": {
+          "blocked_by_guard": {
+            "title": "Blocked By Guard",
+            "type": "boolean"
+          },
+          "current_month": {
+            "title": "Current Month",
+            "type": "string"
+          },
+          "disclaimer": {
+            "title": "Disclaimer",
+            "type": "string"
+          },
+          "estimated_incremental_cost_usd": {
+            "title": "Estimated Incremental Cost Usd",
+            "type": "number"
+          },
+          "free_tier_allowance": {
+            "title": "Free Tier Allowance",
+            "type": "integer"
+          },
+          "free_tier_exceeded": {
+            "title": "Free Tier Exceeded",
+            "type": "boolean"
+          },
+          "grouped_variant_count": {
+            "default": 0,
+            "title": "Grouped Variant Count",
+            "type": "integer"
+          },
+          "missing_count": {
+            "title": "Missing Count",
+            "type": "integer"
+          },
+          "projected_units_total": {
+            "title": "Projected Units Total",
+            "type": "integer"
+          },
+          "provider": {
+            "title": "Provider",
+            "type": "string"
+          },
+          "remaining_free_units": {
+            "title": "Remaining Free Units",
+            "type": "integer"
+          },
+          "selected_count": {
+            "title": "Selected Count",
+            "type": "integer"
+          },
+          "units_used_this_month": {
+            "title": "Units Used This Month",
+            "type": "integer"
+          },
+          "usable_count": {
+            "title": "Usable Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "selected_count",
+          "usable_count",
+          "missing_count",
+          "grouped_variant_count",
+          "provider",
+          "current_month",
+          "units_used_this_month",
+          "projected_units_total",
+          "free_tier_allowance",
+          "remaining_free_units",
+          "estimated_incremental_cost_usd",
+          "free_tier_exceeded",
+          "blocked_by_guard",
+          "disclaimer"
+        ],
+        "title": "ScanPrepareResponse",
+        "type": "object"
+      },
+      "ScanSessionOut": {
+        "properties": {
+          "cancel_requested": {
+            "default": false,
+            "title": "Cancel Requested",
+            "type": "boolean"
+          },
+          "completed_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed At"
+          },
+          "failed_images": {
+            "title": "Failed Images",
+            "type": "integer"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notes"
+          },
+          "processed_images": {
+            "title": "Processed Images",
+            "type": "integer"
+          },
+          "provider": {
+            "title": "Provider",
+            "type": "string"
+          },
+          "started_at": {
+            "title": "Started At",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "RUNNING",
+              "COMPLETED",
+              "FAILED",
+              "CANCELLED",
+              "INTERRUPTED"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "successful_images": {
+            "title": "Successful Images",
+            "type": "integer"
+          },
+          "total_images": {
+            "title": "Total Images",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "started_at",
+          "completed_at",
+          "provider",
+          "total_images",
+          "processed_images",
+          "successful_images",
+          "failed_images",
+          "status",
+          "cancel_requested",
+          "notes"
+        ],
+        "title": "ScanSessionOut",
+        "type": "object"
+      },
+      "ScanStartRequest": {
+        "properties": {
+          "force_override_guard": {
+            "default": false,
+            "title": "Force Override Guard",
+            "type": "boolean"
+          },
+          "image_ids": {
+            "items": {
+              "type": "integer"
+            },
+            "minItems": 1,
+            "title": "Image Ids",
+            "type": "array"
+          },
+          "provider": {
+            "anyOf": [
+              {
+                "enum": [
+                  "mock",
+                  "google_vision"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Provider"
+          }
+        },
+        "required": [
+          "image_ids"
+        ],
+        "title": "ScanStartRequest",
+        "type": "object"
+      },
+      "SetPreferredRequest": {
+        "properties": {
+          "preferred_image_id": {
+            "title": "Preferred Image Id",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "preferred_image_id"
+        ],
+        "title": "SetPreferredRequest",
+        "type": "object"
+      },
+      "SettingsUpdate": {
+        "properties": {
+          "active_provider": {
+            "anyOf": [
+              {
+                "enum": [
+                  "mock",
+                  "google_vision"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Active Provider"
+          },
+          "block_on_free_tier_exceeded": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Block On Free Tier Exceeded"
+          },
+          "free_tier_monthly_units": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Free Tier Monthly Units"
+          },
+          "google_credentials_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Google Credentials Path"
+          },
+          "unit_price_usd": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unit Price Usd"
+          }
+        },
+        "title": "SettingsUpdate",
+        "type": "object"
+      },
+      "TestGoogleAuthRequest": {
+        "properties": {
+          "credentials_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Credentials Path"
+          }
+        },
+        "title": "TestGoogleAuthRequest",
+        "type": "object"
+      },
+      "TestGoogleAuthResponse": {
+        "properties": {
+          "auth_mode": {
+            "title": "Auth Mode",
+            "type": "string"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Message"
+          },
+          "project_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Project Id"
+          },
+          "service_account_email": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Service Account Email"
+          },
+          "success": {
+            "title": "Success",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "success",
+          "auth_mode",
+          "message",
+          "error",
+          "project_id",
+          "service_account_email"
+        ],
+        "title": "TestGoogleAuthResponse",
+        "type": "object"
+      },
+      "UsageSummaryOut": {
+        "properties": {
+          "billing_period": {
+            "title": "Billing Period",
+            "type": "string"
+          },
+          "disclaimer": {
+            "title": "Disclaimer",
+            "type": "string"
+          },
+          "estimated_total_cost_usd": {
+            "title": "Estimated Total Cost Usd",
+            "type": "number"
+          },
+          "free_tier_allowance": {
+            "title": "Free Tier Allowance",
+            "type": "integer"
+          },
+          "is_guard_enabled": {
+            "title": "Is Guard Enabled",
+            "type": "boolean"
+          },
+          "remaining_free_units": {
+            "title": "Remaining Free Units",
+            "type": "integer"
+          },
+          "total_lifetime_calls": {
+            "title": "Total Lifetime Calls",
+            "type": "integer"
+          },
+          "total_lifetime_units": {
+            "title": "Total Lifetime Units",
+            "type": "integer"
+          },
+          "units_used_this_month": {
+            "title": "Units Used This Month",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "billing_period",
+          "units_used_this_month",
+          "free_tier_allowance",
+          "remaining_free_units",
+          "estimated_total_cost_usd",
+          "is_guard_enabled",
+          "disclaimer",
+          "total_lifetime_calls",
+          "total_lifetime_units"
+        ],
+        "title": "UsageSummaryOut",
+        "type": "object"
+      },
+      "ValidationError": {
+        "properties": {
+          "ctx": {
+            "title": "Context",
+            "type": "object"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "title": "Location",
+            "type": "array"
+          },
+          "msg": {
+            "title": "Message",
+            "type": "string"
+          },
+          "type": {
+            "title": "Error Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError",
+        "type": "object"
+      }
+    }
+  },
+  "info": {
+    "description": "Local reverse-image-search discovery and monitoring tool for photographers.",
+    "title": "Photo Privateer",
+    "version": "1.3.0"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/api/groups": {
+      "get": {
+        "description": "Lists all photo groups with their member representations.",
+        "operationId": "list_groups_api_groups_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/PhotoGroupOut"
+                  },
+                  "title": "Response List Groups Api Groups Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Groups",
+        "tags": [
+          "groups"
+        ]
+      },
+      "post": {
+        "description": "Creates a photo group uniting candidate image representations.",
+        "operationId": "create_group_api_groups_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PhotoGroupCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PhotoGroupOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Group",
+        "tags": [
+          "groups"
+        ]
+      }
+    },
+    "/api/groups/candidates": {
+      "get": {
+        "description": "Returns the top candidate photo representation pairs (perceptual distance <= threshold or\nexact SHA) together with the total number of candidate pairs.",
+        "operationId": "get_group_candidates_api_groups_candidates_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "threshold",
+            "required": false,
+            "schema": {
+              "default": 10,
+              "maximum": 16,
+              "minimum": 0,
+              "title": "Threshold",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 500,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "library_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Library Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GroupCandidateListOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Group Candidates",
+        "tags": [
+          "groups"
+        ]
+      }
+    },
+    "/api/groups/candidates/dismiss": {
+      "post": {
+        "description": "Dismisses a candidate pair so they are kept separate in future reviews.",
+        "operationId": "dismiss_candidate_pair_api_groups_candidates_dismiss_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DismissCandidateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CandidateDismissResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Dismiss Candidate Pair",
+        "tags": [
+          "groups"
+        ]
+      }
+    },
+    "/api/groups/{group_id}": {
+      "delete": {
+        "description": "Deletes a photo group, reverting all members to singleton representations.",
+        "operationId": "delete_group_api_groups__group_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "group_id",
+            "required": true,
+            "schema": {
+              "title": "Group Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GroupDeleteResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Group",
+        "tags": [
+          "groups"
+        ]
+      },
+      "get": {
+        "description": "Retrieves a single photo group by ID.",
+        "operationId": "get_group_api_groups__group_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "group_id",
+            "required": true,
+            "schema": {
+              "title": "Group Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PhotoGroupOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Group",
+        "tags": [
+          "groups"
+        ]
+      }
+    },
+    "/api/groups/{group_id}/images": {
+      "post": {
+        "description": "Adds an image representation to an existing photo group.",
+        "operationId": "add_image_to_group_api_groups__group_id__images_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "group_id",
+            "required": true,
+            "schema": {
+              "title": "Group Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AddImageToGroupRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PhotoGroupOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Add Image To Group",
+        "tags": [
+          "groups"
+        ]
+      }
+    },
+    "/api/groups/{group_id}/images/{image_id}": {
+      "delete": {
+        "description": "Removes an image representation from a group. Dissolves group if <= 1 member remains.",
+        "operationId": "remove_image_from_group_api_groups__group_id__images__image_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "group_id",
+            "required": true,
+            "schema": {
+              "title": "Group Id",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "path",
+            "name": "image_id",
+            "required": true,
+            "schema": {
+              "title": "Image Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/PhotoGroupOut"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "title": "Response Remove Image From Group Api Groups  Group Id  Images  Image Id  Delete"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Remove Image From Group",
+        "tags": [
+          "groups"
+        ]
+      }
+    },
+    "/api/groups/{group_id}/preferred": {
+      "put": {
+        "description": "Sets the preferred (primary) image representation for a photo group.",
+        "operationId": "set_preferred_image_api_groups__group_id__preferred_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "group_id",
+            "required": true,
+            "schema": {
+              "title": "Group Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetPreferredRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PhotoGroupOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Set Preferred Image",
+        "tags": [
+          "groups"
+        ]
+      }
+    },
+    "/api/libraries": {
+      "get": {
+        "operationId": "list_libraries_api_libraries_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/LibraryOut"
+                  },
+                  "title": "Response List Libraries Api Libraries Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Libraries",
+        "tags": [
+          "libraries"
+        ]
+      },
+      "post": {
+        "operationId": "create_library_api_libraries_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LibraryCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LibraryOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Library",
+        "tags": [
+          "libraries"
+        ]
+      }
+    },
+    "/api/libraries/browse-folder": {
+      "post": {
+        "description": "Attempt to open a local native folder picker on the desktop host.",
+        "operationId": "browse_folder_api_libraries_browse_folder_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FolderBrowseResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Browse Folder",
+        "tags": [
+          "libraries"
+        ]
+      }
+    },
+    "/api/libraries/{library_id}": {
+      "delete": {
+        "operationId": "delete_library_api_libraries__library_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "library_id",
+            "required": true,
+            "schema": {
+              "title": "Library Id",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "purge_permanently",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Purge Permanently",
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionMessageResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Library",
+        "tags": [
+          "libraries"
+        ]
+      },
+      "patch": {
+        "operationId": "update_library_api_libraries__library_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "library_id",
+            "required": true,
+            "schema": {
+              "title": "Library Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LibraryUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LibraryOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Library",
+        "tags": [
+          "libraries"
+        ]
+      }
+    },
+    "/api/libraries/{library_id}/archive": {
+      "post": {
+        "operationId": "archive_library_api_libraries__library_id__archive_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "library_id",
+            "required": true,
+            "schema": {
+              "title": "Library Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LibraryOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Archive Library",
+        "tags": [
+          "libraries"
+        ]
+      }
+    },
+    "/api/libraries/{library_id}/detect-projects": {
+      "post": {
+        "operationId": "detect_projects_api_libraries__library_id__detect_projects_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "library_id",
+            "required": true,
+            "schema": {
+              "title": "Library Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectDetectionResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Detect Projects",
+        "tags": [
+          "libraries"
+        ]
+      }
+    },
+    "/api/libraries/{library_id}/index": {
+      "post": {
+        "operationId": "index_library_api_libraries__library_id__index_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "library_id",
+            "required": true,
+            "schema": {
+              "title": "Library Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IndexResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Index Library",
+        "tags": [
+          "libraries"
+        ]
+      }
+    },
+    "/api/libraries/{library_id}/unarchive": {
+      "post": {
+        "operationId": "unarchive_library_api_libraries__library_id__unarchive_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "library_id",
+            "required": true,
+            "schema": {
+              "title": "Library Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LibraryOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Unarchive Library",
+        "tags": [
+          "libraries"
+        ]
+      }
+    },
+    "/api/matches": {
+      "get": {
+        "operationId": "list_matches_api_matches_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "image_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Image Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "project",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Project"
+            }
+          },
+          {
+            "in": "query",
+            "name": "classification",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Classification"
+            }
+          },
+          {
+            "in": "query",
+            "name": "is_new_only",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Is New Only",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "domain",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Domain"
+            }
+          },
+          {
+            "in": "query",
+            "name": "search",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Search"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sort_by",
+            "required": false,
+            "schema": {
+              "default": "last_seen_at",
+              "pattern": "^(last_seen_at|first_seen_at|domain|page_title|classification|match_type)$",
+              "title": "Sort By",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sort_dir",
+            "required": false,
+            "schema": {
+              "default": "desc",
+              "pattern": "^(asc|desc)$",
+              "title": "Sort Dir",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "default": 1,
+              "minimum": 1,
+              "title": "Page",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page_size",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Page Size",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MatchListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Matches",
+        "tags": [
+          "matches"
+        ]
+      }
+    },
+    "/api/matches/{match_id}": {
+      "get": {
+        "operationId": "get_match_api_matches__match_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "match_id",
+            "required": true,
+            "schema": {
+              "title": "Match Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MatchOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Match",
+        "tags": [
+          "matches"
+        ]
+      },
+      "patch": {
+        "operationId": "update_match_api_matches__match_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "match_id",
+            "required": true,
+            "schema": {
+              "title": "Match Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MatchUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MatchOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Match",
+        "tags": [
+          "matches"
+        ]
+      }
+    },
+    "/api/matches/{match_id}/observations": {
+      "get": {
+        "description": "Physical observations behind a logical discovery: its own row first, then observations of\nthe same web use made by other photos of its group, each with its own original triage.",
+        "operationId": "get_match_observations_api_matches__match_id__observations_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "match_id",
+            "required": true,
+            "schema": {
+              "title": "Match Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/MatchOut"
+                  },
+                  "title": "Response Get Match Observations Api Matches  Match Id  Observations Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Match Observations",
+        "tags": [
+          "matches"
+        ]
+      }
+    },
+    "/api/photos": {
+      "get": {
+        "operationId": "list_photos_api_photos_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "library_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Library Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "search",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Search"
+            }
+          },
+          {
+            "in": "query",
+            "name": "project",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Project"
+            }
+          },
+          {
+            "in": "query",
+            "name": "group_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Group Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "filter_status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "all",
+                    "unscanned",
+                    "scanned",
+                    "has_matches",
+                    "has_unreviewed",
+                    "grouped",
+                    "ungrouped",
+                    "missing"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Filter Status"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sort_by",
+            "required": false,
+            "schema": {
+              "default": "indexed_at",
+              "enum": [
+                "indexed_at",
+                "last_scanned_at",
+                "filename",
+                "project",
+                "match_count",
+                "unreviewed_count",
+                "file_size"
+              ],
+              "title": "Sort By",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sort_dir",
+            "required": false,
+            "schema": {
+              "default": "desc",
+              "enum": [
+                "asc",
+                "desc"
+              ],
+              "title": "Sort Dir",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "default": 1,
+              "minimum": 1,
+              "title": "Page",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page_size",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Page Size",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImageListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Photos",
+        "tags": [
+          "photos"
+        ]
+      }
+    },
+    "/api/photos/batch-project": {
+      "post": {
+        "operationId": "batch_assign_project_api_photos_batch_project_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BatchProjectUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BatchProjectResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Batch Assign Project",
+        "tags": [
+          "photos"
+        ]
+      }
+    },
+    "/api/photos/projects": {
+      "get": {
+        "operationId": "list_projects_api_photos_projects_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "library_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Library Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "title": "Response List Projects Api Photos Projects Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Projects",
+        "tags": [
+          "photos"
+        ]
+      }
+    },
+    "/api/photos/{photo_id}": {
+      "get": {
+        "operationId": "get_photo_api_photos__photo_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "photo_id",
+            "required": true,
+            "schema": {
+              "title": "Photo Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImageOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Photo",
+        "tags": [
+          "photos"
+        ]
+      }
+    },
+    "/api/photos/{photo_id}/file": {
+      "get": {
+        "operationId": "get_photo_file_api_photos__photo_id__file_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "photo_id",
+            "required": true,
+            "schema": {
+              "title": "Photo Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Photo File",
+        "tags": [
+          "photos"
+        ]
+      }
+    },
+    "/api/photos/{photo_id}/project": {
+      "patch": {
+        "operationId": "update_photo_project_api_photos__photo_id__project_patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "photo_id",
+            "required": true,
+            "schema": {
+              "title": "Photo Id",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "project",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Project"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImageOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Photo Project",
+        "tags": [
+          "photos"
+        ]
+      }
+    },
+    "/api/photos/{photo_id}/thumbnail": {
+      "get": {
+        "operationId": "get_photo_thumbnail_api_photos__photo_id__thumbnail_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "photo_id",
+            "required": true,
+            "schema": {
+              "title": "Photo Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "image/webp": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Photo Thumbnail",
+        "tags": [
+          "photos"
+        ]
+      }
+    },
+    "/api/rules": {
+      "get": {
+        "operationId": "list_rules_api_rules_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/DomainRuleOut"
+                  },
+                  "title": "Response List Rules Api Rules Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Rules",
+        "tags": [
+          "rules"
+        ]
+      },
+      "post": {
+        "operationId": "create_or_update_rule_api_rules_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DomainRuleCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DomainRuleOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Or Update Rule",
+        "tags": [
+          "rules"
+        ]
+      }
+    },
+    "/api/rules/{rule_id}": {
+      "delete": {
+        "operationId": "delete_rule_api_rules__rule_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "rule_id",
+            "required": true,
+            "schema": {
+              "title": "Rule Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionMessageResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Rule",
+        "tags": [
+          "rules"
+        ]
+      }
+    },
+    "/api/scans/history": {
+      "get": {
+        "operationId": "list_scan_sessions_api_scans_history_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ScanSessionOut"
+                  },
+                  "title": "Response List Scan Sessions Api Scans History Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Scan Sessions",
+        "tags": [
+          "scans"
+        ]
+      }
+    },
+    "/api/scans/prepare": {
+      "post": {
+        "operationId": "prepare_scan_api_scans_prepare_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ScanPrepareRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScanPrepareResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Prepare Scan",
+        "tags": [
+          "scans"
+        ]
+      }
+    },
+    "/api/scans/start": {
+      "post": {
+        "operationId": "start_scan_api_scans_start_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ScanStartRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScanSessionOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Start Scan",
+        "tags": [
+          "scans"
+        ]
+      }
+    },
+    "/api/scans/{session_id}": {
+      "get": {
+        "operationId": "get_scan_session_api_scans__session_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScanSessionOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Scan Session",
+        "tags": [
+          "scans"
+        ]
+      }
+    },
+    "/api/scans/{session_id}/cancel": {
+      "post": {
+        "operationId": "cancel_scan_api_scans__session_id__cancel_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScanSessionOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Cancel Scan",
+        "tags": [
+          "scans"
+        ]
+      }
+    },
+    "/api/settings": {
+      "get": {
+        "operationId": "get_settings_api_settings_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppSettings"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Settings",
+        "tags": [
+          "settings"
+        ]
+      },
+      "patch": {
+        "operationId": "update_settings_api_settings_patch",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SettingsUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppSettings"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Settings",
+        "tags": [
+          "settings"
+        ]
+      }
+    },
+    "/api/settings/test-google-auth": {
+      "post": {
+        "operationId": "test_google_auth_api_settings_test_google_auth_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/TestGoogleAuthRequest"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Payload"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TestGoogleAuthResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Test Google Auth",
+        "tags": [
+          "settings"
+        ]
+      }
+    },
+    "/api/settings/validate-folder": {
+      "post": {
+        "operationId": "validate_folder_api_settings_validate_folder_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FolderValidateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FolderValidateResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Validate Folder",
+        "tags": [
+          "settings"
+        ]
+      }
+    },
+    "/api/usage/calls": {
+      "get": {
+        "operationId": "list_provider_calls_api_usage_calls_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ProviderCallOut"
+                  },
+                  "title": "Response List Provider Calls Api Usage Calls Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Provider Calls",
+        "tags": [
+          "usage"
+        ]
+      }
+    },
+    "/api/usage/summary": {
+      "get": {
+        "operationId": "get_usage_summary_api_usage_summary_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "period",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "pattern": "^\\d{4}-\\d{2}$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Period"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UsageSummaryOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Usage Summary",
+        "tags": [
+          "usage"
+        ]
+      }
+    }
+  }
+}

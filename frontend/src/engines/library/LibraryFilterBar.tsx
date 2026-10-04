@@ -104,6 +104,7 @@ export const LibraryFilterBar: React.FC<LibraryFilterBarProps> = ({
               ['has_unreviewed', 'Needs Review'],
               ['grouped', 'Grouped'],
               ['ungrouped', 'Ungrouped'],
+              ['missing', 'Missing'],
             ] as const
           ).map(([key, label]) => (
             <button

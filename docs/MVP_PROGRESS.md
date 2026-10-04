@@ -10,7 +10,7 @@ open PR; an implemented slice is not considered delivered on main until merge.
 | 2 | #24 reference-aware thumbnail purge | Implemented; local four-tier verification |
 | 3 | #27 atomic concurrent thumbnail generation | Implemented; local four-tier verification |
 | 4 | #26 index/scan coordination | Implemented; local four-tier verification |
-| 5 | #28 deterministic API contract checking | Planned |
+| 5 | #28 deterministic API contract checking | Implemented; local four-tier verification |
 | 6 | #25 active-library browsing and scan eligibility | Planned |
 | 7 | #30 durable photo identity contract | Planned before WebUse schema work |
 | 8 | #48 verified backup/recovery | Required before #33 migration |
@@ -89,3 +89,17 @@ transmission authorization; local implementation and verification can proceed.
   cancellation, 409 responses and startup recovery; no timing sleeps.
 - Local verification: backend 246 passed; frontend 51 passed; build and
   Playwright 8/8 passed.
+
+## Slice 5 — #28
+
+- Commit a deterministic OpenAPI snapshot and generated TypeScript schemas and
+  operation contracts. API responses now expose their actual required default
+  fields; clients derive payloads, queries and results from these contracts.
+- CI checks server-side drift without rewriting artifacts. The bounded Python
+  generator rejects unsupported schema shapes; its rationale and regeneration
+  commands are documented in docs/API_CONTRACT.md. The upstream generator's
+  TypeScript 5 peer constraint conflicts with this repository's TypeScript 7.
+- Contract regressions cover backend-only drift, nullable fields, acknowledgement
+  without changing classification, missing-photo filters, paging and errors.
+- Local verification: backend 250 passed; frontend 54 passed; build and
+  Playwright 8/8 passed; generated-contract check passed.

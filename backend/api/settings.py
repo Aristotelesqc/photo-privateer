@@ -4,7 +4,7 @@ from __future__ import annotations
 from pathlib import Path
 from pydantic import BaseModel
 from fastapi import APIRouter, Depends, HTTPException
-from backend.models import AppSettings, SettingsUpdate
+from backend.models import AppSettings, SettingsUpdate, APIResponse
 from backend.repositories.settings_repo import SettingsRepository
 from backend.api.deps import get_settings_repo
 
@@ -13,7 +13,7 @@ router = APIRouter(prefix="/api/settings", tags=["settings"])
 class FolderValidateRequest(BaseModel):
     path: str
 
-class FolderValidateResponse(BaseModel):
+class FolderValidateResponse(APIResponse):
     valid: bool
     resolved_path: str
     is_dir: bool
@@ -61,7 +61,7 @@ def validate_folder(payload: FolderValidateRequest):
 class TestGoogleAuthRequest(BaseModel):
     credentials_path: str | None = None
 
-class TestGoogleAuthResponse(BaseModel):
+class TestGoogleAuthResponse(APIResponse):
     success: bool
     auth_mode: str
     message: str | None = None

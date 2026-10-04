@@ -1,10 +1,10 @@
 """Photos router."""
 from __future__ import annotations
 
-from typing import Optional
+from typing import Optional, Literal
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import FileResponse, Response
-from backend.models import ImageOut, ImageListResponse, BatchProjectUpdate
+from backend.models import ImageOut, ImageListResponse, BatchProjectUpdate, BatchProjectResponse
 from backend.repositories.image_repo import ImageRepository
 from backend.services.thumbnail_cache import ThumbnailCache
 from backend.services.image_service import ImageService
@@ -23,7 +23,7 @@ def list_projects(
 ):
     return repo.get_distinct_projects(library_id=library_id)
 
-@router.post("/batch-project")
+@router.post("/batch-project", response_model=BatchProjectResponse)
 def batch_assign_project(
     payload: BatchProjectUpdate,
     repo: ImageRepository = Depends(get_image_repo),
@@ -38,9 +38,9 @@ def list_photos(
     search: Optional[str] = None,
     project: Optional[str] = None,
     group_id: Optional[int] = None,
-    filter_status: Optional[str] = Query(None, pattern="^(all|unscanned|scanned|has_matches|has_unreviewed|grouped|ungrouped)$"),
-    sort_by: str = Query("indexed_at", pattern="^(indexed_at|last_scanned_at|filename|project|match_count|unreviewed_count|file_size)$"),
-    sort_dir: str = Query("desc", pattern="^(asc|desc)$"),
+    filter_status: Optional[Literal["all", "unscanned", "scanned", "has_matches", "has_unreviewed", "grouped", "ungrouped", "missing"]] = None,
+    sort_by: Literal["indexed_at", "last_scanned_at", "filename", "project", "match_count", "unreviewed_count", "file_size"] = "indexed_at",
+    sort_dir: Literal["asc", "desc"] = "desc",
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=200),
     repo: ImageRepository = Depends(get_image_repo),
@@ -83,7 +83,7 @@ def get_photo(photo_id: int, repo: ImageRepository = Depends(get_image_repo)):
         raise HTTPException(status_code=404, detail="Photo not found")
     return img
 
-@router.get("/{photo_id}/thumbnail")
+@router.get("/{photo_id}/thumbnail", response_class=Response, responses={200: {"content": {"image/webp": {"schema": {"type": "string", "format": "binary"}}}}})
 def get_photo_thumbnail(
     photo_id: int,
     repo: ImageRepository = Depends(get_image_repo),
@@ -107,7 +107,7 @@ def get_photo_thumbnail(
 
     return Response(content, media_type="image/webp")
 
-@router.get("/{photo_id}/file")
+@router.get("/{photo_id}/file", response_class=FileResponse)
 def get_photo_file(
     photo_id: int,
     repo: ImageRepository = Depends(get_image_repo),
