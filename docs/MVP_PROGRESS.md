@@ -7,7 +7,7 @@ open PR; an implemented slice is not considered delivered on main until merge.
 | Order | Issue | Status |
 | --- | --- | --- |
 | 1 | #23 global loopback Host validation | Implemented; local four-tier verification |
-| 2 | #24 reference-aware thumbnail purge | Next |
+| 2 | #24 reference-aware thumbnail purge | Implemented; local four-tier verification |
 | 3 | #27 atomic concurrent thumbnail generation | Planned; follows #24 |
 | 4 | #26 index/scan coordination | Planned |
 | 5 | #28 deterministic API contract checking | Planned |
@@ -33,3 +33,17 @@ Delegated explorations follow Arete's sub-explore contract: read-only, cited
 facts, root verification before writes. Delegated verdicts are separate reviews.
 External AGY repository exploration awaits the explicitly requested private-code
 transmission authorization; local implementation and verification can proceed.
+
+## Slice 2 — #24
+
+- A committed purge removes only thumbnails without any surviving image
+  reference, including archived, disabled and offline libraries. Hashes are
+  deduplicated. A SQLite `BEGIN IMMEDIATE` reservation covers reference checking
+  and eviction so another catalog writer cannot insert between them.
+- A rolled-back purge leaves thumbnails alone. Cache deletion failures are
+  logged after the database commit and do not report a fictitious purge rollback.
+- Eleven focused regressions cover both purge orders, all surviving library
+  states, final-reference eviction, rollback, filesystem failure and a competing
+  SQLite writer at the eviction boundary.
+- Local verification: backend 226 passed; frontend 51 passed; production build
+  and Playwright 8/8 passed. Same isolated mock/runtime baseline as slice 1.
