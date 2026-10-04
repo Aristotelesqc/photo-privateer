@@ -93,6 +93,11 @@ class ImageOut(APIResponse):
     indexed_at: str
     last_seen_on_disk: str
     is_present_on_disk: bool = True
+    # Computed by photo browse/detail routes; other catalog outputs leave them unknown.
+    library_enabled: Optional[bool] = None
+    library_archived: Optional[bool] = None
+    source_available: Optional[bool] = None
+    scan_eligible: Optional[bool] = None
     project: Optional[str] = None
     project_source: Literal["auto", "manual"] = "auto"
     last_scanned_at: Optional[str] = None

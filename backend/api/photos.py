@@ -8,6 +8,7 @@ from backend.models import ImageOut, ImageListResponse, BatchProjectUpdate, Batc
 from backend.repositories.image_repo import ImageRepository
 from backend.services.thumbnail_cache import ThumbnailCache
 from backend.services.image_service import ImageService
+from backend.services.scan_eligibility import annotate_eligibility
 from backend.api.deps import (
     get_image_repo,
     get_thumbnail_cache,
@@ -19,15 +20,19 @@ router = APIRouter(prefix="/api/photos", tags=["photos"])
 @router.get("/projects", response_model=list[str])
 def list_projects(
     library_id: Optional[int] = None,
+    include_inactive: bool = False,
     repo: ImageRepository = Depends(get_image_repo),
 ):
-    return repo.get_distinct_projects(library_id=library_id)
+    return repo.get_distinct_projects(library_id=library_id, active_only=not include_inactive)
 
 @router.post("/batch-project", response_model=BatchProjectResponse)
 def batch_assign_project(
     payload: BatchProjectUpdate,
     repo: ImageRepository = Depends(get_image_repo),
 ):
+    selected = annotate_eligibility(repo.get_by_ids(payload.photo_ids), repo)
+    if len(selected) != len(set(payload.photo_ids)) or any(not image.scan_eligible for image in selected):
+        raise HTTPException(status_code=400, detail="Selection contains unavailable or inactive photos. Refresh the selection or enable/unarchive the library in Settings.")
     count = repo.batch_update_project(payload.photo_ids, payload.project)
     repo.conn.commit()
     return {"updated": count, "project": payload.project}
@@ -43,6 +48,7 @@ def list_photos(
     sort_dir: Literal["asc", "desc"] = "desc",
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=200),
+    include_inactive: bool = False,
     repo: ImageRepository = Depends(get_image_repo),
 ):
     offset = (page - 1) * page_size
@@ -56,9 +62,10 @@ def list_photos(
         sort_dir=sort_dir,
         limit=page_size,
         offset=offset,
+        active_only=not include_inactive,
     )
     return ImageListResponse(
-        images=images,
+        images=annotate_eligibility(images, repo),
         total=total,
         page=page,
         page_size=page_size,
@@ -74,14 +81,14 @@ def update_photo_project(
     if not img:
         raise HTTPException(status_code=404, detail="Photo not found")
     repo.conn.commit()
-    return img
+    return annotate_eligibility([img], repo)[0]
 
 @router.get("/{photo_id}", response_model=ImageOut)
 def get_photo(photo_id: int, repo: ImageRepository = Depends(get_image_repo)):
     img = repo.get_by_id(photo_id)
     if not img:
         raise HTTPException(status_code=404, detail="Photo not found")
-    return img
+    return annotate_eligibility([img], repo)[0]
 
 @router.get("/{photo_id}/thumbnail", response_class=Response, responses={200: {"content": {"image/webp": {"schema": {"type": "string", "format": "binary"}}}}})
 def get_photo_thumbnail(
@@ -107,7 +114,7 @@ def get_photo_thumbnail(
 
     return Response(content, media_type="image/webp")
 
-@router.get("/{photo_id}/file", response_class=FileResponse)
+@router.get("/{photo_id}/file", response_class=FileResponse, responses={200: {"content": {"application/octet-stream": {"schema": {"type": "string", "format": "binary"}}}}})
 def get_photo_file(
     photo_id: int,
     repo: ImageRepository = Depends(get_image_repo),

@@ -25,9 +25,9 @@ export const PhotoCard: React.FC<PhotoCardProps> = ({
 
   return (
     <div
-      onClick={() => onToggleSelect(photo.id)}
+      onClick={() => { if (photo.scan_eligible) onToggleSelect(photo.id); }}
       data-testid={`photo-card-${photo.filename}`}
-      className={`group relative bg-carbon-900 border rounded-lg overflow-hidden cursor-pointer transition-all duration-100 select-none flex flex-col ${
+      className={`group relative bg-carbon-900 border rounded-lg overflow-hidden ${photo.scan_eligible ? 'cursor-pointer' : 'cursor-default'} transition-all duration-100 select-none flex flex-col ${
         isSelected
           ? 'border-accent-500 ring-1 ring-accent-500 bg-carbon-850 shadow-xs'
           : 'border-carbon-800 hover:border-carbon-700 hover:bg-carbon-850'
@@ -38,15 +38,21 @@ export const PhotoCard: React.FC<PhotoCardProps> = ({
         <Thumbnail src={photo.thumbnail_url} alt={photo.filename} className="w-full h-full" />
 
         {/* Checkbox indicator */}
-        <div
+        <button
+          type="button"
+          aria-label={`Select ${photo.filename}`}
+          aria-pressed={isSelected}
+          disabled={!photo.scan_eligible}
+          title={photo.scan_eligible ? 'Select for scanning or batch actions' : 'Source unavailable or monitoring inactive; historical review remains available'}
+          onClick={(event) => { event.stopPropagation(); onToggleSelect(photo.id); }}
           className={`absolute top-1.5 left-1.5 rounded transition-all p-0.5 ${
             isSelected
               ? 'bg-accent-600 text-white shadow-xs'
-              : 'bg-black/60 text-white/60 opacity-0 group-hover:opacity-100'
+              : 'bg-black/60 text-white/60 disabled:opacity-30'
           }`}
         >
           {isSelected ? <Check className="w-3.5 h-3.5 stroke-[2.5]" /> : <Square className="w-3.5 h-3.5" />}
-        </div>
+        </button>
 
         {/* Format Pill Overlay & Missing Warning */}
         <div className="absolute top-1.5 right-1.5 flex flex-col items-end gap-1">
@@ -75,13 +81,18 @@ export const PhotoCard: React.FC<PhotoCardProps> = ({
               {photo.is_primary_representation === 1 ? 'Primary' : 'Variant'}
             </button>
           )}
-          {!photo.is_present_on_disk && (
+          {photo.library_archived && <span className="text-[9px] px-1 rounded bg-carbon-950 text-carbon-300">Archived</span>}
+          {photo.library_enabled === false && <span className="text-[9px] px-1 rounded bg-carbon-950 text-carbon-300">Monitoring disabled</span>}
+          {(photo.source_available === false || !photo.is_present_on_disk) && (
             <span
               className="text-[9px] font-medium px-1 py-0.2 rounded bg-amber-950/90 text-amber-300 border border-amber-800/80 backdrop-blur-xs shadow-xs"
               title="File missing from original path on disk"
             >
               Missing
             </span>
+          )}
+          {photo.source_available === false && photo.scan_eligible && (
+            <span className="text-[9px] px-1 rounded bg-accent-950 text-accent-300">Search via group</span>
           )}
         </div>
 

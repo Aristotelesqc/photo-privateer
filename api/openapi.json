@@ -649,6 +649,28 @@
             "title": "Last Seen On Disk",
             "type": "string"
           },
+          "library_archived": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Library Archived"
+          },
+          "library_enabled": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Library Enabled"
+          },
           "library_id": {
             "title": "Library Id",
             "type": "integer"
@@ -694,9 +716,31 @@
             "title": "Scan Count",
             "type": "integer"
           },
+          "scan_eligible": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scan Eligible"
+          },
           "sha256": {
             "title": "Sha256",
             "type": "string"
+          },
+          "source_available": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Available"
           },
           "thumbnail_url": {
             "title": "Thumbnail Url",
@@ -737,6 +781,10 @@
           "indexed_at",
           "last_seen_on_disk",
           "is_present_on_disk",
+          "library_enabled",
+          "library_archived",
+          "source_available",
+          "scan_eligible",
           "project",
           "project_source",
           "last_scanned_at",
@@ -3336,6 +3384,16 @@
               "title": "Page Size",
               "type": "integer"
             }
+          },
+          {
+            "in": "query",
+            "name": "include_inactive",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Include Inactive",
+              "type": "boolean"
+            }
           }
         ],
         "responses": {
@@ -3425,6 +3483,16 @@
                 }
               ],
               "title": "Library Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "include_inactive",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Include Inactive",
+              "type": "boolean"
             }
           }
         ],
@@ -3518,6 +3586,14 @@
         ],
         "responses": {
           "200": {
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
+              }
+            },
             "description": "Successful Response"
           },
           "422": {

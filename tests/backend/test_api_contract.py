@@ -9,6 +9,9 @@ from scripts.api_contract import artifacts, generate_types, load_schema, stale_a
 
 def test_checked_in_contracts_match_current_server():
     assert stale_artifacts(artifacts(load_schema())) == []
+    types = generate_types(load_schema())
+    assert '"GET /api/photos/{photo_id}/file"' in types
+    assert '"response": Blob' in types or 'response: Blob' in types
 
 
 def test_server_only_field_change_is_detected_without_rewriting(tmp_path):

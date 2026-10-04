@@ -5,6 +5,7 @@ import sqlite3
 from datetime import datetime, timezone
 from typing import Optional
 from backend.models import ImageOut
+from backend.services.source_availability import source_path_available
 from backend.repositories.discovery_merge import (
     coalesce_discoveries,
     coalesce_group_discoveries,
@@ -144,9 +145,13 @@ class ImageRepository:
         sort_dir: str = "desc",
         limit: int = 50,
         offset: int = 0,
+        active_only: bool = False,
     ) -> tuple[list[ImageOut], int]:
         where_clauses = []
         params: list[object] = []
+
+        if active_only:
+            where_clauses.append("EXISTS (SELECT 1 FROM libraries l WHERE l.id = images.library_id AND l.enabled = 1 AND l.is_archived = 0)")
 
         if library_id is not None:
             where_clauses.append("library_id = ?")
@@ -181,7 +186,9 @@ class ImageRepository:
         elif filter_status == "has_unreviewed":
             where_clauses.append("COALESCE(gc_unreviewed_count, unreviewed_count) > 0")
         elif filter_status == "missing":
-            where_clauses.append("is_present_on_disk = 0")
+            # Filter before counting/paging, using the same current availability as badges.
+            self.conn.create_function("pp_source_available", 3, source_path_available)
+            where_clauses.append("pp_source_available(file_path, is_present_on_disk, (SELECT path FROM libraries l WHERE l.id = images.library_id)) = 0")
         elif filter_status == "grouped":
             where_clauses.append("photo_group_id IS NOT NULL")
         elif filter_status == "ungrouped":
@@ -409,21 +416,18 @@ class ImageRepository:
             total_updated += cur.rowcount
         return total_updated
 
-    def get_distinct_projects(self, library_id: Optional[int] = None) -> list[str]:
-        cur = self.conn.cursor()
+    def get_distinct_projects(self, library_id: Optional[int] = None, active_only: bool = False) -> list[str]:
+        clauses = ["project IS NOT NULL", "project != ''"]
+        params = []
         if library_id is not None:
-            cur.execute("""
-                SELECT DISTINCT project FROM images
-                WHERE library_id = ? AND project IS NOT NULL AND project != ''
-                ORDER BY project ASC
-            """, (library_id,))
-        else:
-            cur.execute("""
-                SELECT DISTINCT project FROM images
-                WHERE project IS NOT NULL AND project != ''
-                ORDER BY project ASC
-            """)
-        return [row[0] for row in cur.fetchall() if row[0]]
+            clauses.append("library_id = ?")
+            params.append(library_id)
+        if active_only:
+            clauses.append("EXISTS (SELECT 1 FROM libraries l WHERE l.id = images.library_id AND l.enabled = 1 AND l.is_archived = 0)")
+        rows = self.conn.execute(
+            "SELECT DISTINCT project FROM images WHERE " + " AND ".join(clauses) + " ORDER BY project ASC", params
+        ).fetchall()
+        return [row[0] for row in rows]
 
     def record_scan_completed(self, image_id: int, scanned_at: Optional[str] = None) -> str:
         now = scanned_at or datetime.now(timezone.utc).isoformat()

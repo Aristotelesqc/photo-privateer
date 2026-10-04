@@ -23,6 +23,8 @@ export interface LibraryFilterBarProps {
   preparingScan: boolean;
   activeProvider?: 'mock' | 'google_vision';
   onScanClicked: () => void;
+  includeInactive?: boolean;
+  onIncludeInactiveChange?: (value: boolean) => void;
 }
 
 export const LibraryFilterBar: React.FC<LibraryFilterBarProps> = ({
@@ -43,6 +45,8 @@ export const LibraryFilterBar: React.FC<LibraryFilterBarProps> = ({
   preparingScan,
   activeProvider,
   onScanClicked,
+  includeInactive = false,
+  onIncludeInactiveChange,
 }) => {
   return (
     <div className="bg-carbon-900 border border-carbon-800 rounded-lg p-2.5 flex flex-wrap items-center justify-between gap-3 text-xs">
@@ -56,13 +60,20 @@ export const LibraryFilterBar: React.FC<LibraryFilterBarProps> = ({
             onSelectLibrary(val ? Number(val) : undefined);
           }}
         >
-          <option value="">All Libraries ({totalPhotos})</option>
-          {libraries.map((lib) => (
+          <option value="">{includeInactive ? 'All Libraries' : 'Active Libraries'} ({totalPhotos})</option>
+          {libraries.filter((lib) => includeInactive || (lib.enabled && !lib.is_archived)).map((lib) => (
             <option key={lib.id} value={lib.id}>
-              {lib.name} ({lib.image_count})
+              {lib.name} ({lib.image_count}){lib.is_archived ? ' — Archived' : !lib.enabled ? ' — Disabled' : ''}
             </option>
           ))}
         </FilterSelect>
+
+        {onIncludeInactiveChange && (
+          <label className="flex items-center gap-1.5 text-carbon-300">
+            <input type="checkbox" checked={includeInactive} onChange={(event) => onIncludeInactiveChange(event.target.checked)} />
+            Include archived / disabled
+          </label>
+        )}
 
         {/* Project Select */}
         <FilterSelect

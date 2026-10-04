@@ -113,9 +113,10 @@ export const detectLibraryProjects = (id: number) =>
   );
 
 // --- Photos ---
-export const fetchProjects = (library_id?: number) => {
-  const query = library_id !== undefined ? `?library_id=${library_id}` : '';
-  return request<string[]>(`/photos/projects${query}`);
+export const fetchProjects = (library_id?: number, include_inactive = false) => {
+  const query = new URLSearchParams({ include_inactive: String(include_inactive) });
+  if (library_id !== undefined) query.set('library_id', String(library_id));
+  return request<ApiOperations['GET /api/photos/projects']['response']>(`/photos/projects?${query}`);
 };
 
 export const batchAssignProject = (photo_ids: number[], project: string | null) =>
@@ -127,6 +128,7 @@ export const batchAssignProject = (photo_ids: number[], project: string | null) 
 export const fetchPhotos = (params: QueryInput<ApiOperations['GET /api/photos']['query']>) => {
   const query = new URLSearchParams();
   if (params.library_id !== undefined) query.set('library_id', String(params.library_id));
+  if (params.include_inactive !== undefined) query.set('include_inactive', String(params.include_inactive));
   if (params.search) query.set('search', params.search);
   if (params.project) query.set('project', params.project);
   if (params.group_id !== undefined) query.set('group_id', String(params.group_id));

@@ -22,6 +22,7 @@ from backend.providers import get_provider
 from backend.models import ScanSessionOut, ImageOut
 from backend.config import CLASS_UNREVIEWED
 from backend.services.catalog_coordinator import CatalogOperationConflict, coordinator_for
+from backend.services.scan_eligibility import is_available
 
 logger = logging.getLogger(__name__)
 
@@ -163,15 +164,12 @@ class ScanEngine:
         ]
         if archived_or_disabled_ids:
             raise ValueError(
-                f"Cannot scan images belonging to archived or disabled libraries: {archived_or_disabled_ids}"
+                f"Cannot scan images belonging to archived or disabled libraries: {archived_or_disabled_ids}. "
+                "Refresh your selection, or enable/unarchive their library in Settings before scanning."
             )
         
-        def is_available(candidate: ImageOut) -> bool:
-            return (
-                candidate.library_id in active_libs
-                and candidate.is_present_on_disk
-                and Path(candidate.file_path).exists()
-            )
+        def available(candidate: ImageOut) -> bool:
+            return is_available(candidate, active_libs)
 
         # 4. Resolve availability per photo group and collapse each group to 1 search call.
         # A grouped photo is searched through the group's preferred representation when it is
@@ -187,13 +185,13 @@ class ScanEngine:
                 pref_id = self.group_repo.get_preferred_image_id(gid)
                 members = self.image_repo.get_images_for_group(gid)
                 ordered = sorted(members, key=lambda m: (m.id != pref_id, m.id != selected.id, m.id))
-                rep = next((m for m in ordered if is_available(m)), None)
+                rep = next((m for m in ordered if available(m)), None)
             except Exception as exc:
                 logger.warning(
                     f"Could not resolve the representations of photo group #{gid}; "
                     f"scanning selected photo #{selected.id} instead: {exc}"
                 )
-                rep = selected if is_available(selected) else None
+                rep = selected if available(selected) else None
             group_reps[gid] = rep
             return rep
 
@@ -208,7 +206,7 @@ class ScanEngine:
                 missing_ids.append(iid)
                 continue
             if img.photo_group_id is None:
-                target = img if is_available(img) else None
+                target = img if available(img) else None
             else:
                 target = resolve_group(img.photo_group_id, img)
             if target is None:

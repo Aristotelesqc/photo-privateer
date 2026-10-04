@@ -11,7 +11,7 @@ open PR; an implemented slice is not considered delivered on main until merge.
 | 3 | #27 atomic concurrent thumbnail generation | Implemented; local four-tier verification |
 | 4 | #26 index/scan coordination | Implemented; local four-tier verification |
 | 5 | #28 deterministic API contract checking | Implemented; local four-tier verification |
-| 6 | #25 active-library browsing and scan eligibility | Planned |
+| 6 | #25 active-library browsing and scan eligibility | Implemented; local four-tier verification |
 | 7 | #30 durable photo identity contract | Planned before WebUse schema work |
 | 8 | #48 verified backup/recovery | Required before #33 migration |
 
@@ -103,3 +103,22 @@ transmission authorization; local implementation and verification can proceed.
   without changing classification, missing-photo filters, paging and errors.
 - Local verification: backend 250 passed; frontend 54 passed; build and
   Playwright 8/8 passed; generated-contract check passed.
+
+## Slice 6 — #25
+
+- Active libraries and projects are the default; an explicit, visible checkbox
+  persistently includes archived/disabled sources. Historical discoveries and
+  notes remain available. Cards label archival, disabled monitoring and missing
+  sources, with accessible selection controls disabled where appropriate.
+- Browse/detail eligibility and scan planning share containment/file availability.
+  Missing active group members can use eligible siblings; inactive selections
+  cannot. Select-all and batch assignment follow the same policy. Preparation,
+  launch and workers revalidate; failures provide Settings/refresh guidance.
+- Current availability powers the Missing filter before counts/pagination.
+  Project contexts reset hidden filters and ignore stale responses. Seven backend
+  regressions, six added component/view regressions and an E2E recovery scenario
+  cover archival, disabling, offline sources, groups, selection and history.
+- Independent local review findings were verified and fixed. The binary original
+  download contract from slice 5 now explicitly declares Blob responses.
+- Local verification: backend 257 passed; frontend 60 passed; build and
+  Playwright 9/9 passed; generated-contract check passed.

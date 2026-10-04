@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   FolderPlus,
   AlertCircle,
@@ -45,6 +45,12 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
   const [totalPhotos, setTotalPhotos] = useState(0);
   const [loading, setLoading] = useState(true);
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  const [includeInactive, setIncludeInactive] = useState(() => {
+    try { return localStorage.getItem('pp-include-inactive') === 'true'; } catch { return false; }
+  });
+  const photoRequest = useRef(0);
+  const projectRequest = useRef(0);
+  const eligiblePhotos = photos.filter((photo) => photo.scan_eligible === true);
 
   // Density toggle: 'standard' (200px) vs 'compact' (145px)
   const [density, setDensity] = useState<'standard' | 'compact'>('standard');
@@ -89,31 +95,38 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
   };
 
   const loadProjects = async () => {
+    const request = ++projectRequest.current;
     try {
-      const projs = await fetchProjects(selectedLibraryId);
+      const projs = await fetchProjects(selectedLibraryId, includeInactive);
+      if (request !== projectRequest.current) return;
       setProjects(projs);
+      setSelectedProject((previous) => previous && previous !== '__unassigned__' && !projs.includes(previous) ? undefined : previous);
     } catch (err) {
       console.error('Failed loading projects', err);
     }
   };
 
   const loadPhotos = async () => {
+    const request = ++photoRequest.current;
     setLoading(true);
     try {
       const res = await fetchPhotos({
         library_id: selectedLibraryId,
+        include_inactive: includeInactive,
         search: searchQuery.trim() || undefined,
         project: selectedProject,
         filter_status: statusFilter,
         page,
         page_size: pageSize,
       });
+      if (request !== photoRequest.current) return;
       setPhotos(res.images);
+      setSelectedIds((previous) => new Set(res.images.filter((image) => image.scan_eligible && previous.has(image.id)).map((image) => image.id)));
       setTotalPhotos(res.total);
     } catch (err) {
       console.error('Failed loading photos', err);
     } finally {
-      setLoading(false);
+      if (request === photoRequest.current) setLoading(false);
     }
   };
 
@@ -137,16 +150,27 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
   useEffect(() => {
     loadProjects();
     loadCandidates();
-  }, [selectedLibraryId]);
+    return () => { projectRequest.current++; };
+  }, [selectedLibraryId, includeInactive, libraries]);
 
   useEffect(() => {
     loadPhotos();
-  }, [selectedLibraryId, searchQuery, selectedProject, statusFilter, page, density]);
+    return () => { photoRequest.current++; };
+  }, [selectedLibraryId, searchQuery, selectedProject, statusFilter, page, density, includeInactive, libraries]);
 
   // Clear hidden selection on context change (library, filter, search, project, page)
   useEffect(() => {
     setSelectedIds(new Set());
-  }, [selectedLibraryId, searchQuery, selectedProject, statusFilter, page]);
+    setScanProjection(null);
+  }, [selectedLibraryId, searchQuery, selectedProject, statusFilter, page, density, includeInactive, libraries]);
+
+  useEffect(() => {
+    try { localStorage.setItem('pp-include-inactive', String(includeInactive)); } catch { /* Storage may be unavailable. */ }
+    if (!includeInactive && selectedLibraryId !== undefined && !libraries.some((lib) => lib.id === selectedLibraryId && lib.enabled && !lib.is_archived)) {
+      setSelectedLibraryId(undefined);
+      setPage(1);
+    }
+  }, [includeInactive, libraries, selectedLibraryId]);
 
 
   // Restore active scan progress modal if a scan is already running
@@ -163,6 +187,7 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
 
   // Selection handlers
   const toggleSelect = (id: number) => {
+    if (!eligiblePhotos.some((photo) => photo.id === id)) return;
     setSelectedIds((prev) => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
@@ -172,7 +197,7 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
   };
 
   const selectAllVisible = () => {
-    setSelectedIds(new Set(photos.map((p) => p.id)));
+    setSelectedIds(new Set(eligiblePhotos.map((p) => p.id)));
   };
 
   const deselectAll = () => {
@@ -195,6 +220,7 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       alert(`Error preparing scan: ${msg}`);
+      await loadPhotos();
     } finally {
       setPreparingScan(false);
     }
@@ -213,6 +239,7 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       alert(`Scan failed: ${msg}`);
+      await loadPhotos();
       setScanModalOpen(false);
     } finally {
       setScanning(false);
@@ -259,6 +286,8 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
       {/* Control Strip Filter Bar */}
       <LibraryFilterBar
         libraries={libraries}
+        includeInactive={includeInactive}
+        onIncludeInactiveChange={(value) => { setIncludeInactive(value); setSelectedProject(undefined); setPage(1); }}
         totalPhotos={totalPhotos}
         selectedLibraryId={selectedLibraryId}
         onSelectLibrary={(id) => {
@@ -366,10 +395,10 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
           <div className="h-4 w-px bg-carbon-700" />
 
           <button
-            onClick={selectedIds.size === photos.length ? deselectAll : selectAllVisible}
+            onClick={selectedIds.size === eligiblePhotos.length ? deselectAll : selectAllVisible}
             className="text-carbon-300 hover:text-white underline underline-offset-2"
           >
-            {selectedIds.size === photos.length ? 'Deselect all' : 'Select all visible'}
+            {selectedIds.size === eligiblePhotos.length ? 'Deselect all' : 'Select all eligible'}
           </button>
 
           <button
