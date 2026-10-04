@@ -1,0 +1,98 @@
+{
+  "contract_version": 1,
+  "execution_scope": "PR4 compatibility through existing SQLite repositories; target UUID schema is not implemented",
+  "target_example_ids": {
+    "photograph": "164a0394-359d-4db6-846c-1a46380b7524",
+    "representation": "c4b5f625-3942-4e49-a9a5-4de879e661f6",
+    "group": "c8460bc1-343e-40c9-a771-e531cfce3446",
+    "web_use": "bda8bfcc-3c57-4855-baa7-ebad3d1c2360"
+  },
+  "scenarios": [
+    {
+      "name": "conflict_restores_pre_cycle_state",
+      "initial": [{"name": "A", "classification": "APPROVED", "notes": "A license"}, {"name": "B", "classification": "UNAUTHORIZED", "notes": "B claim"}],
+      "steps": [
+        {"op": "group", "members": ["A", "B"], "primary": "B", "expect": {"A": {"classification": "UNREVIEWED", "triage_conflict": 1, "is_new": 1}, "B": {"canonical": "A"}}},
+        {"op": "dissolve", "expect": {"A": {"classification": "APPROVED", "notes": "A license", "triage_conflict": 0, "canonical": null}, "B": {"classification": "UNAUTHORIZED", "notes": "B claim", "canonical": null}}}
+      ]
+    },
+    {
+      "name": "explicit_review_is_retained_only_on_logical_carrier",
+      "initial": [{"name": "A", "classification": "APPROVED", "notes": "A license"}, {"name": "B", "classification": "UNAUTHORIZED", "notes": "B claim"}],
+      "steps": [
+        {"op": "group", "members": ["A", "B"], "primary": "B"},
+        {"op": "review", "image": "A", "classification": "IRRELEVANT", "notes": "human group decision", "expect": {"A": {"triage_conflict": 0, "explicit": true}}},
+        {"op": "dissolve", "expect": {"A": {"classification": "IRRELEVANT", "notes": "human group decision", "obs_classification": "APPROVED", "obs_notes": "A license"}, "B": {"classification": "UNAUTHORIZED", "notes": "B claim"}}}
+      ]
+    },
+    {
+      "name": "notes_are_explicit_without_resolving_classification_conflict",
+      "initial": [{"name": "A", "classification": "APPROVED"}, {"name": "B", "classification": "UNAUTHORIZED"}],
+      "steps": [
+        {"op": "group", "members": ["A", "B"]},
+        {"op": "review", "image": "A", "notes": "investigate", "expect": {"A": {"explicit": true, "triage_conflict": 1}}},
+        {"op": "dissolve", "expect": {"A": {"classification": "UNREVIEWED", "notes": "investigate", "triage_conflict": 1}, "B": {"classification": "UNAUTHORIZED"}}}
+      ]
+    },
+    {
+      "name": "second_cycle_restores_latest_decision_not_original_observation",
+      "initial": [{"name": "A", "classification": "APPROVED", "notes": "original"}, {"name": "B", "classification": "UNAUTHORIZED"}],
+      "steps": [
+        {"op": "group", "members": ["A", "B"]},
+        {"op": "review", "image": "A", "classification": "IRRELEVANT", "notes": "latest"},
+        {"op": "dissolve"},
+        {"op": "group", "members": ["A", "B"], "expect": {"A": {"classification": "UNREVIEWED", "rb_classification": "IRRELEVANT", "obs_classification": "APPROVED"}}},
+        {"op": "dissolve", "expect": {"A": {"classification": "IRRELEVANT", "notes": "latest", "obs_notes": "original", "rb_captured_at": null, "merged_at": null}, "B": {"classification": "UNAUTHORIZED"}}}
+      ]
+    },
+    {
+      "name": "primary_is_independent_of_discovery_owner",
+      "initial": [{"name": "A", "classification": "APPROVED"}, {"name": "B", "classification": "APPROVED"}],
+      "steps": [
+        {"op": "group", "members": ["A", "B"], "primary": "A"},
+        {"op": "primary", "image": "B", "expect": {"A": {"canonical": null, "image": "A"}, "B": {"canonical": "A"}}},
+        {"op": "dissolve", "expect": {"A": {"classification": "APPROVED"}, "B": {"classification": "APPROVED"}}}
+      ]
+    },
+    {
+      "name": "purge_handover_and_later_leave_keep_inherited_state",
+      "initial": [{"name": "A", "classification": "APPROVED", "notes": "licensed"}, {"name": "B", "classification": "UNREVIEWED"}, {"name": "C", "classification": "UNREVIEWED"}, {"name": "D", "classification": "UNREVIEWED"}],
+      "steps": [
+        {"op": "group", "members": ["A", "B", "C", "D"], "primary": "D"},
+        {"op": "purge", "image": "A", "expect": {"A": {"absent": true}, "B": {"classification": "APPROVED", "notes": "licensed", "canonical": null, "inherited_from_images": ["A"]}, "C": {"canonical": "B"}}},
+        {"op": "leave", "image": "B", "expect": {"C": {"classification": "APPROVED", "notes": "licensed", "canonical": null, "inherited_from_images": ["A"]}}},
+        {"op": "dissolve", "expect": {"C": {"classification": "APPROVED", "obs_classification": "UNREVIEWED", "inherited_from_images": ["A"]}, "D": {"classification": "UNREVIEWED"}}}
+      ]
+    },
+    {
+      "name": "lineage_is_permanent_but_temporary_group_conflict_rolls_back",
+      "initial": [{"name": "A", "classification": "APPROVED", "notes": "old export"}, {"name": "B", "classification": "UNAUTHORIZED", "notes": "temporary sibling"}, {"name": "C", "classification": "APPROVED", "notes": "known export"}],
+      "steps": [
+        {"op": "group", "members": ["A", "B"]},
+        {"op": "validated_lineage", "old": "A", "target": "C", "expect": {"A": {"canonical": "C", "fold_kind": "LINEAGE", "image": "A"}, "C": {"classification": "UNREVIEWED", "triage_conflict": 1}}},
+        {"op": "dissolve", "expect": {"A": {"canonical": "C", "fold_kind": "LINEAGE"}, "C": {"classification": "APPROVED", "triage_conflict": 0, "notes_contains": ["old export", "known export"], "notes_excludes": ["temporary sibling"], "merged_at": null}, "B": {"classification": "UNAUTHORIZED"}}}
+      ]
+    },
+    {
+      "name": "split_equivalent_keeps_carrier_and_inherited_remaining_projection",
+      "initial": [{"name": "A", "classification": "APPROVED"}, {"name": "B", "classification": "UNREVIEWED"}, {"name": "C", "classification": "UNREVIEWED"}, {"name": "D", "classification": "UNREVIEWED"}],
+      "steps": [
+        {"op": "group", "members": ["A", "B", "C", "D"]},
+        {"op": "review", "image": "A", "classification": "IRRELEVANT", "notes": "original scoped review"},
+        {"op": "leave", "image": "A", "expect": {"A": {"classification": "IRRELEVANT", "canonical": null}, "B": {"classification": "IRRELEVANT", "canonical": null}}},
+        {"op": "leave", "image": "B", "expect": {"B": {"classification": "IRRELEVANT", "canonical": null}, "C": {"classification": "IRRELEVANT", "canonical": null}}},
+        {"op": "group", "members": ["A", "B"], "expect": {"A": {"classification": "IRRELEVANT", "canonical": null}, "B": {"canonical": "A"}, "C": {"classification": "IRRELEVANT", "canonical": null}, "D": {"canonical": "C"}}}
+      ]
+    },
+    {
+      "name": "legacy_unique_lineage_rehomes_without_original_image_provenance",
+      "known_limitation": "A unique match changes image_id to C; obs_* does not record original image_id. UUID migration must label this origin unknown unless independent evidence proves it.",
+      "initial": [{"name": "A", "classification": "APPROVED"}, {"name": "B", "observe": false}, {"name": "C", "observe": false}],
+      "steps": [
+        {"op": "group", "members": ["A", "B"]},
+        {"op": "validated_lineage", "old": "A", "target": "C", "expect": {"A": {"image": "C", "classification": "APPROVED", "canonical": null, "original_image_column_absent": true}}},
+        {"op": "dissolve", "expect": {"A": {"image": "C", "classification": "APPROVED", "canonical": null}}}
+      ]
+    }
+  ]
+}

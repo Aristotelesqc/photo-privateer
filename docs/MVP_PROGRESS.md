@@ -12,7 +12,7 @@ open PR; an implemented slice is not considered delivered on main until merge.
 | 4 | #26 index/scan coordination | Implemented; local four-tier verification |
 | 5 | #28 deterministic API contract checking | Implemented; local four-tier verification |
 | 6 | #25 active-library browsing and scan eligibility | Implemented; local four-tier verification |
-| 7 | #30 durable photo identity contract | Planned before WebUse schema work |
+| 7 | #30 durable photo identity contract | Reviewed ADR and executable PR4 examples; no target schema installed |
 | 8 | #48 verified backup/recovery | Required before #33 migration |
 
 ## Slice 1 — #23
@@ -121,4 +121,22 @@ transmission authorization; local implementation and verification can proceed.
 - Independent local review findings were verified and fixed. The binary original
   download contract from slice 5 now explicitly declares Blob responses.
 - Local verification: backend 257 passed; frontend 60 passed; build and
+  Playwright 9/9 passed; generated-contract check passed.
+
+## Slice 7 — #30
+
+- Reviewed identity ADR separates stable photograph/representation identities,
+  historical mutable groups, reversible GROUP equivalence and permanent LINEAGE.
+  It defines every transition, scope snapshots, provenance, conditional cycle
+  restoration, handovers, tombstones and RESTRICT deletion behavior.
+- The target WebUse key follows #31: durable photograph + conservative page;
+  rotating assets stay subordinate and ASSET_ONLY associations remain reversible.
+  The legacy triple remains a compatibility key, not the target identity.
+- Nine executable legacy scenarios (ten tests) verify real SQLite transitions,
+  source-byte integrity and FK checks. A split-equivalent example preserves
+  inherited projections without creating new explicit decisions or scopes.
+- Root validated delegated outputs and independent review corrections. Legacy
+  provenance gaps are explicit; no UUID schema or future case/evidence feature
+  is claimed installed. Backup/recovery #48 precedes dependent migration.
+- Local verification: backend 267 passed; frontend 60 passed; build and
   Playwright 9/9 passed; generated-contract check passed.
