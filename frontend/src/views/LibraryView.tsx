@@ -5,13 +5,26 @@ import {
   X,
   Tag,
 } from 'lucide-react';
-import { Library, ImageItem, AppSettings, ScanPrepareResponse, ScanSession } from '../types';
-import { fetchPhotos, prepareScan, startScan, fetchScanHistory, fetchProjects, batchAssignProject } from '../api/client';
+import { Library, ImageItem, AppSettings, ScanPrepareResponse, ScanSession, GroupCandidatePair } from '../types';
+import {
+  fetchPhotos,
+  prepareScan,
+  startScan,
+  fetchScanHistory,
+  fetchProjects,
+  batchAssignProject,
+  fetchGroupCandidates,
+  dismissGroupCandidate,
+} from '../api/client';
 import { ScanConfirmModal } from '../components/ScanConfirmModal';
 import { ScanProgressModal } from '../components/ScanProgressModal';
+import { CandidateGroupModal } from '../components/CandidateGroupModal';
 import { LibraryFilterBar, StatusFilterType } from '../engines/library/LibraryFilterBar';
 import { PhotoCard } from '../engines/library/PhotoCard';
 import { ProjectAssignModal } from '../engines/library/ProjectAssignModal';
+import { CandidateBanner } from '../engines/library/CandidateBanner';
+import { PhotoGroupActionsModal } from '../engines/library/PhotoGroupActionsModal';
+import { groupCandidatePair } from '../engines/library/candidateGrouping';
 
 interface LibraryViewProps {
   libraries: Library[];
@@ -48,12 +61,32 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
   // Project modal state
   const [projectModalOpen, setProjectModalOpen] = useState(false);
 
+  // Candidate variants state
+  const [candidates, setCandidates] = useState<GroupCandidatePair[]>([]);
+  const [candidateTotal, setCandidateTotal] = useState(0);
+  const [candidatesTruncated, setCandidatesTruncated] = useState(false);
+  const [candidateModalOpen, setCandidateModalOpen] = useState(false);
+  const [managingGroupPhoto, setManagingGroupPhoto] = useState<ImageItem | null>(null);
+
   // Scan workflow state
   const [scanProjection, setScanProjection] = useState<ScanPrepareResponse | null>(null);
   const [preparingScan, setPreparingScan] = useState(false);
   const [scanSession, setScanSession] = useState<ScanSession | null>(null);
   const [scanning, setScanning] = useState(false);
   const [scanModalOpen, setScanModalOpen] = useState(false);
+
+  const loadCandidates = async () => {
+    try {
+      const result = await fetchGroupCandidates(
+        selectedLibraryId !== undefined ? { library_id: selectedLibraryId } : undefined
+      );
+      setCandidates(result.pairs);
+      setCandidateTotal(result.total);
+      setCandidatesTruncated(Boolean(result.truncated));
+    } catch (err) {
+      console.error('Failed loading candidate variants', err);
+    }
+  };
 
   const loadProjects = async () => {
     try {
@@ -84,8 +117,26 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
     }
   };
 
+  const handleGroupPair = async (imageAId: number, imageBId: number, preferredId?: number) => {
+    const candidate = candidates.find(
+      (c) => (c.image_a.id === imageAId && c.image_b.id === imageBId) || (c.image_a.id === imageBId && c.image_b.id === imageAId)
+    );
+    if (!candidate) {
+      throw new Error('This candidate pair is no longer available. Close and reopen the review to refresh.');
+    }
+    await groupCandidatePair(candidate, preferredId);
+    await loadCandidates();
+    await loadPhotos();
+  };
+
+  const handleDismissPair = async (imageAId: number, imageBId: number) => {
+    await dismissGroupCandidate(imageAId, imageBId);
+    await loadCandidates();
+  };
+
   useEffect(() => {
     loadProjects();
+    loadCandidates();
   }, [selectedLibraryId]);
 
   useEffect(() => {
@@ -198,6 +249,13 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
 
   return (
     <div className="max-w-[1600px] mx-auto px-4 sm:px-6 py-4 space-y-4">
+      {/* Candidate Variants Banner */}
+      <CandidateBanner
+        count={candidateTotal}
+        truncated={candidatesTruncated}
+        onReview={() => setCandidateModalOpen(true)}
+      />
+
       {/* Control Strip Filter Bar */}
       <LibraryFilterBar
         libraries={libraries}
@@ -265,6 +323,7 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
               isSelected={selectedIds.has(photo.id)}
               onToggleSelect={toggleSelect}
               onNavigateToReview={onNavigateToReviewForPhoto}
+              onManageGroup={setManagingGroupPhoto}
             />
           ))}
         </div>
@@ -375,6 +434,34 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
         onClose={() => setProjectModalOpen(false)}
         onAssign={handleAssignProject}
       />
+
+      {/* Candidate Grouping Modal */}
+      {candidateModalOpen && (
+        <CandidateGroupModal
+          candidates={candidates}
+          totalCount={candidateTotal}
+          onGroup={handleGroupPair}
+          onDismiss={handleDismissPair}
+          onClose={() => {
+            setCandidateModalOpen(false);
+            loadPhotos();
+            loadCandidates();
+          }}
+        />
+      )}
+
+      {/* Photo Group Actions Modal */}
+      {managingGroupPhoto && (
+        <PhotoGroupActionsModal
+          photo={managingGroupPhoto}
+          isOpen={Boolean(managingGroupPhoto)}
+          onClose={() => setManagingGroupPhoto(null)}
+          onGroupUpdated={async () => {
+            await loadPhotos();
+            await loadCandidates();
+          }}
+        />
+      )}
     </div>
   );
 };

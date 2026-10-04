@@ -323,6 +323,281 @@ def migration_008_image_mtime_ns(conn: sqlite3.Connection) -> None:
     if "file_modified_at_ns" not in image_cols:
         conn.execute("ALTER TABLE images ADD COLUMN file_modified_at_ns INTEGER;")
 
+def migration_009_perceptual_grouping(conn: sqlite3.Connection) -> None:
+    """Creates photo_groups and dismissed_group_candidates tables, adds dhash, photo_group_id,
+    and is_primary_representation to images table.
+    """
+    # 1. Create photo_groups table
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS photo_groups (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            preferred_image_id INTEGER REFERENCES images(id) ON DELETE SET NULL,
+            notes TEXT
+        );
+    """)
+
+    # 2. Create dismissed_group_candidates table
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS dismissed_group_candidates (
+            image_a_id INTEGER NOT NULL REFERENCES images(id) ON DELETE CASCADE,
+            image_b_id INTEGER NOT NULL REFERENCES images(id) ON DELETE CASCADE,
+            created_at TEXT NOT NULL,
+            PRIMARY KEY (image_a_id, image_b_id)
+        );
+    """)
+
+    # 3. Add columns to images table
+    cur = conn.cursor()
+    cur.execute("PRAGMA table_info(images)")
+    image_cols = {row[1] for row in cur.fetchall()}
+    if "dhash" not in image_cols:
+        conn.execute("ALTER TABLE images ADD COLUMN dhash TEXT;")
+    if "photo_group_id" not in image_cols:
+        conn.execute("ALTER TABLE images ADD COLUMN photo_group_id INTEGER REFERENCES photo_groups(id) ON DELETE SET NULL;")
+    if "is_primary_representation" not in image_cols:
+        conn.execute("ALTER TABLE images ADD COLUMN is_primary_representation INTEGER NOT NULL DEFAULT 1;")
+
+    # 4. Create indexes
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_images_group ON images(photo_group_id);")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_images_dhash ON images(dhash);")
+
+def migration_010_group_candidate_generation(conn: sqlite3.Connection) -> None:
+    """Creates a single-row generation counter bumped by triggers whenever any input of the
+    candidate pair search changes (hashes, group membership, disk presence, library state,
+    dismissals). The candidate search caches its results keyed on this counter.
+    """
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS group_candidate_state (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            instance_token TEXT NOT NULL,
+            generation INTEGER NOT NULL DEFAULT 0
+        );
+    """)
+    conn.execute(
+        "INSERT OR IGNORE INTO group_candidate_state (id, instance_token, generation) "
+        "VALUES (1, lower(hex(randomblob(16))), 0);"
+    )
+
+    bump = "UPDATE group_candidate_state SET generation = generation + 1 WHERE id = 1;"
+    triggers = {
+        "trg_candidates_images_insert": "AFTER INSERT ON images",
+        "trg_candidates_images_delete": "AFTER DELETE ON images",
+        "trg_candidates_images_update": (
+            "AFTER UPDATE ON images WHEN "
+            "OLD.sha256 IS NOT NEW.sha256 OR OLD.dhash IS NOT NEW.dhash "
+            "OR OLD.photo_group_id IS NOT NEW.photo_group_id "
+            "OR OLD.is_present_on_disk IS NOT NEW.is_present_on_disk "
+            "OR OLD.library_id IS NOT NEW.library_id"
+        ),
+        "trg_candidates_libraries_update": (
+            "AFTER UPDATE ON libraries WHEN "
+            "OLD.enabled IS NOT NEW.enabled OR OLD.is_archived IS NOT NEW.is_archived"
+        ),
+        "trg_candidates_libraries_delete": "AFTER DELETE ON libraries",
+        "trg_candidates_dismissed_insert": "AFTER INSERT ON dismissed_group_candidates",
+        "trg_candidates_dismissed_delete": "AFTER DELETE ON dismissed_group_candidates",
+    }
+    for name, clause in triggers.items():
+        conn.execute(f"CREATE TRIGGER IF NOT EXISTS {name} {clause} BEGIN {bump} END;")
+
+def migration_011_match_observation_folding(conn: sqlite3.Connection) -> None:
+    """Keeps every physical provider observation while presenting one logical discovery per
+    identity within a photo group. A row with canonical_match_id IS NULL is a logical discovery
+    (and its own observation); a folded row is an observation of the logical discovery it points
+    to, keeping its own original triage as provenance. Folding is reversible (ungroup, purge).
+    """
+    cur = conn.cursor()
+    cur.execute("PRAGMA table_info(matches)")
+    cols = {row[1] for row in cur.fetchall()}
+    if "canonical_match_id" not in cols:
+        conn.execute(
+            "ALTER TABLE matches ADD COLUMN canonical_match_id INTEGER "
+            "REFERENCES matches(id) ON DELETE SET NULL;"
+        )
+    if "fold_kind" not in cols:
+        conn.execute("ALTER TABLE matches ADD COLUMN fold_kind TEXT;")
+    if "folded_at" not in cols:
+        conn.execute("ALTER TABLE matches ADD COLUMN folded_at TEXT;")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_matches_canonical ON matches(canonical_match_id);")
+
+def migration_012_observation_original_triage(conn: sqlite3.Connection) -> None:
+    """Preserves a physical observation's own triage before its row starts carrying a merged
+    logical discovery state (it becomes the canonical row of a group or receives a handover).
+    obs_captured_at marks rows whose original triage lives in the obs_* columns.
+    """
+    cur = conn.cursor()
+    cur.execute("PRAGMA table_info(matches)")
+    cols = {row[1] for row in cur.fetchall()}
+    for name, sql_type in (
+        ("obs_classification", "TEXT"),
+        ("obs_classified_at", "TEXT"),
+        ("obs_rule_id", "INTEGER"),
+        ("obs_notes", "TEXT"),
+        ("obs_is_new", "INTEGER"),
+        ("obs_acknowledged_at", "TEXT"),
+        ("obs_captured_at", "TEXT"),
+    ):
+        if name not in cols:
+            conn.execute(f"ALTER TABLE matches ADD COLUMN {name} {sql_type};")
+
+def migration_013_match_triage_conflict(conn: sqlite3.Connection) -> None:
+    """Marks a logical discovery whose merged observations carry incompatible reviewed decisions.
+    The mark persists through further merges until the user explicitly classifies the discovery.
+    """
+    cur = conn.cursor()
+    cur.execute("PRAGMA table_info(matches)")
+    cols = {row[1] for row in cur.fetchall()}
+    if "triage_conflict" not in cols:
+        conn.execute("ALTER TABLE matches ADD COLUMN triage_conflict INTEGER NOT NULL DEFAULT 0;")
+
+def migration_014_match_explicit_review(conn: sqlite3.Connection) -> None:
+    """Records when the user explicitly reviewed a discovery (classification, acknowledgement or
+    notes through the API), independently of the resulting values. Automatic merges and domain
+    rules never set it. Used to decide whether a dissolved group's former canonical discovery
+    returns to its original triage."""
+    cur = conn.cursor()
+    cur.execute("PRAGMA table_info(matches)")
+    cols = {row[1] for row in cur.fetchall()}
+    if "explicit_review_at" not in cols:
+        conn.execute("ALTER TABLE matches ADD COLUMN explicit_review_at TEXT;")
+    # When the logical discovery began carrying merged state (travels with handovers)
+    if "merged_at" not in cols:
+        conn.execute("ALTER TABLE matches ADD COLUMN merged_at TEXT;")
+
+def migration_015_discovery_inheritance(conn: sqlite3.Connection) -> None:
+    """Records discoveries inherited from a permanently purged photo of the same group (handover
+    or re-homing), which must never be "restored" away later, and adds the missing candidate
+    generation trigger for new libraries."""
+    cur = conn.cursor()
+    cur.execute("PRAGMA table_info(matches)")
+    cols = {row[1] for row in cur.fetchall()}
+    if "inherited_at" not in cols:
+        conn.execute("ALTER TABLE matches ADD COLUMN inherited_at TEXT;")
+    if "inherited_from" not in cols:
+        conn.execute("ALTER TABLE matches ADD COLUMN inherited_from TEXT;")
+    conn.execute(
+        "CREATE TRIGGER IF NOT EXISTS trg_candidates_libraries_insert AFTER INSERT ON libraries "
+        "BEGIN UPDATE group_candidate_state SET generation = generation + 1 WHERE id = 1; END;"
+    )
+
+
+def migration_016_cycle_rollback_state(conn: sqlite3.Connection) -> None:
+    """Separates the per-cycle rollback state (rb_*) from the immutable original observation
+    provenance (obs_*). Rows currently carrying or folded under merged state keep their captured
+    baseline as rollback state; rows that already left their group keep obs_* as provenance only."""
+    cur = conn.cursor()
+    cur.execute("PRAGMA table_info(matches)")
+    cols = {row[1] for row in cur.fetchall()}
+    for name in (
+        "rb_classification", "rb_classified_at", "rb_rule_id", "rb_notes",
+        "rb_is_new", "rb_acknowledged_at", "rb_captured_at",
+    ):
+        if name not in cols:
+            kind = "INTEGER" if name in ("rb_rule_id", "rb_is_new") else "TEXT"
+            conn.execute(f"ALTER TABLE matches ADD COLUMN {name} {kind};")
+    conn.execute(
+        """
+        UPDATE matches
+        SET rb_classification = obs_classification, rb_classified_at = obs_classified_at,
+            rb_rule_id = obs_rule_id, rb_notes = obs_notes, rb_is_new = obs_is_new,
+            rb_acknowledged_at = obs_acknowledged_at, rb_captured_at = obs_captured_at
+        WHERE obs_captured_at IS NOT NULL
+          AND rb_captured_at IS NULL
+          AND NOT (
+              canonical_match_id IS NULL
+              AND NOT EXISTS (SELECT 1 FROM matches f WHERE f.canonical_match_id = matches.id)
+              AND (SELECT photo_group_id FROM images WHERE images.id = matches.image_id) IS NULL
+          )
+        """
+    )
+
+
+def migration_017_cycle_rollback_inheritance(conn: sqlite3.Connection) -> None:
+    """Adds inheritance provenance to the per-cycle rollback state: inheritance that existed
+    before a grouping cycle rolls back with it, while a decision inherited from a photo purged
+    during the cycle (a later inherited_at) is kept."""
+    cur = conn.cursor()
+    cur.execute("PRAGMA table_info(matches)")
+    cols = {row[1] for row in cur.fetchall()}
+    for name in ("rb_inherited_at", "rb_inherited_from"):
+        if name not in cols:
+            conn.execute(f"ALTER TABLE matches ADD COLUMN {name} TEXT;")
+    conn.execute(
+        """
+        UPDATE matches
+        SET rb_inherited_at = inherited_at, rb_inherited_from = inherited_from
+        WHERE rb_captured_at IS NOT NULL AND inherited_at IS NOT NULL
+          AND inherited_at < COALESCE(merged_at, rb_captured_at)
+        """
+    )
+
+
+def migration_018_close_completed_cycles(conn: sqlite3.Connection) -> None:
+    """Adds the pre-cycle conflict flag to the rollback state, and closes grouping cycles that
+    already ended before migration 016: an independent logical discovery (ungrouped photo, no
+    GROUP observation folded under it) keeps its triage and obs_* provenance, but its obsolete
+    merged_at / explicit_review_at no longer count as a review of a later cycle."""
+    cur = conn.cursor()
+    cur.execute("PRAGMA table_info(matches)")
+    if "rb_triage_conflict" not in {row[1] for row in cur.fetchall()}:
+        conn.execute("ALTER TABLE matches ADD COLUMN rb_triage_conflict INTEGER;")
+    conn.execute(
+        """
+        UPDATE matches
+        SET merged_at = NULL, explicit_review_at = NULL
+        WHERE canonical_match_id IS NULL
+          AND rb_captured_at IS NULL
+          AND (merged_at IS NOT NULL OR explicit_review_at IS NOT NULL)
+          AND (SELECT photo_group_id FROM images WHERE images.id = matches.image_id) IS NULL
+          AND NOT EXISTS (
+              SELECT 1 FROM matches f WHERE f.canonical_match_id = matches.id AND f.fold_kind = 'GROUP'
+          )
+        """
+    )
+
+
+# Conflict flag of a rollback state captured before rb_triage_conflict existed. A conflict always
+# leaves the discovery UNREVIEWED, and an unresolved pre-cycle conflict stays set in the merged
+# state of the open cycle: only an explicit classification clears it, and an explicitly reviewed
+# cycle is never rolled back. So whenever such a snapshot can be restored, a pre-cycle conflict
+# is still visible as triage_conflict = 1. The editable notes (conflict banner) are not used as
+# evidence either way. Conservative: a false positive (an unreviewed baseline in a cycle whose
+# conflict came from the siblings) only asks for one explicit review.
+_LEGACY_ROLLBACK_CONFLICT = "CASE WHEN rb_classification = 'UNREVIEWED' AND triage_conflict = 1 THEN 1 ELSE 0 END"
+
+
+def migration_019_open_cycle_conflict_backfill(conn: sqlite3.Connection) -> None:
+    """Backfills rb_triage_conflict for rollback states captured before migration 018 (grouping
+    cycles still open during the upgrade), so a NULL flag never lets a later rollback, then a
+    domain rule, resolve a conflict the user never resolved."""
+    conn.execute(
+        f"""
+        UPDATE matches SET rb_triage_conflict = {_LEGACY_ROLLBACK_CONFLICT}
+        WHERE rb_captured_at IS NOT NULL AND rb_triage_conflict IS NULL
+        """
+    )
+
+
+def migration_020_legacy_conflict_recheck(conn: sqlite3.Connection) -> None:
+    """Databases that applied an earlier migration 019 inferred a missing conflict from the
+    absence of the (editable) conflict banner in the saved notes. Re-evaluates rollback states
+    captured before migration 018 with the conservative rule; it only ever raises the flag."""
+    row = conn.execute("SELECT applied_at FROM schema_migrations WHERE version = 18").fetchone()
+    if row is None:
+        return
+    conn.execute(
+        f"""
+        UPDATE matches SET rb_triage_conflict = 1
+        WHERE rb_captured_at IS NOT NULL AND rb_captured_at < ?
+          AND COALESCE(rb_triage_conflict, 0) = 0
+          AND {_LEGACY_ROLLBACK_CONFLICT} = 1
+        """,
+        (row[0],),
+    )
+
 MIGRATIONS: list[Migration] = [
     Migration(1, "001_initial_schema", migration_001_initial_schema),
     Migration(2, "002_library_archiving_and_disk_presence", migration_002_library_archiving_and_disk_presence),
@@ -332,6 +607,18 @@ MIGRATIONS: list[Migration] = [
     Migration(6, "006_project_classification", migration_006_project_classification),
     Migration(7, "007_project_source_and_atomic_running_scan", migration_007_project_source_and_atomic_running_scan),
     Migration(8, "008_image_mtime_ns", migration_008_image_mtime_ns),
+    Migration(9, "009_perceptual_grouping", migration_009_perceptual_grouping),
+    Migration(10, "010_group_candidate_generation", migration_010_group_candidate_generation),
+    Migration(11, "011_match_observation_folding", migration_011_match_observation_folding),
+    Migration(12, "012_observation_original_triage", migration_012_observation_original_triage),
+    Migration(13, "013_match_triage_conflict", migration_013_match_triage_conflict),
+    Migration(14, "014_match_explicit_review", migration_014_match_explicit_review),
+    Migration(15, "015_discovery_inheritance", migration_015_discovery_inheritance),
+    Migration(16, "016_cycle_rollback_state", migration_016_cycle_rollback_state),
+    Migration(17, "017_cycle_rollback_inheritance", migration_017_cycle_rollback_inheritance),
+    Migration(18, "018_close_completed_cycles", migration_018_close_completed_cycles),
+    Migration(19, "019_open_cycle_conflict_backfill", migration_019_open_cycle_conflict_backfill),
+    Migration(20, "020_legacy_conflict_recheck", migration_020_legacy_conflict_recheck),
 ]
 
 def run_migrations(conn: sqlite3.Connection) -> list[int]:

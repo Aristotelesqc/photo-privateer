@@ -11,6 +11,7 @@ from backend.repositories.domain_rule_repo import DomainRuleRepository
 from backend.repositories.match_repo import MatchRepository
 from backend.repositories.usage_repo import UsageRepository
 from backend.repositories.settings_repo import SettingsRepository
+from backend.repositories.group_repo import PhotoGroupRepository
 from backend.services.thumbnail_cache import ThumbnailCache
 from backend.services.image_service import ImageService
 from backend.services.library_indexer import LibraryIndexer
@@ -66,6 +67,9 @@ def get_usage_tracker(
 ) -> UsageTracker:
     return UsageTracker(usage_repo, settings_repo)
 
+def get_group_repo(conn: sqlite3.Connection = Depends(get_db_conn)) -> PhotoGroupRepository:
+    return PhotoGroupRepository(conn)
+
 def get_scan_engine(
     img_repo: ImageRepository = Depends(get_image_repo),
     match_repo: MatchRepository = Depends(get_match_repo),
@@ -73,6 +77,7 @@ def get_scan_engine(
     usage_repo: UsageRepository = Depends(get_usage_repo),
     settings_repo: SettingsRepository = Depends(get_settings_repo),
     lib_repo: LibraryRepository = Depends(get_library_repo),
+    group_repo: PhotoGroupRepository = Depends(get_group_repo),
 ) -> ScanEngine:
-    return ScanEngine(img_repo, match_repo, rule_repo, usage_repo, settings_repo, lib_repo)
+    return ScanEngine(img_repo, match_repo, rule_repo, usage_repo, settings_repo, lib_repo, group_repo)
 

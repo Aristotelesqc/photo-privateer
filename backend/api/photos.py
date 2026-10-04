@@ -37,7 +37,8 @@ def list_photos(
     library_id: Optional[int] = None,
     search: Optional[str] = None,
     project: Optional[str] = None,
-    filter_status: Optional[str] = Query(None, pattern="^(all|unscanned|scanned|has_matches|has_unreviewed)$"),
+    group_id: Optional[int] = None,
+    filter_status: Optional[str] = Query(None, pattern="^(all|unscanned|scanned|has_matches|has_unreviewed|grouped|ungrouped)$"),
     sort_by: str = Query("indexed_at", pattern="^(indexed_at|last_scanned_at|filename|project|match_count|unreviewed_count|file_size)$"),
     sort_dir: str = Query("desc", pattern="^(asc|desc)$"),
     page: int = Query(1, ge=1),
@@ -50,6 +51,7 @@ def list_photos(
         search=search,
         filter_status=filter_status,
         project=project,
+        group_id=group_id,
         sort_by=sort_by,
         sort_dir=sort_dir,
         limit=page_size,
@@ -86,6 +88,7 @@ def get_photo_thumbnail(
     photo_id: int,
     repo: ImageRepository = Depends(get_image_repo),
     thumb_cache: ThumbnailCache = Depends(get_thumbnail_cache),
+    img_service: ImageService = Depends(get_image_service),
 ):
     img = repo.get_by_id(photo_id)
     if not img:
@@ -93,8 +96,11 @@ def get_photo_thumbnail(
     
     thumb_path = thumb_cache.get_thumbnail_path(img.sha256)
     if not thumb_path.is_file():
+        # Reading the original requires the same containment check as the original-file route:
+        # the file must resolve inside an enabled, non-archived library
+        safe_path = img_service.validate_and_resolve_image_path(img.file_path)
         try:
-            thumb_path = thumb_cache.get_or_create_thumbnail(img.file_path, img.sha256)
+            thumb_path = thumb_cache.get_or_create_thumbnail(str(safe_path), img.sha256)
         except Exception:
             raise HTTPException(status_code=404, detail="Thumbnail could not be generated")
 

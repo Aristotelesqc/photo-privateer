@@ -1,9 +1,9 @@
 import React from 'react';
 import { Search, Sparkles, ShieldAlert, Grid, LayoutGrid } from 'lucide-react';
-import { Library } from '../../types';
+import { Library, StatusFilterType } from '../../types';
 import { FilterSelect } from '../../components/blocks/FilterSelect';
 
-export type StatusFilterType = 'all' | 'unscanned' | 'scanned' | 'has_matches' | 'has_unreviewed';
+export type { StatusFilterType };
 
 export interface LibraryFilterBarProps {
   libraries: Library[];
@@ -102,6 +102,8 @@ export const LibraryFilterBar: React.FC<LibraryFilterBarProps> = ({
               ['scanned', 'Scanned'],
               ['has_matches', 'Matches'],
               ['has_unreviewed', 'Needs Review'],
+              ['grouped', 'Grouped'],
+              ['ungrouped', 'Ungrouped'],
             ] as const
           ).map(([key, label]) => (
             <button

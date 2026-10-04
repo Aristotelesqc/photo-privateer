@@ -33,7 +33,7 @@ def prepare_scan(
     
     unique_ids = list(dict.fromkeys(payload.image_ids))
     try:
-        usable_images, _ = engine.validate_scan_request(
+        plan = engine.plan_scan(
             image_ids=unique_ids,
             provider_override=payload.provider,
             force_override_guard=True,
@@ -45,8 +45,10 @@ def prepare_scan(
     
     return tracker.prepare_scan_projection(
         image_count=len(unique_ids),
-        usable_count=len(usable_images),
+        usable_count=len(plan.scannable_images),
         provider_override=payload.provider,
+        missing_count=len(plan.missing_ids),
+        grouped_variant_count=len(plan.grouped_variant_ids),
     )
 
 

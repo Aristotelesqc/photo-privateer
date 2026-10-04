@@ -12,6 +12,11 @@ import {
   ProviderCall,
   AppSettings,
   TestGoogleAuthResponse,
+  PhotoGroup,
+  GroupCandidateList,
+  AddImageToGroupPayload,
+  PhotoGroupCreatePayload,
+  StatusFilterType,
 } from '../types';
 
 const API_BASE = '/api';
@@ -116,7 +121,8 @@ export const fetchPhotos = (params: {
   library_id?: number;
   search?: string;
   project?: string;
-  filter_status?: 'all' | 'unscanned' | 'scanned' | 'has_matches' | 'has_unreviewed';
+  group_id?: number;
+  filter_status?: StatusFilterType;
   sort_by?: string;
   sort_dir?: 'asc' | 'desc';
   page?: number;
@@ -126,6 +132,7 @@ export const fetchPhotos = (params: {
   if (params.library_id !== undefined) query.set('library_id', String(params.library_id));
   if (params.search) query.set('search', params.search);
   if (params.project) query.set('project', params.project);
+  if (params.group_id !== undefined) query.set('group_id', String(params.group_id));
   if (params.filter_status) query.set('filter_status', params.filter_status);
   if (params.sort_by) query.set('sort_by', params.sort_by);
   if (params.sort_dir) query.set('sort_dir', params.sort_dir);
@@ -241,4 +248,74 @@ export const testGoogleAuth = (credentials_path?: string) =>
   request<TestGoogleAuthResponse>('/settings/test-google-auth', {
     method: 'POST',
     body: JSON.stringify({ credentials_path: credentials_path || null }),
+  });
+
+// --- Photo Groups & Deduplication ---
+export const fetchGroupCandidates = (
+  params?: { threshold?: number; limit?: number; library_id?: number } | number,
+  limitParam: number = 50
+) => {
+  let threshold = 10;
+  let limit = 50;
+  let libraryId: number | undefined = undefined;
+
+  if (typeof params === 'number') {
+    threshold = params;
+    limit = limitParam;
+  } else if (params && typeof params === 'object') {
+    if (params.threshold !== undefined) threshold = params.threshold;
+    if (params.limit !== undefined) limit = params.limit;
+    if (params.library_id !== undefined) libraryId = params.library_id;
+  }
+
+  const query = new URLSearchParams({
+    threshold: String(threshold),
+    limit: String(limit),
+  });
+  if (libraryId !== undefined) {
+    query.set('library_id', String(libraryId));
+  }
+
+  return request<GroupCandidateList>(`/groups/candidates?${query.toString()}`);
+};
+
+export const addImageToGroup = (groupId: number, imageId: number, preferredImageId?: number) => {
+  const payload: AddImageToGroupPayload = { image_id: imageId };
+  if (preferredImageId !== undefined) payload.preferred_image_id = preferredImageId;
+  return request<PhotoGroup>(`/groups/${groupId}/images`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+};
+
+export const dismissGroupCandidate = (imageAId: number, imageBId: number) =>
+  request<{ status: string }>('/groups/candidates/dismiss', {
+    method: 'POST',
+    body: JSON.stringify({ image_a_id: imageAId, image_b_id: imageBId }),
+  });
+
+export const createPhotoGroup = (payload: PhotoGroupCreatePayload) =>
+  request<PhotoGroup>('/groups', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+
+export const fetchPhotoGroups = () => request<PhotoGroup[]>('/groups');
+
+export const fetchPhotoGroup = (groupId: number) => request<PhotoGroup>(`/groups/${groupId}`);
+
+export const setPreferredImage = (groupId: number, imageId: number) =>
+  request<PhotoGroup>(`/groups/${groupId}/preferred`, {
+    method: 'PUT',
+    body: JSON.stringify({ preferred_image_id: imageId }),
+  });
+
+export const deletePhotoGroup = (groupId: number) =>
+  request<{ status: string; group_id: number }>(`/groups/${groupId}`, {
+    method: 'DELETE',
+  });
+
+export const removeImageFromGroup = (groupId: number, imageId: number) =>
+  request<PhotoGroup | null>(`/groups/${groupId}/images/${imageId}`, {
+    method: 'DELETE',
   });

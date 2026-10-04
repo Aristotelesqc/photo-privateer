@@ -112,6 +112,7 @@ class LibraryRepository:
             VALUES (?, ?, 1, ?, 0, ?, ?)
         """, (norm_path, folder_name, int(recursive), int(subfolders_as_projects), now))
         lib_id = cur.lastrowid
+        self.conn.commit()
         return self.get_by_id(lib_id)  # type: ignore
 
     def update(
@@ -205,6 +206,12 @@ class LibraryRepository:
             image_ids = [r["id"] if isinstance(r, sqlite3.Row) else r[0] for r in image_rows]
             sha_hashes = [r["sha256"] if isinstance(r, sqlite3.Row) else r[1] for r in image_rows]
 
+            # Hand over logical discoveries held by purged photos to observations other photos made
+            # of the same web use (photo groups), so purging never deletes another photo's discovery
+            if image_ids:
+                from backend.repositories.discovery_merge import release_discoveries, refresh_match_counts
+                refresh_match_counts(self.conn, release_discoveries(self.conn, image_ids))
+
             candidate_session_ids = set()
             if image_ids:
                 for chunk in chunked(image_ids, 500):
@@ -233,6 +240,10 @@ class LibraryRepository:
                       AND status != 'RUNNING'
                       AND id NOT IN (SELECT DISTINCT scan_session_id FROM scan_items WHERE scan_session_id IS NOT NULL)
                 """, tuple(candidate_session_ids))
+
+            from backend.repositories.group_repo import PhotoGroupRepository
+            PhotoGroupRepository(self.conn).repair_groups()
+
             self.conn.commit()
 
             # Evict associated cached thumbnails from disk
@@ -260,3 +271,4 @@ class LibraryRepository:
         now = datetime.now(timezone.utc).isoformat()
         cur = self.conn.cursor()
         cur.execute("UPDATE libraries SET last_indexed_at = ? WHERE id = ?", (now, library_id))
+        self.conn.commit()

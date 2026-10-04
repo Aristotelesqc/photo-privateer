@@ -142,4 +142,28 @@ describe('ScanConfirmModal Component', () => {
     const startBtn = screen.getByRole('button', { name: /Start Scan \(0\)/i });
     expect(startBtn).toBeDisabled();
   });
+
+  it('explains grouped photos covered by their primary representation', () => {
+    const projection: ScanPrepareResponse = {
+      selected_count: 3,
+      usable_count: 1,
+      missing_count: 0,
+      grouped_variant_count: 2,
+      provider: 'mock',
+      current_month: '2026-10',
+      units_used_this_month: 0,
+      projected_units_total: 0,
+      free_tier_allowance: 1000,
+      remaining_free_units: 1000,
+      estimated_incremental_cost_usd: 0.0,
+      free_tier_exceeded: false,
+      blocked_by_guard: false,
+      disclaimer: 'Mock provider estimate',
+    };
+    render(<ScanConfirmModal projection={projection} onConfirm={vi.fn()} onClose={vi.fn()} />);
+    expect(screen.getByTestId('scan-grouped-variant-note')).toHaveTextContent(
+      "1 search: 2 grouped photos are covered by the search of another photo in their group"
+    );
+  });
 });
+

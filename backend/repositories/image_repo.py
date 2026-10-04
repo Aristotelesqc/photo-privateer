@@ -5,6 +5,12 @@ import sqlite3
 from datetime import datetime, timezone
 from typing import Optional
 from backend.models import ImageOut
+from backend.repositories.discovery_merge import (
+    coalesce_discoveries,
+    coalesce_group_discoveries,
+    reconcile_group_folds,
+    refresh_match_counts,
+)
 
 class ImageRepository:
     def __init__(self, conn: sqlite3.Connection):
@@ -15,6 +21,9 @@ class ImageRepository:
             id=r["id"],
             library_id=r["library_id"],
             sha256=r["sha256"],
+            dhash=r["dhash"] if "dhash" in r.keys() else None,
+            photo_group_id=r["photo_group_id"] if "photo_group_id" in r.keys() else None,
+            is_primary_representation=int(r["is_primary_representation"]) if ("is_primary_representation" in r.keys() and r["is_primary_representation"] is not None) else 1,
             file_path=r["file_path"],
             filename=r["filename"],
             file_size=r["file_size"],
@@ -32,6 +41,10 @@ class ImageRepository:
             scan_count=r["scan_count"],
             match_count=r["match_count"],
             unreviewed_count=r["unreviewed_count"],
+            group_match_count=r["group_match_count"] if "group_match_count" in r.keys() else None,
+            group_unreviewed_count=r["group_unreviewed_count"] if "group_unreviewed_count" in r.keys() else None,
+            group_scan_count=r["group_scan_count"] if "group_scan_count" in r.keys() else None,
+            group_last_scanned_at=r["group_last_scanned_at"] if "group_last_scanned_at" in r.keys() else None,
             thumbnail_url=f"/api/photos/{r['id']}/thumbnail",
         )
 
@@ -124,8 +137,9 @@ class ImageRepository:
         self,
         library_id: Optional[int] = None,
         search: Optional[str] = None,
-        filter_status: Optional[str] = None,  # "all", "unscanned", "scanned", "has_matches", "has_unreviewed", "missing"
+        filter_status: Optional[str] = None,  # "all", "unscanned", "scanned", "has_matches", "has_unreviewed", "missing", "grouped", "ungrouped"
         project: Optional[str] = None,
+        group_id: Optional[int] = None,
         sort_by: str = "indexed_at",
         sort_dir: str = "desc",
         limit: int = 50,
@@ -137,6 +151,10 @@ class ImageRepository:
         if library_id is not None:
             where_clauses.append("library_id = ?")
             params.append(library_id)
+
+        if group_id is not None:
+            where_clauses.append("photo_group_id = ?")
+            params.append(group_id)
 
         if search:
             where_clauses.append("(filename LIKE ? OR file_path LIKE ?)")
@@ -150,22 +168,45 @@ class ImageRepository:
                 where_clauses.append("project = ?")
                 params.append(project)
 
+        # Scan coverage is group-aware: a group is covered once any member has been searched, so
+        # grouping a fresh variant with an already-searched photo does not re-list it as unscanned
+        # (which would invite a duplicate billable search of the group).
         if filter_status == "unscanned":
-            where_clauses.append("scan_count = 0 AND is_present_on_disk = 1")
+            where_clauses.append("COALESCE(gc_scan_count, scan_count) = 0 AND is_present_on_disk = 1")
         elif filter_status == "scanned":
-            where_clauses.append("scan_count > 0")
+            where_clauses.append("COALESCE(gc_scan_count, scan_count) > 0")
         elif filter_status == "has_matches":
-            where_clauses.append("match_count > 0")
+            # Group-aware: a grouped variant shares the discoveries of its group's web search
+            where_clauses.append("COALESCE(gc_match_count, match_count) > 0")
         elif filter_status == "has_unreviewed":
-            where_clauses.append("unreviewed_count > 0")
+            where_clauses.append("COALESCE(gc_unreviewed_count, unreviewed_count) > 0")
         elif filter_status == "missing":
             where_clauses.append("is_present_on_disk = 0")
+        elif filter_status == "grouped":
+            where_clauses.append("photo_group_id IS NOT NULL")
+        elif filter_status == "ungrouped":
+            where_clauses.append("photo_group_id IS NULL")
 
         where_sql = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
 
+        # Per-group aggregate counts, so every member of a group reflects the group's discoveries
+        from_sql = """
+            images
+            LEFT JOIN (
+                SELECT photo_group_id AS gc_group_id,
+                       SUM(match_count) AS gc_match_count,
+                       SUM(unreviewed_count) AS gc_unreviewed_count,
+                       MAX(scan_count) AS gc_scan_count,
+                       MAX(last_scanned_at) AS gc_last_scanned_at
+                FROM images
+                WHERE photo_group_id IS NOT NULL
+                GROUP BY photo_group_id
+            ) gc ON gc.gc_group_id = images.photo_group_id
+        """
+
         # Total count
         cur = self.conn.cursor()
-        cur.execute(f"SELECT COUNT(*) FROM images {where_sql}", tuple(params))
+        cur.execute(f"SELECT COUNT(*) FROM {from_sql} {where_sql}", tuple(params))
         total = cur.fetchone()[0]
 
         # Sorting whitelist
@@ -174,8 +215,8 @@ class ImageRepository:
             "last_scanned_at": "last_scanned_at",
             "filename": "filename",
             "project": "project",
-            "match_count": "match_count",
-            "unreviewed_count": "unreviewed_count",
+            "match_count": "COALESCE(gc_match_count, match_count)",
+            "unreviewed_count": "COALESCE(gc_unreviewed_count, unreviewed_count)",
             "file_size": "file_size",
         }
         order_col = allowed_sorts.get(sort_by, "indexed_at")
@@ -185,7 +226,9 @@ class ImageRepository:
         data_params = list(params)
         data_params.extend([limit, offset])
         cur.execute(
-            f"SELECT * FROM images {where_sql} ORDER BY {order_col} {direction} LIMIT ? OFFSET ?",
+            f"SELECT images.*, gc_match_count AS group_match_count, gc_unreviewed_count AS group_unreviewed_count, "
+            f"gc_scan_count AS group_scan_count, gc_last_scanned_at AS group_last_scanned_at "
+            f"FROM {from_sql} {where_sql} ORDER BY {order_col} {direction}, images.id {direction} LIMIT ? OFFSET ?",
             tuple(data_params),
         )
         rows = cur.fetchall()
@@ -196,7 +239,67 @@ class ImageRepository:
         relocating its unique file_path constraint to an archive alias and marking it absent.
         """
         cur = self.conn.cursor()
-        cur.execute("UPDATE images SET file_path = ?, is_present_on_disk = 0 WHERE id = ?", (archive_path, image_id))
+        cur.execute(
+            """
+            UPDATE images
+            SET file_path = ?,
+                is_present_on_disk = 0,
+                photo_group_id = NULL,
+                is_primary_representation = 1
+            WHERE id = ?
+            """,
+            (archive_path, image_id),
+        )
+        # Group integrity is repaired once by the caller (LibraryIndexer.index_library) after
+        # the whole pass, rather than with a full-table repair per detached row.
+
+    def inherit_group_membership(self, image_id: int, group_id: int, make_primary: bool) -> None:
+        """Joins an ungrouped image to an existing group, optionally as its primary representation.
+        Used when a grouped photo's file is replaced in place by new content. Does not commit.
+        """
+        cur = self.conn.cursor()
+        cur.execute("SELECT 1 FROM photo_groups WHERE id = ?", (group_id,))
+        if cur.fetchone() is None:
+            return
+        cur.execute(
+            "UPDATE images SET photo_group_id = ?, is_primary_representation = 0 "
+            "WHERE id = ? AND photo_group_id IS NULL",
+            (group_id, image_id),
+        )
+        if cur.rowcount != 1:
+            return
+        if make_primary:
+            now = datetime.now(timezone.utc).isoformat()
+            cur.execute(
+                "UPDATE photo_groups SET preferred_image_id = ?, updated_at = ? WHERE id = ?",
+                (image_id, now, group_id),
+            )
+            cur.execute(
+                "UPDATE images SET is_primary_representation = CASE WHEN id = ? THEN 1 ELSE 0 END "
+                "WHERE photo_group_id = ?",
+                (image_id, group_id),
+            )
+        self.coalesce_group_discoveries(group_id)
+
+    def coalesce_group_discoveries(self, group_id: int) -> None:
+        """Folds duplicate logical discoveries across a group's members (non-destructive, see
+        discovery_merge) and refreshes their match counts. Does not commit."""
+        refresh_match_counts(self.conn, coalesce_group_discoveries(self.conn, group_id))
+
+    def reconcile_discovery_folds(self) -> None:
+        """Restores independent discoveries for observations whose photos are no longer grouped
+        together (see discovery_merge.reconcile_group_folds). Does not commit."""
+        refresh_match_counts(self.conn, reconcile_group_folds(self.conn))
+
+    def transfer_representation_history(self, old_image_id: int, new_image_id: int) -> None:
+        """Moves the logical discoveries (classification, notes, first_seen_at) of a replaced record
+        onto the record that takes over its lineage (a validated re-export); where both observed the
+        same web use, the replaced record's observation is folded (kept, not deleted). Scan counts are physical per-file history and are not copied: the replacement
+        content has not itself been searched. Provider call and scan item records keep the old
+        image ID as provenance of the physical request. Does not commit.
+        """
+        affected = coalesce_discoveries(self.conn, [old_image_id, new_image_id], target_image_id=new_image_id)
+        refresh_match_counts(self.conn, affected | {old_image_id, new_image_id})
 
     def upsert_image(
         self,
@@ -212,16 +315,18 @@ class ImageRepository:
         project: Optional[str] = None,
         project_source: str = "auto",
         file_modified_at_ns: Optional[int] = None,
+        dhash: Optional[str] = None,
     ) -> ImageOut:
         now = datetime.now(timezone.utc).isoformat()
         cur = self.conn.cursor()
         cur.execute("""
             INSERT INTO images (
-                library_id, sha256, file_path, filename, file_size, file_modified_at, file_modified_at_ns,
+                library_id, sha256, dhash, file_path, filename, file_size, file_modified_at, file_modified_at_ns,
                 width, height, format, project, project_source, indexed_at, last_seen_on_disk, is_present_on_disk
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
             ON CONFLICT(file_path) DO UPDATE SET
                 sha256 = excluded.sha256,
+                dhash = COALESCE(excluded.dhash, images.dhash),
                 filename = excluded.filename,
                 file_size = excluded.file_size,
                 file_modified_at = excluded.file_modified_at,
@@ -240,12 +345,34 @@ class ImageRepository:
                 last_seen_on_disk = excluded.last_seen_on_disk,
                 is_present_on_disk = 1
         """, (
-            library_id, sha256, file_path, filename, file_size, file_modified_at, file_modified_at_ns,
+            library_id, sha256, dhash, file_path, filename, file_size, file_modified_at, file_modified_at_ns,
             width, height, format, project, project_source, now, now
         ))
         cur.execute("SELECT * FROM images WHERE file_path = ?", (file_path,))
         r = cur.fetchone()
         return self._row_to_image(r)
+
+    def update_dhash(self, image_id: int, dhash: str) -> None:
+        """Sets the perceptual dHash for an image."""
+        cur = self.conn.cursor()
+        cur.execute("UPDATE images SET dhash = ? WHERE id = ?", (dhash, image_id))
+
+    def update_dhashes(self, rows: list[tuple[str, int]]) -> None:
+        """Batch updates dhash values for multiple images and commits."""
+        if not rows:
+            return
+        cur = self.conn.cursor()
+        cur.executemany("UPDATE images SET dhash = ? WHERE id = ?", rows)
+        self.conn.commit()
+
+    def get_images_for_group(self, group_id: int) -> list[ImageOut]:
+        """Returns all images belonging to a group, ordered with the primary representation first."""
+        cur = self.conn.cursor()
+        cur.execute(
+            "SELECT * FROM images WHERE photo_group_id = ? ORDER BY is_primary_representation DESC, id ASC",
+            (group_id,),
+        )
+        return [self._row_to_image(r) for r in cur.fetchall()]
 
     def update_mtime_ns(self, image_id: int, mtime_ns: int) -> None:
         """Opportunistically upgrades legacy image rows to store exact nanosecond mtime."""
@@ -298,8 +425,8 @@ class ImageRepository:
             """)
         return [row[0] for row in cur.fetchall() if row[0]]
 
-    def record_scan_completed(self, image_id: int) -> None:
-        now = datetime.now(timezone.utc).isoformat()
+    def record_scan_completed(self, image_id: int, scanned_at: Optional[str] = None) -> str:
+        now = scanned_at or datetime.now(timezone.utc).isoformat()
         cur = self.conn.cursor()
         cur.execute("""
             UPDATE images
@@ -308,25 +435,12 @@ class ImageRepository:
             WHERE id = ?
         """, (now, image_id))
         self.refresh_image_match_counts(image_id)
+        return now
 
     def refresh_image_match_counts(self, image_id: int) -> None:
-        cur = self.conn.cursor()
-        cur.execute("""
-            SELECT 
-                COUNT(*) as total_matches,
-                SUM(CASE WHEN classification = 'UNREVIEWED' THEN 1 ELSE 0 END) as unreviewed_matches
-            FROM matches
-            WHERE image_id = ?
-        """, (image_id,))
-        row = cur.fetchone()
-        total_m = row["total_matches"] if row else 0
-        unrev_m = row["unreviewed_matches"] if (row and row["unreviewed_matches"] is not None) else 0
-        cur.execute("""
-            UPDATE images
-            SET match_count = ?,
-                unreviewed_count = ?
-            WHERE id = ?
-        """, (total_m, unrev_m, image_id))
+        """Counts logical discoveries only (observations folded into another discovery are
+        provenance, not separate discoveries)."""
+        refresh_match_counts(self.conn, [image_id])
 
     def get_by_ids(self, image_ids: list[int]) -> list[ImageOut]:
         if not image_ids:

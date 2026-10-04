@@ -22,6 +22,7 @@ from backend.api import (
     rules,
     usage,
     settings,
+    groups,
 )
 
 # Configure logging
@@ -51,6 +52,16 @@ async def lifespan(app: FastAPI):
                 logger.warning(f"Recovered {recovered} dangling scan session(s) marked as INTERRUPTED.")
     except Exception as e:
         logger.error(f"Failed to recover interrupted scan sessions: {e}")
+
+    # Startup integrity recovery: an indexing pass interrupted between detaching a replaced photo
+    # and its final group repair can leave a group with < 2 members or a dangling primary
+    try:
+        from backend.repositories.group_repo import PhotoGroupRepository
+        with get_connection(target_db_path) as conn:
+            PhotoGroupRepository(conn).repair_groups()
+            conn.commit()
+    except Exception as e:
+        logger.error(f"Failed to repair photo group integrity: {e}")
 
     yield
     logger.info("Photo Privateer shutting down.")
@@ -137,6 +148,7 @@ app.include_router(matches.router)
 app.include_router(rules.router)
 app.include_router(usage.router)
 app.include_router(settings.router)
+app.include_router(groups.router)
 
 # Serve compiled frontend if available
 if FRONTEND_DIST_DIR.is_dir():

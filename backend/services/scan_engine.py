@@ -5,6 +5,7 @@ import logging
 import os
 import sqlite3
 import threading
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Optional, Callable
 from pathlib import Path
@@ -16,6 +17,7 @@ from backend.repositories.match_repo import MatchRepository
 from backend.repositories.domain_rule_repo import DomainRuleRepository
 from backend.repositories.usage_repo import UsageRepository, get_current_billing_period
 from backend.repositories.settings_repo import SettingsRepository
+from backend.repositories.group_repo import PhotoGroupRepository
 from backend.providers import get_provider
 from backend.models import ScanSessionOut, ImageOut
 from backend.config import CLASS_UNREVIEWED
@@ -28,6 +30,20 @@ class ScanConflictError(ValueError):
     """Raised when an attempt is made to start a scan while another is already running."""
     pass
 
+@dataclass
+class ScanPlan:
+    """Result of validating a scan request.
+
+    scannable_images: images actually sent to the provider (one per photo group).
+    missing_ids: selected images unavailable on disk.
+    grouped_variant_ids: selected, available images that are not searched themselves because
+        their photo group is searched once through another member (its primary representation).
+    """
+    scannable_images: list[ImageOut]
+    missing_ids: list[int]
+    grouped_variant_ids: list[int] = field(default_factory=list)
+
+
 class ScanEngine:
     def __init__(
         self,
@@ -37,6 +53,7 @@ class ScanEngine:
         usage_repo: UsageRepository,
         settings_repo: SettingsRepository,
         library_repo: Optional[LibraryRepository] = None,
+        group_repo: Optional[PhotoGroupRepository] = None,
     ):
         self.image_repo = image_repo
         self.match_repo = match_repo
@@ -44,6 +61,7 @@ class ScanEngine:
         self.usage_repo = usage_repo
         self.settings_repo = settings_repo
         self.library_repo = library_repo or LibraryRepository(self.image_repo.conn)
+        self.group_repo = group_repo or PhotoGroupRepository(self.image_repo.conn)
         self.db_path: Optional[str] = None
         try:
             cur = self.image_repo.conn.cursor()
@@ -61,9 +79,25 @@ class ScanEngine:
         provider_override: Optional[str] = None,
         force_override_guard: bool = False,
     ) -> tuple[list[ImageOut], list[int]]:
+        """Validates a scan request. Returns: (scannable_images, missing_image_ids).
+        See plan_scan for the full result including grouped variants.
+        """
+        plan = self.plan_scan(
+            image_ids=image_ids,
+            provider_override=provider_override,
+            force_override_guard=force_override_guard,
+        )
+        return plan.scannable_images, plan.missing_ids
+
+    def plan_scan(
+        self,
+        image_ids: list[int],
+        provider_override: Optional[str] = None,
+        force_override_guard: bool = False,
+    ) -> ScanPlan:
         """Validates that no other scan is running, enforces the free-tier safety guard,
-        and verifies that selected images exist and are present on disk.
-        Returns: (usable_images, missing_image_ids)
+        verifies that selected images exist and are present on disk, and collapses grouped
+        photos to one provider search per group.
         """
         # 1. Enforce single active scan invariant with worker thread liveness check
         active = self.usage_repo.get_active_running_session()
@@ -131,32 +165,74 @@ class ScanEngine:
                 f"Cannot scan images belonging to archived or disabled libraries: {archived_or_disabled_ids}"
             )
         
-        usable_images: list[ImageOut] = []
+        def is_available(candidate: ImageOut) -> bool:
+            return (
+                candidate.library_id in active_libs
+                and candidate.is_present_on_disk
+                and Path(candidate.file_path).exists()
+            )
+
+        # 4. Resolve availability per photo group and collapse each group to 1 search call.
+        # A grouped photo is searched through the group's preferred representation when it is
+        # available, otherwise through the selected photo, otherwise through any available member;
+        # it is only reported missing when no member of its group can be searched.
+        group_reps: dict[int, Optional[ImageOut]] = {}
+
+        def resolve_group(gid: int, selected: ImageOut) -> Optional[ImageOut]:
+            if gid in group_reps:
+                return group_reps[gid]
+            rep: Optional[ImageOut] = None
+            try:
+                pref_id = self.group_repo.get_preferred_image_id(gid)
+                members = self.image_repo.get_images_for_group(gid)
+                ordered = sorted(members, key=lambda m: (m.id != pref_id, m.id != selected.id, m.id))
+                rep = next((m for m in ordered if is_available(m)), None)
+            except Exception as exc:
+                logger.warning(
+                    f"Could not resolve the representations of photo group #{gid}; "
+                    f"scanning selected photo #{selected.id} instead: {exc}"
+                )
+                rep = selected if is_available(selected) else None
+            group_reps[gid] = rep
+            return rep
+
+        scannable_images: list[ImageOut] = []
+        seen_scannable_ids: set[int] = set()
         missing_ids: list[int] = []
+        grouped_variant_ids: list[int] = []
 
         for iid in unique_image_ids:
             img = image_map.get(iid)
             if img is None:
                 missing_ids.append(iid)
-            elif not img.is_present_on_disk or not Path(img.file_path).exists():
-                missing_ids.append(iid)
+                continue
+            if img.photo_group_id is None:
+                target = img if is_available(img) else None
             else:
-                usable_images.append(img)
+                target = resolve_group(img.photo_group_id, img)
+            if target is None:
+                missing_ids.append(iid)
+                continue
+            if target.id != iid:
+                grouped_variant_ids.append(iid)
+            if target.id not in seen_scannable_ids:
+                scannable_images.append(target)
+                seen_scannable_ids.add(target.id)
 
-        if not usable_images:
+        if not scannable_images:
             raise ValueError(
                 f"None of the {len(unique_image_ids)} selected images are currently available on disk. "
                 f"Check that files have not been moved or unmounted."
             )
 
-        # 4. Enforce free tier allowance guard on the actual usable scannable image count
+        # 5. Enforce free tier allowance guard on the actual usable scannable image count
         settings = self.settings_repo.get_app_settings()
         provider_id = provider_override or settings.active_provider
 
         if provider_id == "google_vision" and not force_override_guard:
             current_period = get_current_billing_period()
             current_units = self.usage_repo.get_period_units(current_period, provider="google_vision")
-            projected = current_units + len(usable_images)
+            projected = current_units + len(scannable_images)
             if projected > settings.free_tier_monthly_units and settings.block_on_free_tier_exceeded:
                 raise ValueError(
                     f"Scan blocked by free tier allowance guard: projected usage ({projected}) "
@@ -164,7 +240,11 @@ class ScanEngine:
                     f"Authorize force override to proceed."
                 )
 
-        return usable_images, missing_ids
+        return ScanPlan(
+            scannable_images=scannable_images,
+            missing_ids=missing_ids,
+            grouped_variant_ids=grouped_variant_ids,
+        )
 
 
     def start_background_scan(
@@ -175,11 +255,12 @@ class ScanEngine:
     ) -> ScanSessionOut:
         """Validates request, commits ScanSession to SQLite immediately, and spawns the local background worker."""
         with _scan_start_lock:
-            usable_images, missing_ids = self.validate_scan_request(
+            plan = self.plan_scan(
                 image_ids=image_ids,
                 provider_override=provider_override,
                 force_override_guard=force_override_guard,
             )
+            usable_images, missing_ids = plan.scannable_images, plan.missing_ids
 
             settings = self.settings_repo.get_app_settings()
             provider_id = provider_override or settings.active_provider
@@ -188,7 +269,16 @@ class ScanEngine:
                 credentials_path=settings.google_credentials_path,
             )
 
-            note_str = f"Skipped {len(missing_ids)} missing files." if missing_ids else None
+            notes: list[str] = []
+            if missing_ids:
+                notes.append(f"Skipped {len(missing_ids)} missing files.")
+            if plan.grouped_variant_ids:
+                count = len(plan.grouped_variant_ids)
+                notes.append(
+                    f"{count} selected {'photo is' if count == 1 else 'photos are'} covered by "
+                    f"the search of another photo in {'its' if count == 1 else 'their'} photo group."
+                )
+            note_str = " ".join(notes) if notes else None
 
             # Create session and commit
             try:
@@ -316,6 +406,31 @@ class ScanEngine:
                         image_id=img.id,
                         status="ERROR",
                         error_message=f"Containment check failed: {str(p_err)}",
+                        matches_found=0,
+                    )
+                    usage_repo.update_scan_session_progress(session_id, processed, successful, failed)
+                    conn.commit()
+                    continue
+
+                # A photo grouped while the scan is running is covered when another current member
+                # of its group was already searched successfully in this session, whether it was
+                # grouped before, during or after that search: resolved against current membership
+                if img.photo_group_id is not None and conn.execute(
+                    """
+                    SELECT 1 FROM scan_items s JOIN images i ON i.id = s.image_id
+                    WHERE s.scan_session_id = ? AND s.status = 'SUCCESS'
+                      AND i.photo_group_id = ? AND s.image_id != ?
+                    LIMIT 1
+                    """,
+                    (session_id, img.photo_group_id, img.id),
+                ).fetchone():
+                    processed += 1
+                    successful += 1
+                    usage_repo.record_scan_item(
+                        session_id=session_id,
+                        image_id=img.id,
+                        status="SKIPPED",
+                        error_message=f"Covered by this session's search of photo group #{img.photo_group_id}",
                         matches_found=0,
                     )
                     usage_repo.update_scan_session_progress(session_id, processed, successful, failed)
@@ -455,6 +570,8 @@ class ScanEngine:
                             )
                             matches_count += 1
 
+                        # Physical per-file history only: siblings are covered through derived
+                        # group coverage (MAX over members), never by writing scans they did not get
                         image_repo.record_scan_completed(img.id)
                         usage_repo.record_scan_item(
                             session_id=session_id,

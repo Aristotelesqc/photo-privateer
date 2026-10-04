@@ -10,6 +10,7 @@ export interface PhotoCardProps {
   isSelected: boolean;
   onToggleSelect: (id: number) => void;
   onNavigateToReview: (photoId: number) => void;
+  onManageGroup?: (photo: ImageItem) => void;
 }
 
 export const PhotoCard: React.FC<PhotoCardProps> = ({
@@ -17,6 +18,7 @@ export const PhotoCard: React.FC<PhotoCardProps> = ({
   isSelected,
   onToggleSelect,
   onNavigateToReview,
+  onManageGroup,
 }) => {
   const formatStr = photo.format || 'IMG';
   const sizeMb = (photo.file_size / (1024 * 1024)).toFixed(1);
@@ -24,6 +26,7 @@ export const PhotoCard: React.FC<PhotoCardProps> = ({
   return (
     <div
       onClick={() => onToggleSelect(photo.id)}
+      data-testid={`photo-card-${photo.filename}`}
       className={`group relative bg-carbon-900 border rounded-lg overflow-hidden cursor-pointer transition-all duration-100 select-none flex flex-col ${
         isSelected
           ? 'border-accent-500 ring-1 ring-accent-500 bg-carbon-850 shadow-xs'
@@ -50,6 +53,28 @@ export const PhotoCard: React.FC<PhotoCardProps> = ({
           <span className="text-[9px] font-mono px-1 py-0.2 rounded bg-black/70 text-carbon-300 backdrop-blur-xs">
             {formatStr}
           </span>
+          {photo.photo_group_id && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onManageGroup?.(photo);
+              }}
+              data-testid={photo.is_primary_representation === 1 ? 'badge-primary' : 'badge-variant'}
+              className={`text-[9px] font-mono px-1 py-0.2 rounded backdrop-blur-xs transition-all hover:scale-105 cursor-pointer ${
+                photo.is_primary_representation === 1
+                  ? 'bg-accent-950/90 text-accent-300 border border-accent-800/80 hover:bg-accent-900'
+                  : 'bg-carbon-950/90 text-carbon-400 border border-carbon-700/80 hover:text-carbon-200 hover:bg-carbon-900'
+              }`}
+              title={
+                photo.is_primary_representation === 1
+                  ? 'Primary representation (searched on web) — Click to manage group'
+                  : 'Secondary grouped representation — Click to manage group'
+              }
+            >
+              {photo.is_primary_representation === 1 ? 'Primary' : 'Variant'}
+            </button>
+          )}
           {!photo.is_present_on_disk && (
             <span
               className="text-[9px] font-medium px-1 py-0.2 rounded bg-amber-950/90 text-amber-300 border border-amber-800/80 backdrop-blur-xs shadow-xs"
@@ -63,9 +88,9 @@ export const PhotoCard: React.FC<PhotoCardProps> = ({
         {/* Status Overlay Footer on Image */}
         <div className="absolute bottom-1.5 left-1.5 right-1.5 flex items-center justify-between pointer-events-none">
           <StatusPill
-            matchCount={photo.match_count}
-            unreviewedCount={photo.unreviewed_count}
-            scanCount={photo.scan_count}
+            matchCount={photo.group_match_count ?? photo.match_count}
+            unreviewedCount={photo.group_unreviewed_count ?? photo.unreviewed_count}
+            scanCount={photo.group_scan_count ?? photo.scan_count}
             onMatchClick={() => onNavigateToReview(photo.id)}
           />
         </div>

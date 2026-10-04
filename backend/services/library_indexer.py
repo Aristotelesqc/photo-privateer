@@ -11,6 +11,7 @@ from backend.config import SUPPORTED_EXTENSIONS
 from backend.repositories.library_repo import LibraryRepository
 from backend.repositories.image_repo import ImageRepository
 from backend.services.thumbnail_cache import ThumbnailCache
+from backend.services.perceptual import compute_dhash, is_candidate_representation, DHASH_UNAVAILABLE
 
 def calculate_sha256(file_path: Path) -> str:
     hasher = hashlib.sha256()
@@ -70,6 +71,7 @@ class LibraryIndexer:
         unchanged = 0
         observed_paths: set[str] = set()
         unchanged_ids: list[int] = []
+        pending_dhashes: list[tuple[str, int]] = []
 
         for file_path in self._discover_files(root, lib.recursive):
             scanned += 1
@@ -105,6 +107,17 @@ class LibraryIndexer:
                 # Opportunistic upgrade for legacy rows
                 if existing.file_modified_at_ns is None:
                     self.image_repo.update_mtime_ns(existing.id, mtime_ns)
+                if existing.dhash is None:
+                    if self.image_repo.conn.in_transaction:
+                        self.image_repo.conn.commit()
+                    try:
+                        computed_hash = compute_dhash(file_path)
+                    except Exception:
+                        computed_hash = None
+                    pending_dhashes.append((computed_hash or DHASH_UNAVAILABLE, existing.id))
+                    if len(pending_dhashes) >= 100:
+                        self.image_repo.update_dhashes(pending_dhashes)
+                        pending_dhashes.clear()
                 if len(unchanged_ids) >= 500:
                     self.image_repo.touch_observed_images(unchanged_ids)
                     unchanged_ids.clear()
@@ -136,8 +149,16 @@ class LibraryIndexer:
             # Photo identity replacement check:
             # If an existing record was at this path but has a DIFFERENT sha256,
             # detach the old record to an archive alias to preserve its history without inheriting to new file.
+            # A photographer re-exporting an edit over the same file keeps the photo's place in its
+            # group, but only when the new content is perceptually a re-export of the old one: a path
+            # reused for an unrelated photograph must not be folded into another photo's group (it
+            # would then never be searched on its own). Low-information or unavailable hashes fail
+            # open: the new photo stays ungrouped and surfaces through normal candidate review.
+            replaced_grouped = None
             if existing:
                 if existing.sha256 != sha256:
+                    if existing.photo_group_id is not None:
+                        replaced_grouped = existing
                     archive_alias = f"{norm_path}#archived-{existing.id}"
                     self.image_repo.detach_archived_image(existing.id, archive_alias)
                     existing = None
@@ -162,6 +183,20 @@ class LibraryIndexer:
                     )
                     if detected_project and not candidate.project:
                         self.image_repo.update_project_auto(candidate.id, detected_project)
+                    if (
+                        replaced_grouped is not None
+                        and candidate.photo_group_id is None
+                        and is_candidate_representation(replaced_grouped.dhash or "", candidate.dhash or "")
+                    ):
+                        # The known photo adopts the replaced record's lineage: its discoveries are
+                        # coalesced with the replaced record's (exactly once, triage preserved), then it
+                        # joins the group, whose discoveries are coalesced in turn.
+                        self.image_repo.transfer_representation_history(replaced_grouped.id, candidate.id)
+                        self.image_repo.inherit_group_membership(
+                            candidate.id,
+                            replaced_grouped.photo_group_id,
+                            replaced_grouped.is_primary_representation == 1,
+                        )
                     # Ensure thumbnail cached
                     if not self.thumbnail_cache.has_thumbnail(sha256):
                         try:
@@ -179,11 +214,14 @@ class LibraryIndexer:
 
             try:
                 with Image.open(file_path) as img:
+                    img_format = img.format or file_path.suffix.lstrip(".").upper()
                     img = ImageOps.exif_transpose(img)
                     width, height = img.size
-                    img_format = img.format or file_path.suffix.lstrip(".").upper()
             except Exception:
                 img_format = file_path.suffix.lstrip(".").upper()
+
+            # Same draft-mode hashing as the backfill path, so hashes are comparable across both
+            dhash = compute_dhash(file_path) or DHASH_UNAVAILABLE
 
             # Pre-generate thumbnail
             try:
@@ -192,7 +230,7 @@ class LibraryIndexer:
                 pass
 
             # Upsert into database with project_source='auto'
-            self.image_repo.upsert_image(
+            upserted = self.image_repo.upsert_image(
                 library_id=library_id,
                 sha256=sha256,
                 file_path=norm_path,
@@ -205,8 +243,22 @@ class LibraryIndexer:
                 project=detected_project,
                 project_source="auto",
                 file_modified_at_ns=mtime_ns,
+                dhash=dhash,
             )
+            if replaced_grouped is not None and is_candidate_representation(replaced_grouped.dhash or "", dhash):
+                # Validated re-export: same representation lineage, so it keeps the group role and the
+                # discoveries and triage recorded against the replaced content.
+                self.image_repo.transfer_representation_history(replaced_grouped.id, upserted.id)
+                self.image_repo.inherit_group_membership(
+                    upserted.id,
+                    replaced_grouped.photo_group_id,
+                    replaced_grouped.is_primary_representation == 1,
+                )
             added_or_updated += 1
+
+        if pending_dhashes:
+            self.image_repo.update_dhashes(pending_dhashes)
+            pending_dhashes.clear()
 
         if unchanged_ids:
             self.image_repo.touch_observed_images(unchanged_ids)
@@ -216,8 +268,15 @@ class LibraryIndexer:
         missing_count = self.image_repo.mark_missing_images_in_library(library_id, observed_paths)
 
 
+        # Repair group integrity once for the whole pass (groups left with < 2 members by
+        # replaced files, dangling preferred representations). Runs on every pass, so damage left
+        # by an earlier interrupted pass is healed even when this pass detaches nothing.
+        from backend.repositories.group_repo import PhotoGroupRepository
+        PhotoGroupRepository(self.image_repo.conn).repair_groups()
+
         # Update library last indexed timestamp
         self.library_repo.update_last_indexed(library_id)
+        self.image_repo.conn.commit()
 
         return {
             "scanned": scanned,

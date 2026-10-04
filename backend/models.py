@@ -42,6 +42,9 @@ class ImageOut(BaseModel):
     id: int
     library_id: int
     sha256: str
+    dhash: Optional[str] = None
+    photo_group_id: Optional[int] = None
+    is_primary_representation: int = 1
     file_path: str
     filename: str
     file_size: int
@@ -59,6 +62,11 @@ class ImageOut(BaseModel):
     scan_count: int = 0
     match_count: int = 0
     unreviewed_count: int = 0
+    # Aggregates across all members of the image's photo group (only set by photo listings)
+    group_match_count: Optional[int] = None
+    group_unreviewed_count: Optional[int] = None
+    group_scan_count: Optional[int] = None
+    group_last_scanned_at: Optional[str] = None
     thumbnail_url: str
 
 class BatchProjectUpdate(BaseModel):
@@ -70,6 +78,47 @@ class ImageListResponse(BaseModel):
     total: int
     page: int
     page_size: int
+
+# --- Photo Groups ---
+class PhotoGroupOut(BaseModel):
+    id: int
+    name: Optional[str] = None
+    created_at: str
+    updated_at: str
+    preferred_image_id: Optional[int] = None
+    notes: Optional[str] = None
+    images: List[ImageOut] = Field(default_factory=list)
+
+class PhotoGroupCreate(BaseModel):
+    name: Optional[str] = None
+    image_ids: List[int] = Field(..., min_length=2, description="At least two image IDs to group")
+    preferred_image_id: Optional[int] = None
+    notes: Optional[str] = None
+
+class GroupCandidatePairOut(BaseModel):
+    image_a: ImageOut
+    image_b: ImageOut
+    hamming_distance: int
+    is_exact_duplicate: bool
+
+class DismissCandidateRequest(BaseModel):
+    image_a_id: int
+    image_b_id: int
+
+class SetPreferredRequest(BaseModel):
+    preferred_image_id: int
+
+class AddImageToGroupRequest(BaseModel):
+    image_id: int
+    set_preferred: bool = False
+    # Optional explicit primary representation: the added image or any existing member
+    preferred_image_id: Optional[int] = None
+
+class GroupCandidateListOut(BaseModel):
+    total: int
+    pairs: List[GroupCandidatePairOut]
+    # True when the list is not exhaustive (per-photo candidate cap or comparison budget reached)
+    truncated: bool = False
 
 # --- Matches ---
 ClassificationLiteral = Literal["UNREVIEWED", "APPROVED", "UNAUTHORIZED", "IRRELEVANT"]
@@ -97,6 +146,24 @@ class MatchOut(BaseModel):
     auto_classified_by_rule_id: Optional[int] = None
     notes: Optional[str] = None
     # Joined photo details for display
+    # Photo to preview: the owner when present, otherwise an available member of its group
+    display_image_id: Optional[int] = None
+    # Set on an observation folded into another logical discovery (its id)
+    canonical_match_id: Optional[int] = None
+    # Physical observations behind this logical discovery (itself plus folded observations)
+    observation_count: int = 1
+    # This physical observation's own original triage (differs from classification/notes when
+    # the row carries a merged logical discovery state)
+    observed_classification: Optional[str] = None
+    observed_notes: Optional[str] = None
+    observed_classified_at: Optional[str] = None
+    observed_rule_id: Optional[int] = None
+    # Merged observations carry incompatible decisions; cleared only by an explicit classification
+    triage_conflict: bool = False
+    # Last explicit review action by the user (classification, acknowledgement or notes)
+    explicit_review_at: Optional[str] = None
+    # Discovery inherited from a permanently purged photo of the same group (provenance)
+    inherited_from: Optional[str] = None
     image_filename: Optional[str] = None
     image_thumbnail_url: Optional[str] = None
     image_project: Optional[str] = None
@@ -135,6 +202,9 @@ class ScanPrepareResponse(BaseModel):
     selected_count: int
     usable_count: int
     missing_count: int
+    # Selected photos that are not sent to the provider themselves because their photo
+    # group is searched once through its primary representation
+    grouped_variant_count: int = 0
     provider: str
     current_month: str
     units_used_this_month: int

@@ -15,6 +15,9 @@ export interface ImageItem {
   id: number;
   library_id: number;
   sha256: string;
+  dhash?: string | null;
+  photo_group_id?: number | null;
+  is_primary_representation?: number;
   file_path: string;
   filename: string;
   file_size: number;
@@ -31,7 +34,45 @@ export interface ImageItem {
   scan_count: number;
   match_count: number;
   unreviewed_count: number;
+  /** Aggregates across all members of the photo's group (photo listings only) */
+  group_match_count?: number | null;
+  group_unreviewed_count?: number | null;
+  /** Group-aware scan coverage: highest scan count / latest scan among group members */
+  group_scan_count?: number | null;
+  group_last_scanned_at?: string | null;
   thumbnail_url: string;
+}
+
+export interface PhotoGroup {
+  id: number;
+  name?: string | null;
+  created_at: string;
+  updated_at: string;
+  preferred_image_id?: number | null;
+  notes?: string | null;
+  images: ImageItem[];
+}
+
+export interface GroupCandidatePair {
+  image_a: ImageItem;
+  image_b: ImageItem;
+  hamming_distance: number;
+  is_exact_duplicate: boolean;
+}
+
+export interface GroupCandidateList {
+  /** Total number of candidate pairs, independent of the returned page size */
+  total: number;
+  pairs: GroupCandidatePair[];
+  /** More pairs may exist (per-photo candidate cap or comparison budget reached) */
+  truncated?: boolean;
+}
+
+export interface PhotoGroupCreatePayload {
+  name?: string;
+  image_ids: number[];
+  preferred_image_id?: number;
+  notes?: string;
 }
 
 export interface ImageListResponse {
@@ -65,6 +106,23 @@ export interface MatchItem {
   auto_classified_by_rule_id: number | null;
   notes: string | null;
   image_filename?: string | null;
+  /** Photo to preview: the owner when present, otherwise an available member of its group */
+  display_image_id?: number | null;
+  /** Set when this row is an observation folded into another logical discovery */
+  canonical_match_id?: number | null;
+  /** Physical observations behind this logical discovery (itself plus folded observations) */
+  observation_count?: number;
+  /** This physical observation's own original triage (provenance) */
+  observed_classification?: string | null;
+  observed_notes?: string | null;
+  observed_classified_at?: string | null;
+  observed_rule_id?: number | null;
+  /** Merged observations carry incompatible decisions awaiting an explicit review */
+  triage_conflict?: boolean;
+  /** Last explicit review action by the user */
+  explicit_review_at?: string | null;
+  /** Discovery inherited from a permanently purged photo of the same group */
+  inherited_from?: string | null;
   image_thumbnail_url?: string | null;
   image_project?: string | null;
 }
@@ -103,6 +161,8 @@ export interface ScanPrepareResponse {
   selected_count: number;
   usable_count: number;
   missing_count: number;
+  /** Selected photos covered by their photo group's primary representation search */
+  grouped_variant_count?: number;
   provider: string;
   current_month: string;
   units_used_this_month: number;
@@ -162,4 +222,13 @@ export interface TestGoogleAuthResponse {
   error: string | null;
   project_id: string | null;
   service_account_email: string | null;
+}
+
+export type StatusFilterType = 'all' | 'unscanned' | 'scanned' | 'has_matches' | 'has_unreviewed' | 'grouped' | 'ungrouped';
+
+export interface AddImageToGroupPayload {
+  image_id: number;
+  set_preferred?: boolean;
+  /** Explicit primary representation: the added image or any existing member */
+  preferred_image_id?: number;
 }
