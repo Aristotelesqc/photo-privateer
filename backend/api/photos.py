@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from backend.models import ImageOut, ImageListResponse, BatchProjectUpdate
 from backend.repositories.image_repo import ImageRepository
 from backend.services.thumbnail_cache import ThumbnailCache
@@ -94,17 +94,18 @@ def get_photo_thumbnail(
     if not img:
         raise HTTPException(status_code=404, detail="Photo not found")
     
-    thumb_path = thumb_cache.get_thumbnail_path(img.sha256)
-    if not thumb_path.is_file():
+    try:
+        content = thumb_cache.read_thumbnail(img.sha256)
+    except FileNotFoundError:
         # Reading the original requires the same containment check as the original-file route:
         # the file must resolve inside an enabled, non-archived library
         safe_path = img_service.validate_and_resolve_image_path(img.file_path)
         try:
-            thumb_path = thumb_cache.get_or_create_thumbnail(str(safe_path), img.sha256)
+            content = thumb_cache.read_thumbnail(img.sha256, safe_path)
         except Exception:
             raise HTTPException(status_code=404, detail="Thumbnail could not be generated")
 
-    return FileResponse(str(thumb_path), media_type="image/webp")
+    return Response(content, media_type="image/webp")
 
 @router.get("/{photo_id}/file")
 def get_photo_file(

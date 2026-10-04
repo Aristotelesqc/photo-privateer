@@ -8,7 +8,7 @@ open PR; an implemented slice is not considered delivered on main until merge.
 | --- | --- | --- |
 | 1 | #23 global loopback Host validation | Implemented; local four-tier verification |
 | 2 | #24 reference-aware thumbnail purge | Implemented; local four-tier verification |
-| 3 | #27 atomic concurrent thumbnail generation | Planned; follows #24 |
+| 3 | #27 atomic concurrent thumbnail generation | Implemented; local four-tier verification |
 | 4 | #26 index/scan coordination | Planned |
 | 5 | #28 deterministic API contract checking | Planned |
 | 6 | #25 active-library browsing and scan eligibility | Planned |
@@ -47,3 +47,25 @@ transmission authorization; local implementation and verification can proceed.
   SQLite writer at the eviction boundary.
 - Local verification: backend 226 passed; frontend 51 passed; production build
   and Playwright 8/8 passed. Same isolated mock/runtime baseline as slice 1.
+
+## Slice 3 — #27
+
+- Unique temporary files in the cache, closed before encoding on Windows,
+  published with atomic replacement and removed after normal failures.
+- One process-wide reentrant cache lock bounds coordination state and serializes
+  generation, eviction and response snapshots. Different hashes are serialized
+  deliberately for the single-user desktop workload. The existing provider
+  scan/group semantics do not change.
+- HTTP thumbnail responses snapshot encoded bytes under the lock, so deletion
+  after the snapshot cannot break a successful response. A request arriving
+  after eviction can regenerate only through a validated original path; an
+  unavailable/purged source returns the existing not-found behavior. Generation
+  after a catalog purge can leave a harmless unreferenced cache entry; it never
+  resurrects catalog rows or writes originals.
+- Abandoned cleanup inspects at most 128 entries and deletes at most 16 owned
+  temporary files older than a day, without following symlinks. SHA cache keys
+  and resolved cache paths are validated.
+- Ten focused regressions cover concurrency, unique publication, encode/replace
+  failure, cleanup limits, response/purge interleaving, orientation and alpha.
+- Local verification: backend 236 passed; frontend 51 passed; production build
+  and Playwright 8/8 passed.

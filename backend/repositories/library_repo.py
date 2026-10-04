@@ -264,16 +264,17 @@ class LibraryRepository:
         offline sources count equally. Cleanup is best effort after purge commit.
         """
         from backend.config import get_thumbnails_dir
+        from backend.services.thumbnail_cache import ThumbnailCache
 
         try:
-            thumb_dir = get_thumbnails_dir()
+            cache = ThumbnailCache(get_thumbnails_dir())
             self.conn.execute("BEGIN IMMEDIATE")
             for sha in sha_hashes:
                 if self.conn.execute("SELECT 1 FROM images WHERE sha256 = ? LIMIT 1", (sha,)).fetchone():
                     continue
                 try:
-                    (thumb_dir / f"{sha}.webp").unlink(missing_ok=True)
-                except OSError:
+                    cache.remove_thumbnail(sha)
+                except (OSError, ValueError):
                     logger.warning("A purged library's unreferenced thumbnail could not be removed.")
             self.conn.commit()
         except Exception:
