@@ -203,6 +203,7 @@ If you prefer to isolate access with a dedicated Service Account:
 
 - **Never Committed**: `.gitignore` strictly ignores `*credential*.json`, `*secret*.json`, `.env`, and private key formats.
 - **Backend-Owned**: Google credentials are read exclusively by the local Python process. The frontend JavaScript client never receives private keys.
+- **Local HTTP boundary**: Every route (API, original photographs, thumbnails, static assets and SPA) requires one valid `Host`: `localhost`, an IPv4 address in `127.0.0.0/8`, or bracketed IPv6 loopback (`[::1]`), optionally followed by a port from 1 to 65535. Arbitrary domains, malformed/missing/duplicate Host headers and forwarded-host bypasses are rejected before routing or file access. Mutation requests additionally retain Origin/Referer and cross-site checks. Development uses `http://localhost:5173` or `http://127.0.0.1:5173`; the application uses port 8765 by default. CORS allows these documented origins; it does not replace Host validation.
 - **No Path Traversal**: Photos and thumbnails are served through controlled application endpoints that verify file paths reside within registered library folders.
 - **SSRF Mitigation**: Remote candidate preview thumbnails are rendered directly by the browser using `referrerpolicy="no-referrer"` with graceful fallback states.
 

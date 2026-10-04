@@ -179,7 +179,7 @@ def client(db_conn, repos) -> Generator[TestClient, None, None]:
     app.dependency_overrides[deps.get_usage_tracker] = override_get_usage_tracker
     app.dependency_overrides[deps.get_scan_engine] = override_get_scan_engine
 
-    with TestClient(app) as tc:
+    with TestClient(app, base_url="http://localhost") as tc:
         yield tc
 
     app.dependency_overrides.clear()

@@ -5,7 +5,6 @@ import os
 import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
-import ipaddress
 from urllib.parse import urlparse
 from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
@@ -14,6 +13,7 @@ from fastapi.responses import FileResponse, JSONResponse
 
 from backend.config import FRONTEND_DIST_DIR, HOST, PORT, APP_VERSION
 from backend.database import init_db
+from backend.http_security import LoopbackHostMiddleware, is_loopback_authority
 from backend.api import (
     libraries,
     photos,
@@ -86,17 +86,9 @@ def is_allowed_origin(origin_str: str) -> bool:
     """Validate that an origin or referer URL belongs strictly to a local loopback interface."""
     if not origin_str:
         return False
-    if origin_str == "http://testserver":
-        return True
     try:
         parsed = urlparse(origin_str)
-        hostname = parsed.hostname
-        if not hostname:
-            return False
-        if hostname.lower() == "localhost":
-            return True
-        ip = ipaddress.ip_address(hostname)
-        return ip.is_loopback
+        return parsed.scheme in {"http", "https"} and is_loopback_authority(parsed.netloc)
     except Exception:
         return False
 
@@ -139,6 +131,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+# Added last so the Host boundary also runs before CORS preflight handling.
+app.add_middleware(LoopbackHostMiddleware)
 
 # Include API routers
 app.include_router(libraries.router)

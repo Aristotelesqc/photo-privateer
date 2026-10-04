@@ -1011,7 +1011,7 @@ def test_permanent_purge_blocked_while_scan_running(repos, temp_dir: Path):
     # 6. Test API delete endpoint with FastAPI TestClient
     app.dependency_overrides[get_db] = lambda: repos["db_conn"]
     try:
-        client = TestClient(app)
+        client = TestClient(app, base_url="http://localhost")
         # Attempt permanent purge via API while scan is RUNNING -> must return 409 Conflict
         resp = client.delete(f"/api/libraries/{lib.id}?purge_permanently=true")
         assert resp.status_code == 409
