@@ -215,7 +215,9 @@ def _restore_observation_triage(cur: sqlite3.Cursor, match_id: int) -> None:
             inherited_at = rb_inherited_at,
             inherited_from = rb_inherited_from,
             -- an unresolved conflict that predates the cycle stays unresolved
-            triage_conflict = COALESCE(rb_triage_conflict, 0)
+            -- an unresolved conflict that predates the cycle stays unresolved (migration 019
+            -- backfilled rollback states captured before this flag existed)
+            triage_conflict = rb_triage_conflict
         WHERE id = ? AND rb_captured_at IS NOT NULL AND {_ROLLBACK_ALLOWED}
         """,
         (match_id,),
@@ -248,15 +250,54 @@ def _write_state(cur: sqlite3.Cursor, match_id: int, state: dict[str, object]) -
     )
 
 
-def _write_merge(cur: sqlite3.Cursor, match_id: int, state: dict[str, object], kind: str) -> None:
-    """Writes a merged logical state. A validated re-export (LINEAGE) is a permanent identity
-    transition, not a reversible grouping: unless the row already belongs to an open grouping
-    cycle, it does not open one (no rollback state, no cycle markers)."""
-    cur.execute("SELECT rb_captured_at FROM matches WHERE id = ?", (match_id,))
-    in_cycle = cur.fetchone()["rb_captured_at"] is not None
-    _write_state(cur, match_id, state)
-    if kind == FOLD_LINEAGE and not in_cycle:
+# Rollback columns (rb_*) and the logical fields they snapshot
+_ROLLBACK_FIELDS = (
+    ("rb_classification", "classification"),
+    ("rb_classified_at", "classified_at"),
+    ("rb_rule_id", "auto_classified_by_rule_id"),
+    ("rb_notes", "notes"),
+    ("rb_is_new", "is_new"),
+    ("rb_acknowledged_at", "acknowledged_at"),
+    ("rb_inherited_at", "inherited_at"),
+    ("rb_inherited_from", "inherited_from"),
+    ("rb_triage_conflict", "triage_conflict"),
+)
+
+
+def _baseline_row(r: sqlite3.Row) -> dict[str, object]:
+    """A row as it was before its open grouping cycle (its rollback state), or as it is when it
+    is not in a grouping cycle."""
+    row = dict(r)
+    if r["rb_captured_at"] is not None:
+        for rb_col, field in _ROLLBACK_FIELDS:
+            row[field] = r[rb_col]
+    return row
+
+
+def _write_merge(
+    cur: sqlite3.Cursor, match_id: int, rows: list[sqlite3.Row], survivor: sqlite3.Row, kind: str
+) -> None:
+    """Writes the merged logical state of `rows` onto `match_id`.
+
+    A validated re-export (LINEAGE) is a permanent identity transition, not a reversible
+    grouping. When none of the merged discoveries is in an open grouping cycle, no cycle is
+    opened. When some are (a group head is re-exported), the cycle carries over to the merged
+    discovery, with a rollback state that combines the permanent lineage decisions but excludes
+    the temporary group merge: each row contributes its own rollback state."""
+    _write_state(cur, match_id, _merged_state(rows, survivor))
+    if kind != FOLD_LINEAGE:
+        return
+    cycle_rows = [r for r in rows if r["rb_captured_at"] is not None]
+    if not cycle_rows:
         _end_cycle(cur, match_id)
+        return
+    baseline = _merged_state([_baseline_row(r) for r in rows], survivor)
+    cur.execute(
+        f"UPDATE matches SET {', '.join(f'{rb_col} = ?' for rb_col, _ in _ROLLBACK_FIELDS)}, "
+        "rb_captured_at = ? WHERE id = ?",
+        tuple(baseline[field] for _, field in _ROLLBACK_FIELDS)
+        + (min(r["rb_captured_at"] for r in cycle_rows), match_id),
+    )
 
 
 def _fold(cur: sqlite3.Cursor, head_id: int, match_id: int, kind: str, now: str) -> None:
@@ -324,7 +365,7 @@ def coalesce_discoveries(
         ))
         survivor = rows[0]
         if len(rows) > 1:
-            _write_merge(cur, survivor["id"], _merged_state(rows, survivor), kind)
+            _write_merge(cur, survivor["id"], rows, survivor, kind)
             for other in rows[1:]:
                 _fold(cur, survivor["id"], other["id"], kind, now)
             affected.update(r["image_id"] for r in rows)
@@ -347,7 +388,7 @@ def coalesce_discoveries(
                 head_id = existing["canonical_match_id"] or existing["id"]
                 cur.execute("SELECT * FROM matches WHERE id = ?", (head_id,))
                 head = cur.fetchone()
-                _write_merge(cur, head_id, _merged_state([head, survivor], head), kind)
+                _write_merge(cur, head_id, [head, survivor], head, kind)
                 _fold(cur, head_id, survivor["id"], kind, now)
                 affected.add(head["image_id"])
             affected.update((survivor["image_id"], target_image_id))

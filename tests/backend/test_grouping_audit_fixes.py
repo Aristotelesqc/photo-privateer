@@ -1844,3 +1844,71 @@ def test_dissolving_after_a_reexport_keeps_the_lineage_merged_decision(db_conn, 
     repo.delete_group(group.id)  # no review
     row = _match_row(db_conn, mk)
     assert row["classification"] == "APPROVED" and "licensed" in (row["notes"] or "")
+
+
+def test_upgrade_preserves_conflict_in_an_open_cycle(db_conn, temp_dir: Path):
+    """A cycle opened before migration 018 has a rollback state without rb_triage_conflict.
+    Migration 019 backfills it, so an unresolved pre-cycle conflict is never cleared by the
+    rollback, then resolved by a domain rule."""
+    import backend.migrations.runner as runner
+
+    a, b, ma, _mb = _conflicting_pair(db_conn, temp_dir)
+    repo = PhotoGroupRepository(db_conn)
+    first = repo.create_group([a, b], preferred_image_id=a)
+    MatchRepository(db_conn).update_classification_and_notes(ma, acknowledged=True)
+    db_conn.commit()
+    repo.delete_group(first.id)
+    assert _match_row(db_conn, ma)["triage_conflict"] == 1
+    second = repo.create_group([a, b], preferred_image_id=a)
+    # The snapshot as a pre-018 build captured it: no conflict flag
+    db_conn.execute("UPDATE matches SET rb_triage_conflict = NULL WHERE id = ?", (ma,))
+    db_conn.commit()
+    saved = _match_row(db_conn, ma)
+    assert saved["rb_classification"] == "UNREVIEWED" and saved["rb_captured_at"]
+    runner.migration_019_open_cycle_conflict_backfill(db_conn)
+    db_conn.commit()
+    assert _match_row(db_conn, ma)["rb_triage_conflict"] == 1
+
+    repo.repair_groups()
+    repo.delete_group(second.id)  # no classification selected before or after upgrading
+    rule = DomainRuleRepository(db_conn).upsert_rule("audit.example", "IRRELEVANT")
+    MatchRepository(db_conn).apply_rule_to_unreviewed_matches("audit.example", "IRRELEVANT", rule.id)
+    db_conn.commit()
+    row = _match_row(db_conn, ma)
+    assert (row["classification"], row["triage_conflict"]) == ("UNREVIEWED", 1)
+
+
+def test_reexport_does_not_make_a_temporary_group_conflict_permanent(db_conn, temp_dir: Path):
+    """Codex reproduction: re-exporting a conflicting group head keeps the permanent lineage
+    decisions merged, while dissolving the group still undoes the temporary sibling merge."""
+    lib, master, web, master_path, _ = _indexed_pair(db_conn, temp_dir)
+    known_path = master_path.with_name("known_export.jpg")
+    with Image.open(master_path) as im:
+        im.resize((160, 160)).save(known_path, format="JPEG", quality=84)
+    images = ImageRepository(db_conn)
+    indexer = LibraryIndexer(LibraryRepository(db_conn), images, ThumbnailCache(temp_dir / "thumbs"))
+    indexer.index_library(lib.id)
+    known = images.get_by_path(str(known_path.resolve()))
+    ma, mb, mk = [_shared_observation(db_conn, i) for i in (master.id, web.id, known.id)]
+    match_repo = MatchRepository(db_conn)
+    match_repo.update_classification_and_notes(ma, classification="APPROVED", notes="master licensed")
+    match_repo.update_classification_and_notes(mb, classification="UNAUTHORIZED", notes="B note")
+    match_repo.update_classification_and_notes(mk, classification="APPROVED", notes="export licensed")
+    db_conn.commit()
+    repo = PhotoGroupRepository(db_conn)
+    group = repo.create_group([master.id, web.id], preferred_image_id=master.id)
+    assert _match_row(db_conn, ma)["triage_conflict"] == 1
+    master_path.write_bytes(known_path.read_bytes())  # re-export of a test fixture in place
+    known_path.unlink()
+    indexer.index_library(lib.id)
+    assert images.get_by_path(str(master_path.resolve())).id == known.id
+    assert _match_row(db_conn, ma)["fold_kind"] == "LINEAGE"
+    assert _match_row(db_conn, mk)["triage_conflict"] == 1  # the group is still open
+
+    repo.delete_group(group.id)  # no explicit review
+    assert _match_row(db_conn, mb)["classification"] == "UNAUTHORIZED"
+    row = _match_row(db_conn, mk)
+    assert (row["classification"], row["triage_conflict"]) == ("APPROVED", 0)
+    assert "master licensed" in row["notes"] and "export licensed" in row["notes"]
+    assert "B note" not in row["notes"] and "conflicting decisions" not in row["notes"]
+    assert _match_row(db_conn, ma)["fold_kind"] == "LINEAGE"  # provenance kept

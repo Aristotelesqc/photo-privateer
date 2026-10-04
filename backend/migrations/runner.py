@@ -558,6 +558,23 @@ def migration_018_close_completed_cycles(conn: sqlite3.Connection) -> None:
         """
     )
 
+
+def migration_019_open_cycle_conflict_backfill(conn: sqlite3.Connection) -> None:
+    """Backfills rb_triage_conflict for rollback states captured before migration 018 (grouping
+    cycles still open during the upgrade). An unreviewed rollback state carrying the conflict
+    banner was an unresolved conflict: a NULL flag must never let a later rollback, then a domain
+    rule, resolve it."""
+    conn.execute(
+        """
+        UPDATE matches
+        SET rb_triage_conflict = CASE
+            WHEN rb_classification = 'UNREVIEWED'
+                 AND INSTR(COALESCE(rb_notes, ''), '[Merged discovery: conflicting decisions]') > 0
+            THEN 1 ELSE 0 END
+        WHERE rb_captured_at IS NOT NULL AND rb_triage_conflict IS NULL
+        """
+    )
+
 MIGRATIONS: list[Migration] = [
     Migration(1, "001_initial_schema", migration_001_initial_schema),
     Migration(2, "002_library_archiving_and_disk_presence", migration_002_library_archiving_and_disk_presence),
@@ -577,6 +594,7 @@ MIGRATIONS: list[Migration] = [
     Migration(16, "016_cycle_rollback_state", migration_016_cycle_rollback_state),
     Migration(17, "017_cycle_rollback_inheritance", migration_017_cycle_rollback_inheritance),
     Migration(18, "018_close_completed_cycles", migration_018_close_completed_cycles),
+    Migration(19, "019_open_cycle_conflict_backfill", migration_019_open_cycle_conflict_backfill),
 ]
 
 def run_migrations(conn: sqlite3.Connection) -> list[int]:
