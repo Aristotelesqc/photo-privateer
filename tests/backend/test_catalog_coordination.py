@@ -170,7 +170,7 @@ def test_background_cancellation_holds_reservation_until_worker_exits(repos, sam
     repos["indexer"].index_library(library.id)
 
 
-def test_api_conflicts_are_actionable_and_startup_recovers_persisted_state(client, repos, sample_images_dir):
+def test_api_conflicts_are_actionable(client, repos, sample_images_dir):
     library, ids = setup_catalog(repos, sample_images_dir)
     token = repos["indexer"].coordinator.acquire("indexing")
     try:
@@ -182,7 +182,14 @@ def test_api_conflicts_are_actionable_and_startup_recovers_persisted_state(clien
         repos["indexer"].coordinator.release(token)
     repos["usage_repo"].create_scan_session(provider="mock", total_images=1)
     assert client.post(f"/api/libraries/{library.id}/index").status_code == 409
-    # Startup in a new server lifecycle recovers the persisted previous session.
-    with TestClient(app, base_url="http://localhost"):
-        pass
-    assert client.post(f"/api/libraries/{library.id}/index").status_code == 200
+
+
+def test_startup_recovers_persisted_previous_process_state(db_path, repos, sample_images_dir):
+    library, ids = setup_catalog(repos, sample_images_dir)
+    session = repos["usage_repo"].create_scan_session(provider="mock", total_images=1)
+    assert repos["usage_repo"].get_scan_session(session.id).status == "RUNNING"
+    # A sole new lifecycle represents restart. Two simultaneous lifecycles are
+    # now deliberately refused by cross-process profile ownership.
+    with TestClient(app, base_url="http://localhost") as restarted:
+        assert repos["usage_repo"].get_scan_session(session.id).status == "INTERRUPTED"
+        assert restarted.post(f"/api/libraries/{library.id}/index").status_code == 200

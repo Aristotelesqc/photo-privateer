@@ -13,7 +13,7 @@ open PR; an implemented slice is not considered delivered on main until merge.
 | 5 | #28 deterministic API contract checking | Implemented; local four-tier verification |
 | 6 | #25 active-library browsing and scan eligibility | Implemented; local four-tier verification |
 | 7 | #30 durable photo identity contract | Reviewed ADR and executable PR4 examples; no target schema installed |
-| 8 | #48 verified backup/recovery | Required before #33 migration |
+| 8 | #48 verified backup/recovery | Implemented; local four-tier verification and independent review |
 
 ## Slice 1 — #23
 
@@ -140,3 +140,28 @@ transmission authorization; local implementation and verification can proceed.
   is claimed installed. Backup/recovery #48 precedes dependent migration.
 - Local verification: backend 267 passed; frontend 60 passed; build and
   Playwright 9/9 passed; generated-contract check passed.
+
+## Slice 8 — #48
+
+- Explicit offline maintenance commands create consistent SQLite/WAL bundles,
+  verify hashes/schema/foreign keys, restore to a fresh profile and relink moved
+  library roots without replacing identities or modifying original photographs.
+- Versioned manifests cover the database and all immutable managed artifacts.
+  Migration 021 provides the shared evidence/case-attachment registry; future
+  capture/case features remain separate. Credentials, source originals, previews,
+  logs and unregistered files are excluded. Recovery instructions are in
+  docs/BACKUP_RECOVERY.md; source photos require their own backup.
+- Existing catalogs receive a verified backup before any pending migration;
+  failed backup aborts upgrade. Relink applies only after a verified backup and
+  transaction revalidation. OS profile ownership prevents live migrations/relink
+  and remains held until catalog workers finish, even on shutdown failure/cancel.
+- Root validated delegated implementation, tests and independent review. Tests
+  demonstrate full historical row recovery, live WAL/read activity, writer
+  reservation, relocated/missing/duplicate sources, failure cleanup, publication
+  races, credentials exclusions, schema corruption and interprocess locking.
+- Local verification: backend 346 passed, 3 symlink tests skipped for Windows
+  permissions (a real Windows junction escape test passed); frontend 60 passed;
+  build, generated-contract check and Playwright 9/9 passed. Linux CI exercises
+  symlink paths on the canonical Python 3.14 runtime.
+- Next: #31 WebUse identity, #32 append-only observations and #34 decision
+  semantics prepare #33 legacy migration using this recovery gate.

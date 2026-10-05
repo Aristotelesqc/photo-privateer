@@ -84,7 +84,7 @@ def test_missing_and_duplicate_raw_host_headers(headers):
     assert messages[0]["status"] == 403
 
 
-def test_default_testserver_has_no_production_exception(client):
+def test_default_testserver_has_no_production_exception(db_path):
     with TestClient(app) as synthetic_client:
         assert synthetic_client.get("/api/photos").status_code == 403
 

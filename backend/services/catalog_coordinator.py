@@ -15,6 +15,7 @@ class CatalogOperationConflict(ValueError):
 class CatalogCoordinator:
     def __init__(self):
         self._lock = threading.Lock()
+        self._idle = threading.Condition(self._lock)
         self._reservation: tuple[str, object] | None = None
 
     def acquire(self, operation: str) -> object:
@@ -32,6 +33,12 @@ class CatalogCoordinator:
         with self._lock:
             if self._reservation is not None and self._reservation[1] is token:
                 self._reservation = None
+                self._idle.notify_all()
+
+    def wait_for_idle(self) -> None:
+        """Keep profile ownership until the final catalog worker has stopped."""
+        with self._idle:
+            self._idle.wait_for(lambda: self._reservation is None)
 
     def check_scan_preparation(self) -> None:
         with self._lock:

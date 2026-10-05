@@ -228,9 +228,15 @@ All application state is stored locally in SQLite:
 - **Cached thumbnails**: `~/.photo_privateer/thumbnails/*.webp`.
 
 ### How to Back Up Your History:
-1. Close Photo Privateer (or stop the terminal process).
-2. Copy `~/.photo_privateer/photo_privateer.sqlite` to your backup drive or cloud archive.
-3. Because SQLite uses Write-Ahead Logging (`WAL`), ensure Photo Privateer is not actively scanning while copying.
+
+Create a verified local bundle using the maintenance command from the repository root:
+
+```powershell
+python -m backend.maintenance backup --profile "$HOME\.photo_privateer" --output "D:\PhotoPrivateerBackups\catalog-backup"
+python -m backend.maintenance verify "D:\PhotoPrivateerBackups\catalog-backup"
+```
+
+Choose an output directory that does not exist. The bundle includes committed SQLite/WAL history and registered managed artifacts, with hashes and a versioned manifest. Originals, preview caches and credentials are excluded; back up your source photos separately. Prefer an idle catalog, since writes wait during backup. Restore into a fresh profile to preserve your previous catalog. See [Backup and recovery](docs/BACKUP_RECOVERY.md) for restoration, library relinking and pre-migration recovery instructions.
 
 ---
 
