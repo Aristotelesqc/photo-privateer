@@ -67,7 +67,7 @@ class MockSearchProvider(SearchProvider):
                     match_type="FULL",
                     page_title="Curated Exhibits: Contemporary Landscapes",
                     page_score=0.96,
-                    candidate_image_url="https://curated-exhibits.art/static/hero-preview.jpg",
+                    candidate_image_url="https://picsum.photos/id/1015/800/600",
                     provider_metadata={"mock_scenario": "multi_url_domain"},
                 ),
                 SearchResultItem(
@@ -85,7 +85,7 @@ class MockSearchProvider(SearchProvider):
                     match_type="PARTIAL",
                     page_title="AutoFeed Image Stream #339",
                     page_score=0.45,
-                    candidate_image_url="https://spam-scraper-repost.biz/thumbs/crop_339.jpg",
+                    candidate_image_url="https://picsum.photos/id/1039/600/450",
                     provider_metadata={"mock_scenario": "scraper"},
                 ),
             ]
@@ -99,7 +99,7 @@ class MockSearchProvider(SearchProvider):
                 match_type="FULL",
                 page_title="Alpine Travel Magazine: High Peak Wonders",
                 page_score=0.98,
-                candidate_image_url=f"https://alpinetravel-magazine.org/images/cover-{val % 50}.jpg",
+                candidate_image_url=f"https://picsum.photos/id/{1018 + (val % 4)}/800/600",
                 provider_metadata={"mock_scenario": "full_legit"},
             ),
             SearchResultItem(
@@ -108,7 +108,7 @@ class MockSearchProvider(SearchProvider):
                 match_type="PARTIAL",
                 page_title="Minimalist Aesthetic: Curated Editorial Photography",
                 page_score=0.74,
-                candidate_image_url=f"https://minimalist-aesthetic-notes.io/media/crops/editorial-{val % 30}.webp",
+                candidate_image_url="https://picsum.photos/id/1036/700/500",
                 provider_metadata={"mock_scenario": "partial_cropped"},
             ),
             SearchResultItem(
@@ -117,7 +117,7 @@ class MockSearchProvider(SearchProvider):
                 match_type="FULL",
                 page_title="Free HD 4K Desktop Wallpaper Download",
                 page_score=0.62,
-                candidate_image_url=f"https://hd-desktop-collector.cc/thumbs/thumb-{val % 100}.jpg",
+                candidate_image_url="https://picsum.photos/id/1043/800/600",
                 provider_metadata={"mock_scenario": "unauthorized_scraper"},
             ),
         ]
