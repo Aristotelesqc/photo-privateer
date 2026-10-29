@@ -53,40 +53,48 @@ export const App: React.FC = () => {
 
       <main className="flex-1 pb-16">
         {activeTab === 'library' && (
-          <LibraryView
-            libraries={libraries}
-            settings={settings}
-            onRefreshData={loadGlobalData}
-            onNavigateToSettings={() => setActiveTab('settings')}
-            onNavigateToReview={() => {
-              setReviewPhotoFilterId(undefined);
-              setActiveTab('review');
-            }}
-            onNavigateToReviewForPhoto={handleNavigateToReviewForPhoto}
-          />
+          <div key="view-library" className="animate-view-enter">
+            <LibraryView
+              libraries={libraries}
+              settings={settings}
+              onRefreshData={loadGlobalData}
+              onNavigateToSettings={() => setActiveTab('settings')}
+              onNavigateToReview={() => {
+                setReviewPhotoFilterId(undefined);
+                setActiveTab('review');
+              }}
+              onNavigateToReviewForPhoto={handleNavigateToReviewForPhoto}
+            />
+          </div>
         )}
 
         {activeTab === 'review' && (
-          <ReviewView
-            initialPhotoId={reviewPhotoFilterId}
-            onClearPhotoFilter={() => setReviewPhotoFilterId(undefined)}
-            onClassificationChanged={loadGlobalData}
-          />
+          <div key="view-review" className="animate-view-enter">
+            <ReviewView
+              initialPhotoId={reviewPhotoFilterId}
+              onClearPhotoFilter={() => setReviewPhotoFilterId(undefined)}
+              onClassificationChanged={loadGlobalData}
+            />
+          </div>
         )}
 
         {activeTab === 'usage' && (
-          <UsageView
-            settings={settings}
-            onNavigateToSettings={() => setActiveTab('settings')}
-          />
+          <div key="view-usage" className="animate-view-enter">
+            <UsageView
+              settings={settings}
+              onNavigateToSettings={() => setActiveTab('settings')}
+            />
+          </div>
         )}
 
         {activeTab === 'settings' && (
-          <SettingsView
-            libraries={libraries}
-            settings={settings}
-            onRefreshData={loadGlobalData}
-          />
+          <div key="view-settings" className="animate-view-enter">
+            <SettingsView
+              libraries={libraries}
+              settings={settings}
+              onRefreshData={loadGlobalData}
+            />
+          </div>
         )}
       </main>
     </div>

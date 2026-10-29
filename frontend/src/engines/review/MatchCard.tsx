@@ -211,40 +211,40 @@ export const MatchCard: React.FC<MatchCardProps> = ({
         <div className="grid grid-cols-3 gap-1">
           <button
             onClick={() => onClassify('APPROVED')}
-            className={`px-1.5 py-1.5 rounded text-xs font-medium flex flex-col items-center justify-center gap-0.5 transition-all ${
+            className={`px-1.5 py-1.5 rounded text-xs font-medium border flex flex-col items-center justify-center gap-0.5 transition-colors duration-200 ${
               isApproved
-                ? 'bg-emerald-500 text-carbon-950 font-bold shadow-xs'
-                : 'bg-carbon-950 border border-carbon-800 text-carbon-300 hover:text-white hover:border-emerald-500/40'
+                ? 'bg-emerald-500 border-emerald-400 text-carbon-950 shadow-xs'
+                : 'bg-carbon-950 border-carbon-800 text-carbon-300 hover:text-white hover:border-emerald-500/40'
             }`}
             title="Approve as legitimate use"
           >
-            <CheckCircle className="w-3.5 h-3.5 text-emerald-400" />
+            <CheckCircle className={`w-3.5 h-3.5 ${isApproved ? 'text-carbon-950' : 'text-emerald-400'}`} />
             <span className="text-[11px]">Approved</span>
           </button>
 
           <button
             onClick={() => onClassify('UNAUTHORIZED')}
-            className={`px-1.5 py-1.5 rounded text-xs font-medium flex flex-col items-center justify-center gap-0.5 transition-all ${
+            className={`px-1.5 py-1.5 rounded text-xs font-medium border flex flex-col items-center justify-center gap-0.5 transition-colors duration-200 ${
               isUnauthorized
-                ? 'bg-rose-500 text-white font-bold shadow-xs'
-                : 'bg-carbon-950 border border-carbon-800 text-carbon-300 hover:text-white hover:border-rose-500/40'
+                ? 'bg-rose-500 border-rose-400 text-white shadow-xs'
+                : 'bg-carbon-950 border-carbon-800 text-carbon-300 hover:text-white hover:border-rose-500/40'
             }`}
             title="Flag as unauthorized or infringing reuse"
           >
-            <AlertOctagon className="w-3.5 h-3.5 text-rose-400" />
+            <AlertOctagon className={`w-3.5 h-3.5 ${isUnauthorized ? 'text-white' : 'text-rose-400'}`} />
             <span className="text-[11px]">Infringing</span>
           </button>
 
           <button
             onClick={() => onClassify('IRRELEVANT')}
-            className={`px-1.5 py-1.5 rounded text-xs font-medium flex flex-col items-center justify-center gap-0.5 transition-all ${
+            className={`px-1.5 py-1.5 rounded text-xs font-medium border flex flex-col items-center justify-center gap-0.5 transition-colors duration-200 ${
               isIrrelevant
-                ? 'bg-carbon-700 text-white font-bold shadow-xs'
-                : 'bg-carbon-950 border border-carbon-800 text-carbon-300 hover:text-white hover:border-carbon-600'
+                ? 'bg-carbon-700 border-carbon-600 text-white shadow-xs'
+                : 'bg-carbon-950 border-carbon-800 text-carbon-300 hover:text-white hover:border-carbon-600'
             }`}
             title="Mark as irrelevant discovery"
           >
-            <EyeOff className="w-3.5 h-3.5 text-carbon-400" />
+            <EyeOff className={`w-3.5 h-3.5 ${isIrrelevant ? 'text-white' : 'text-carbon-400'}`} />
             <span className="text-[11px]">Irrelevant</span>
           </button>
         </div>
@@ -253,9 +253,9 @@ export const MatchCard: React.FC<MatchCardProps> = ({
         <div className="flex items-center justify-between gap-1 pt-0.5 text-[10px] text-carbon-400">
           <button
             onClick={() => onClassify('UNREVIEWED')}
-            className={`px-1.5 py-0.5 rounded flex items-center gap-1 transition-colors ${
+            className={`px-1.5 py-0.5 rounded font-medium flex items-center gap-1 transition-colors duration-200 ${
               isUnreviewed
-                ? 'text-amber-400 font-mono font-medium bg-amber-500/10'
+                ? 'text-amber-400 bg-amber-500/10'
                 : 'text-carbon-500 hover:text-carbon-300 hover:bg-carbon-850'
             }`}
             title="Reset classification back to unreviewed"

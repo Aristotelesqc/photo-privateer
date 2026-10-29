@@ -63,7 +63,7 @@ export const Thumbnail: React.FC<ThumbnailProps> = ({
         referrerPolicy={isRemote ? 'no-referrer' : undefined}
         onLoad={() => setLoaded(true)}
         onError={() => setError(true)}
-        className={`w-full h-full object-cover transition-opacity duration-150 ${
+        className={`w-full h-full object-cover transition-[opacity,transform] duration-300 ease-out group-hover:scale-[1.015] ${
           loaded ? 'opacity-100' : 'opacity-0'
         }`}
       />

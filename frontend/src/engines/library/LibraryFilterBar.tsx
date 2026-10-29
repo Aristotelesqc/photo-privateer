@@ -125,7 +125,7 @@ export const LibraryFilterBar: React.FC<LibraryFilterBarProps> = ({
             <button
               key={key}
               onClick={() => onStatusFilterChange(key)}
-              className={`px-2.5 py-1 rounded text-xs font-medium whitespace-nowrap transition-all ${
+              className={`px-2.5 py-1 rounded text-xs font-medium whitespace-nowrap transition-colors duration-200 ${
                 statusFilter === key
                   ? 'bg-carbon-800 text-white shadow-xs'
                   : 'text-carbon-400 hover:text-carbon-200 hover:bg-carbon-900'
@@ -144,14 +144,14 @@ export const LibraryFilterBar: React.FC<LibraryFilterBarProps> = ({
           <button
             onClick={() => onDensityChange('standard')}
             title="Standard Grid"
-            className={`p-1 rounded ${density === 'standard' ? 'bg-carbon-800 text-white' : 'hover:text-carbon-200'}`}
+            className={`p-1 rounded transition-colors duration-200 ${density === 'standard' ? 'bg-carbon-800 text-white' : 'hover:text-carbon-200'}`}
           >
             <LayoutGrid className="w-3.5 h-3.5" />
           </button>
           <button
             onClick={() => onDensityChange('compact')}
             title="Compact Grid"
-            className={`p-1 rounded ${density === 'compact' ? 'bg-carbon-800 text-white' : 'hover:text-carbon-200'}`}
+            className={`p-1 rounded transition-colors duration-200 ${density === 'compact' ? 'bg-carbon-800 text-white' : 'hover:text-carbon-200'}`}
           >
             <Grid className="w-3.5 h-3.5" />
           </button>
@@ -161,10 +161,10 @@ export const LibraryFilterBar: React.FC<LibraryFilterBarProps> = ({
         <button
           onClick={onScanClicked}
           disabled={selectedCount === 0 || preparingScan}
-          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold shadow-sm transition-all ${
+          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold shadow-sm border transition-colors duration-200 ${
             selectedCount === 0 || preparingScan
-              ? 'bg-carbon-800 text-carbon-500 cursor-not-allowed border border-carbon-800'
-              : 'bg-accent-600 hover:bg-accent-500 text-white shadow-accent-600/20 active:scale-98'
+              ? 'bg-carbon-800 text-carbon-500 cursor-not-allowed border-carbon-800'
+              : 'bg-accent-600 hover:bg-accent-500 text-white border-accent-500/40 shadow-accent-600/20 active:scale-98'
           }`}
         >
           {activeProvider === 'mock' ? (

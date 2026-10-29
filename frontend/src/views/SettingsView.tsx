@@ -307,7 +307,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             {/* Mock */}
             <div
               onClick={() => setActiveProvider('mock')}
-              className={`p-3 rounded-md border cursor-pointer transition-all ${
+              className={`p-3 rounded-md border cursor-pointer transition-colors duration-200 ${
                 activeProvider === 'mock'
                   ? 'bg-amber-500/10 border-amber-500/40 text-amber-200 ring-1 ring-amber-500/30'
                   : 'bg-carbon-950 border-carbon-800 text-carbon-400 hover:text-white'
@@ -330,7 +330,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             {/* Google Vision */}
             <div
               onClick={() => setActiveProvider('google_vision')}
-              className={`p-3 rounded-md border cursor-pointer transition-all ${
+              className={`p-3 rounded-md border cursor-pointer transition-colors duration-200 ${
                 activeProvider === 'google_vision'
                   ? 'bg-accent-500/10 border-accent-500/40 text-accent-200 ring-1 ring-accent-500/30'
                   : 'bg-carbon-950 border-carbon-800 text-carbon-400 hover:text-white'
@@ -460,7 +460,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               </button>
 
               {showApiGuide && (
-                <div className="p-3.5 pt-1 space-y-3 border-t border-carbon-800 text-[11px] text-carbon-300">
+                <div className="p-3.5 pt-1 space-y-3 border-t border-carbon-800 text-[11px] text-carbon-300 animate-view-enter">
                   <p className="text-carbon-300 leading-relaxed text-[11px]">
                     Photo Privateer uses the official <strong>Google Cloud Vision (Web Detection)</strong> API to discover public web reuse of your photographs. Follow these steps to configure access:
                   </p>

@@ -24,6 +24,7 @@ export const ReviewView: React.FC<ReviewViewProps> = ({
   const [matches, setMatches] = useState<MatchItem[]>([]);
   const [totalMatches, setTotalMatches] = useState(0);
   const [loading, setLoading] = useState(true);
+  const [hasLoadedOnce, setHasLoadedOnce] = useState(false);
 
   // Filters
   const [activeClassification, setActiveClassification] = useState<ClassificationType | 'ALL'>('UNREVIEWED');
@@ -75,6 +76,7 @@ export const ReviewView: React.FC<ReviewViewProps> = ({
       });
       setMatches(res.matches);
       setTotalMatches(res.total);
+      setHasLoadedOnce(true);
     } catch (err) {
       console.error('Failed loading matches', err);
     } finally {
@@ -200,14 +202,14 @@ export const ReviewView: React.FC<ReviewViewProps> = ({
       />
 
       {/* Match Cards High-Throughput Desk */}
-      {loading ? (
+      {!hasLoadedOnce && loading ? (
         <div className="space-y-2.5">
           {Array.from({ length: 6 }).map((_, i) => (
             <div key={i} className="h-28 bg-carbon-900 rounded-lg animate-pulse border border-carbon-800" />
           ))}
         </div>
       ) : matches.length === 0 ? (
-        <div className="bg-carbon-900/60 border border-carbon-800 rounded-lg py-16 text-center">
+        <div className="bg-carbon-900/60 border border-carbon-800 rounded-lg py-16 text-center animate-fade-in">
           <CheckCircle className="w-8 h-8 mx-auto mb-2 text-emerald-500/70" />
           <p className="text-xs font-semibold text-carbon-200">
             {activeClassification === 'UNREVIEWED' ? 'Review Queue Clear' : 'No Discoveries Found'}
@@ -219,7 +221,7 @@ export const ReviewView: React.FC<ReviewViewProps> = ({
           </p>
         </div>
       ) : (
-        <div className="space-y-2.5">
+        <div className={`space-y-2.5 transition-opacity duration-200 ${loading ? 'opacity-65' : 'opacity-100'}`}>
           {matches.map((m) => (
             <MatchCard
               key={m.id}

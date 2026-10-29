@@ -40,7 +40,7 @@ export const PhotoCard: React.FC<PhotoCardProps> = ({
         }
       }}
       data-testid={`photo-card-${photo.filename}`}
-      className={`group relative bg-carbon-900 border rounded-lg overflow-hidden ${photo.scan_eligible ? 'cursor-pointer' : 'cursor-default'} transition-all duration-100 select-none flex flex-col focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-400 ${
+      className={`group relative bg-carbon-900 border rounded-lg overflow-hidden ${photo.scan_eligible ? 'cursor-pointer' : 'cursor-default'} transition-colors duration-200 select-none flex flex-col focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-400 ${
         isSelected
           ? 'border-accent-500 ring-1 ring-accent-500 bg-carbon-850 shadow-xs'
           : 'border-carbon-800 hover:border-carbon-700 hover:bg-carbon-850'
@@ -58,7 +58,7 @@ export const PhotoCard: React.FC<PhotoCardProps> = ({
           disabled={!photo.scan_eligible}
           title={photo.scan_eligible ? 'Select for scanning or batch actions' : 'Source unavailable or monitoring inactive; historical review remains available'}
           onClick={(event) => { event.stopPropagation(); onToggleSelect(photo.id); }}
-          className={`absolute top-1.5 left-1.5 rounded transition-all p-0.5 ${
+          className={`absolute top-1.5 left-1.5 rounded transition-[background-color,color,opacity] duration-200 p-0.5 ${
             isSelected
               ? 'bg-accent-600 text-white shadow-xs'
               : 'bg-black/60 text-white/60 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 disabled:opacity-30'
@@ -80,7 +80,7 @@ export const PhotoCard: React.FC<PhotoCardProps> = ({
                 onManageGroup?.(photo);
               }}
               data-testid={photo.is_primary_representation === 1 ? 'badge-primary' : 'badge-variant'}
-              className={`text-[9px] font-mono px-1 py-0.2 rounded backdrop-blur-xs transition-all hover:scale-105 cursor-pointer ${
+              className={`text-[9px] font-mono px-1 py-0.2 rounded backdrop-blur-xs transition-colors duration-200 cursor-pointer ${
                 photo.is_primary_representation === 1
                   ? 'bg-accent-950/90 text-accent-300 border border-accent-800/80 hover:bg-accent-900'
                   : 'bg-carbon-950/90 text-carbon-400 border border-carbon-700/80 hover:text-carbon-200 hover:bg-carbon-900'

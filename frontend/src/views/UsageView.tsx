@@ -21,6 +21,7 @@ export const UsageView: React.FC<UsageViewProps> = ({ settings, onNavigateToSett
   const [summary, setSummary] = useState<UsageSummary | null>(null);
   const [calls, setCalls] = useState<ProviderCall[]>([]);
   const [loading, setLoading] = useState(true);
+  const [hasLoadedOnce, setHasLoadedOnce] = useState(false);
 
   const loadUsageData = async () => {
     setLoading(true);
@@ -28,6 +29,7 @@ export const UsageView: React.FC<UsageViewProps> = ({ settings, onNavigateToSett
       const [sum, callList] = await Promise.all([fetchUsageSummary(), fetchProviderCalls(50)]);
       setSummary(sum);
       setCalls(callList);
+      setHasLoadedOnce(true);
     } catch (err) {
       console.error('Failed loading usage data', err);
     } finally {
@@ -154,7 +156,7 @@ export const UsageView: React.FC<UsageViewProps> = ({ settings, onNavigateToSett
           </span>
         </div>
 
-        {loading ? (
+        {!hasLoadedOnce && loading ? (
           <div className="space-y-1.5">
             {Array.from({ length: 5 }).map((_, i) => (
               <div key={i} className="h-8 bg-carbon-950 rounded animate-pulse" />

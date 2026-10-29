@@ -58,10 +58,10 @@ export const Header: React.FC<HeaderProps> = ({
           <button
             onClick={() => setActiveTab('library')}
             data-testid="nav-library"
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md font-medium transition-all ${
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md font-medium border transition-colors duration-200 ${
               activeTab === 'library'
-                ? 'bg-carbon-800 text-white shadow-xs border border-carbon-700/60'
-                : 'text-carbon-400 hover:text-carbon-200 hover:bg-carbon-850'
+                ? 'bg-carbon-800 text-white shadow-xs border-carbon-700/60'
+                : 'border-transparent text-carbon-400 hover:text-carbon-200 hover:bg-carbon-850'
             }`}
           >
             <Layers className="w-3.5 h-3.5" />
@@ -71,10 +71,10 @@ export const Header: React.FC<HeaderProps> = ({
           <button
             onClick={() => setActiveTab('review')}
             data-testid="nav-review"
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md font-medium transition-all ${
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md font-medium border transition-colors duration-200 ${
               activeTab === 'review'
-                ? 'bg-carbon-800 text-white shadow-xs border border-carbon-700/60'
-                : 'text-carbon-400 hover:text-carbon-200 hover:bg-carbon-850'
+                ? 'bg-carbon-800 text-white shadow-xs border-carbon-700/60'
+                : 'border-transparent text-carbon-400 hover:text-carbon-200 hover:bg-carbon-850'
             }`}
           >
             <CheckSquare className="w-3.5 h-3.5" />
@@ -89,10 +89,10 @@ export const Header: React.FC<HeaderProps> = ({
           <button
             onClick={() => setActiveTab('usage')}
             data-testid="nav-usage"
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md font-medium transition-all ${
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md font-medium border transition-colors duration-200 ${
               activeTab === 'usage'
-                ? 'bg-carbon-800 text-white shadow-xs border border-carbon-700/60'
-                : 'text-carbon-400 hover:text-carbon-200 hover:bg-carbon-850'
+                ? 'bg-carbon-800 text-white shadow-xs border-carbon-700/60'
+                : 'border-transparent text-carbon-400 hover:text-carbon-200 hover:bg-carbon-850'
             }`}
           >
             <BarChart3 className="w-3.5 h-3.5" />
@@ -107,10 +107,10 @@ export const Header: React.FC<HeaderProps> = ({
           <button
             onClick={() => setActiveTab('settings')}
             data-testid="nav-settings"
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md font-medium transition-all ${
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md font-medium border transition-colors duration-200 ${
               activeTab === 'settings'
-                ? 'bg-carbon-800 text-white shadow-xs border border-carbon-700/60'
-                : 'text-carbon-400 hover:text-carbon-200 hover:bg-carbon-850'
+                ? 'bg-carbon-800 text-white shadow-xs border-carbon-700/60'
+                : 'border-transparent text-carbon-400 hover:text-carbon-200 hover:bg-carbon-850'
             }`}
           >
             <Settings className="w-3.5 h-3.5" />
