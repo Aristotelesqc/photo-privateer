@@ -19,13 +19,13 @@ class ImageService:
 
         # Check against all enabled library roots
         libraries = self.library_repo.list_libraries()
-        target_str = str(target)
+        target_str = os.path.normcase(str(target))
         
         is_contained = False
         for lib in libraries:
             if not lib.enabled or lib.is_archived:
                 continue
-            lib_root = str(Path(lib.path).resolve())
+            lib_root = os.path.normcase(str(Path(lib.path).resolve()))
             try:
                 # commonpath raises ValueError if on different drives
                 common = os.path.commonpath([lib_root, target_str])

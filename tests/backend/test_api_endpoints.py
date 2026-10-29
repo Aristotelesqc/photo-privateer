@@ -86,7 +86,17 @@ def test_full_api_workflow(client, sample_images_dir: Path):
         "notes": "E2E Rule",
     })
     assert res_rule.status_code == 200
+    rule_id = res_rule.json()["id"]
     assert res_rule.json()["domain"] == "test-portfolio.com"
+
+    # List and delete Domain Rule
+    res_rules_list = client.get("/api/rules")
+    assert res_rules_list.status_code == 200
+    assert any(r["id"] == rule_id for r in res_rules_list.json())
+
+    res_rule_del = client.delete(f"/api/rules/{rule_id}")
+    assert res_rule_del.status_code == 200
+    assert all(r["id"] != rule_id for r in client.get("/api/rules").json())
 
     # 10. Check Usage Summary
     res_usage = client.get("/api/usage/summary")

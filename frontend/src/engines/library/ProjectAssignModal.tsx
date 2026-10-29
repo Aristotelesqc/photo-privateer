@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Tag, X } from 'lucide-react';
 
 export interface ProjectAssignModalProps {
@@ -18,6 +18,17 @@ export const ProjectAssignModal: React.FC<ProjectAssignModalProps> = ({
 }) => {
   const [projectInput, setProjectInput] = useState('');
   const [assigningProject, setAssigningProject] = useState(false);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && !assigningProject) {
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isOpen, assigningProject, onClose]);
 
   if (!isOpen) return null;
 
@@ -49,8 +60,13 @@ export const ProjectAssignModal: React.FC<ProjectAssignModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-xs">
-      <div className="bg-carbon-900 border border-carbon-800 rounded-xl max-w-md w-full p-5 shadow-2xl space-y-4">
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label="Assign Project"
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-xs animate-fade-in"
+    >
+      <div className="bg-carbon-900 border border-carbon-800 rounded-xl max-w-md w-full p-5 shadow-2xl space-y-4 animate-scale-up">
         <div className="flex items-center justify-between border-b border-carbon-800 pb-3">
           <div className="flex items-center gap-2">
             <Tag className="w-4 h-4 text-accent-400" />

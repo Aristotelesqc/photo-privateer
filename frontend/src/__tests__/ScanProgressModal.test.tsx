@@ -86,11 +86,13 @@ describe('ScanProgressModal Component', () => {
     };
 
     const onCloseMock = vi.fn();
+    const onViewDiscoveriesMock = vi.fn();
     render(
       <ScanProgressModal
         session={completedSession}
         loading={false}
         onClose={onCloseMock}
+        onViewDiscoveries={onViewDiscoveriesMock}
       />
     );
 
@@ -100,5 +102,6 @@ describe('ScanProgressModal Component', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /View Discoveries/i }));
     expect(onCloseMock).toHaveBeenCalled();
+    expect(onViewDiscoveriesMock).toHaveBeenCalled();
   });
 });

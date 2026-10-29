@@ -200,7 +200,9 @@ if FRONTEND_DIST_DIR.is_dir():
         # Prevent path traversal outside frontend/dist
         if candidate.is_file():
             try:
-                if os.path.commonpath([str(dist_root), str(candidate)]) == str(dist_root):
+                dist_cmp = os.path.normcase(str(dist_root))
+                cand_cmp = os.path.normcase(str(candidate))
+                if os.path.commonpath([dist_cmp, cand_cmp]) == dist_cmp:
                     return FileResponse(str(candidate))
             except ValueError:
                 pass

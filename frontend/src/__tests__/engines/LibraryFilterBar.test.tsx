@@ -31,7 +31,7 @@ describe('LibraryFilterBar Component', () => {
     render(
       <LibraryFilterBar
         libraries={mockLibraries}
-        totalPhotos={42}
+        totalPhotos={7}
         selectedLibraryId={undefined}
         onSelectLibrary={handleSelectLibrary}
         projects={['Campaign 2026']}
@@ -50,6 +50,7 @@ describe('LibraryFilterBar Component', () => {
       />
     );
 
+    // Displays total library count (42) rather than filtered photo count (7)
     expect(screen.getByText('Active Libraries (42)')).toBeInTheDocument();
     expect(screen.getByText('📁 Campaign 2026')).toBeInTheDocument();
 

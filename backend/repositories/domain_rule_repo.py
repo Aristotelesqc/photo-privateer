@@ -97,9 +97,58 @@ class DomainRuleRepository:
                 updated_at = excluded.updated_at,
                 notes = COALESCE(excluded.notes, domain_rules.notes)
         """, (clean, classification, now, now, notes))
+        self.conn.commit()
         return self.get_by_domain(clean)  # type: ignore
 
     def delete_rule(self, rule_id: int) -> bool:
         cur = self.conn.cursor()
+        cur.execute(
+            "SELECT DISTINCT image_id FROM matches WHERE auto_classified_by_rule_id = ?",
+            (rule_id,),
+        )
+        affected_image_ids = [
+            r["image_id"] if isinstance(r, sqlite3.Row) else r[0]
+            for r in cur.fetchall()
+        ]
+        # Reset matches still auto-classified by this rule back to UNREVIEWED
+        # so deleting a rule does not freeze rule classifications as manual overrides.
+        cur.execute(
+            """
+            UPDATE matches
+            SET classification = 'UNREVIEWED',
+                classified_at = NULL,
+                auto_classified_by_rule_id = NULL
+            WHERE auto_classified_by_rule_id = ?
+              AND canonical_match_id IS NULL
+            """,
+            (rule_id,),
+        )
+        cur.execute(
+            """
+            UPDATE matches
+            SET rb_classification = 'UNREVIEWED',
+                rb_classified_at = NULL,
+                rb_rule_id = NULL
+            WHERE rb_rule_id = ?
+            """,
+            (rule_id,),
+        )
         cur.execute("DELETE FROM domain_rules WHERE id = ?", (rule_id,))
-        return cur.rowcount > 0
+        deleted = cur.rowcount > 0
+        if affected_image_ids:
+            placeholders = ",".join("?" for _ in affected_image_ids)
+            cur.execute(
+                f"""
+                UPDATE images
+                SET unreviewed_count = (
+                    SELECT COUNT(*) FROM matches
+                    WHERE matches.image_id = images.id
+                      AND canonical_match_id IS NULL
+                      AND classification = 'UNREVIEWED'
+                )
+                WHERE id IN ({placeholders})
+                """,
+                tuple(affected_image_ids),
+            )
+        self.conn.commit()
+        return deleted

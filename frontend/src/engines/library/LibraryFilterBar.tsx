@@ -48,6 +48,10 @@ export const LibraryFilterBar: React.FC<LibraryFilterBarProps> = ({
   includeInactive = false,
   onIncludeInactiveChange,
 }) => {
+  const visibleLibraries = libraries.filter((lib) => includeInactive || (lib.enabled && !lib.is_archived));
+  const allLibrariesCount =
+    visibleLibraries.reduce((sum, lib) => sum + (lib.image_count || 0), 0) || totalPhotos;
+
   return (
     <div className="bg-carbon-900 border border-carbon-800 rounded-lg p-2.5 flex flex-wrap items-center justify-between gap-3 text-xs">
       {/* Left: Library select, Search, and Status chips */}
@@ -60,8 +64,8 @@ export const LibraryFilterBar: React.FC<LibraryFilterBarProps> = ({
             onSelectLibrary(val ? Number(val) : undefined);
           }}
         >
-          <option value="">{includeInactive ? 'All Libraries' : 'Active Libraries'} ({totalPhotos})</option>
-          {libraries.filter((lib) => includeInactive || (lib.enabled && !lib.is_archived)).map((lib) => (
+          <option value="">{includeInactive ? 'All Libraries' : 'Active Libraries'} ({allLibrariesCount})</option>
+          {visibleLibraries.map((lib) => (
             <option key={lib.id} value={lib.id}>
               {lib.name} ({lib.image_count}){lib.is_archived ? ' — Archived' : !lib.enabled ? ' — Disabled' : ''}
             </option>

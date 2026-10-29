@@ -37,24 +37,25 @@ class LibraryIndexer:
         if not root_dir.is_dir():
             return
 
-        resolved_root = root_dir.resolve()
+        resolved_root = os.path.normcase(str(root_dir.resolve()))
         if recursive:
-            for root, _, files in os.walk(root_dir):
-                for filename in files:
+            for root, dirs, files in os.walk(root_dir):
+                dirs.sort()
+                for filename in sorted(files):
                     p = Path(root) / filename
                     if p.suffix.lower() in SUPPORTED_EXTENSIONS:
                         try:
-                            real_p = p.resolve()
-                            if os.path.commonpath([str(resolved_root), str(real_p)]) == str(resolved_root):
+                            real_p = os.path.normcase(str(p.resolve()))
+                            if os.path.commonpath([resolved_root, real_p]) == resolved_root:
                                 yield p
                         except (ValueError, OSError):
                             continue
         else:
-            for item in root_dir.iterdir():
+            for item in sorted(root_dir.iterdir(), key=lambda p: p.name):
                 if item.is_file() and item.suffix.lower() in SUPPORTED_EXTENSIONS:
                     try:
-                        real_p = item.resolve()
-                        if os.path.commonpath([str(resolved_root), str(real_p)]) == str(resolved_root):
+                        real_p = os.path.normcase(str(item.resolve()))
+                        if os.path.commonpath([resolved_root, real_p]) == resolved_root:
                             yield item
                     except (ValueError, OSError):
                         continue

@@ -54,6 +54,9 @@ describe('PhotoCard Component', () => {
     expect(card).toBeInTheDocument();
     fireEvent.click(card!);
     expect(handleToggleSelect).toHaveBeenCalledWith(101);
+
+    fireEvent.keyDown(card!, { key: 'Enter' });
+    expect(handleToggleSelect).toHaveBeenCalledTimes(2);
   });
 
   it('displays Missing warning when file is missing from disk', () => {

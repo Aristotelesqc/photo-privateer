@@ -29,6 +29,7 @@ export const ReviewView: React.FC<ReviewViewProps> = ({
   const [activeClassification, setActiveClassification] = useState<ClassificationType | 'ALL'>('UNREVIEWED');
   const [isNewOnly, setIsNewOnly] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
   const [photoFilterId, setPhotoFilterId] = useState<number | undefined>(initialPhotoId);
   const [projects, setProjects] = useState<string[]>([]);
   const [selectedProject, setSelectedProject] = useState<string | undefined>(undefined);
@@ -43,6 +44,18 @@ export const ReviewView: React.FC<ReviewViewProps> = ({
 
   // Notes editing state
   const [editingNotes, setEditingNotes] = useState<{ [matchId: number]: string }>({});
+  const [noteSaveStates, setNoteSaveStates] = useState<{ [matchId: number]: 'saving' | 'saved' | 'error' }>({});
+
+  useEffect(() => {
+    if (!searchQuery.trim()) {
+      setDebouncedSearch('');
+      return;
+    }
+    const timer = setTimeout(() => {
+      setDebouncedSearch(searchQuery.trim());
+    }, 250);
+    return () => clearTimeout(timer);
+  }, [searchQuery]);
 
   useEffect(() => {
     fetchProjects().then(setProjects).catch(() => {});
@@ -56,7 +69,7 @@ export const ReviewView: React.FC<ReviewViewProps> = ({
         project: selectedProject,
         classification: activeClassification === 'ALL' ? undefined : activeClassification,
         is_new_only: isNewOnly,
-        search: searchQuery.trim() || undefined,
+        search: debouncedSearch || undefined,
         page,
         page_size: pageSize,
       });
@@ -71,7 +84,7 @@ export const ReviewView: React.FC<ReviewViewProps> = ({
 
   useEffect(() => {
     loadMatches();
-  }, [activeClassification, isNewOnly, searchQuery, photoFilterId, selectedProject, page]);
+  }, [activeClassification, isNewOnly, debouncedSearch, photoFilterId, selectedProject, page]);
 
   // Handle classification click
   const handleClassify = async (matchId: number, classification: ClassificationType) => {
@@ -108,13 +121,26 @@ export const ReviewView: React.FC<ReviewViewProps> = ({
     const noteText = editingNotes[matchId];
     if (noteText === undefined) return;
     const cleanNote = noteText.trim();
+    const existing = matches.find((m) => m.id === matchId);
+    if (existing && (existing.notes || '') === cleanNote) return;
+
+    setNoteSaveStates((prev) => ({ ...prev, [matchId]: 'saving' }));
     try {
       await updateMatch(matchId, { notes: cleanNote === '' ? null : cleanNote });
       setMatches((prev) =>
         prev.map((m) => (m.id === matchId ? { ...m, notes: cleanNote === '' ? null : cleanNote } : m))
       );
+      setNoteSaveStates((prev) => ({ ...prev, [matchId]: 'saved' }));
+      setTimeout(() => {
+        setNoteSaveStates((prev) => {
+          const next = { ...prev };
+          if (next[matchId] === 'saved') delete next[matchId];
+          return next;
+        });
+      }, 2000);
     } catch (err) {
       console.error('Failed saving note', err);
+      setNoteSaveStates((prev) => ({ ...prev, [matchId]: 'error' }));
     }
   };
 
@@ -199,6 +225,7 @@ export const ReviewView: React.FC<ReviewViewProps> = ({
               key={m.id}
               match={m}
               editingNote={editingNotes[m.id]}
+              noteSaveState={noteSaveStates[m.id]}
               onNoteChange={(text) => setEditingNotes((prev) => ({ ...prev, [m.id]: text }))}
               onSaveNotes={() => handleSaveNotes(m.id)}
               onClassify={(c) => handleClassify(m.id, c)}
@@ -245,11 +272,24 @@ export const ReviewView: React.FC<ReviewViewProps> = ({
       )}
 
       {/* Side-by-side Inspection Modal */}
-      <MatchInspectModal
-        match={inspectingMatch}
-        onClose={() => setInspectingMatch(null)}
-        onClassify={handleClassify}
-      />
+      {(() => {
+        const inspectIdx = inspectingMatch ? matches.findIndex((m) => m.id === inspectingMatch.id) : -1;
+        return (
+          <MatchInspectModal
+            match={inspectingMatch}
+            onClose={() => setInspectingMatch(null)}
+            onClassify={handleClassify}
+            hasPrev={inspectIdx > 0}
+            hasNext={inspectIdx >= 0 && inspectIdx < matches.length - 1}
+            onPrev={inspectIdx > 0 ? () => setInspectingMatch(matches[inspectIdx - 1]) : undefined}
+            onNext={
+              inspectIdx >= 0 && inspectIdx < matches.length - 1
+                ? () => setInspectingMatch(matches[inspectIdx + 1])
+                : undefined
+            }
+          />
+        );
+      })()}
     </div>
   );
 };

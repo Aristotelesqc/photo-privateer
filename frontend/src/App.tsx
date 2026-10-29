@@ -58,6 +58,10 @@ export const App: React.FC = () => {
             settings={settings}
             onRefreshData={loadGlobalData}
             onNavigateToSettings={() => setActiveTab('settings')}
+            onNavigateToReview={() => {
+              setReviewPhotoFilterId(undefined);
+              setActiveTab('review');
+            }}
             onNavigateToReviewForPhoto={handleNavigateToReviewForPhoto}
           />
         )}
