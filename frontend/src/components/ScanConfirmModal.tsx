@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { ShieldAlert, AlertTriangle, Sparkles, X, ArrowRight } from 'lucide-react';
 import { ScanPrepareResponse } from '../types';
 
@@ -17,8 +17,23 @@ export const ScanConfirmModal: React.FC<ScanConfirmModalProps> = ({
   const isMock = projection.provider === 'mock';
   const isBlocked = (projection.blocked_by_guard && !forceOverride) || projection.usable_count === 0;
 
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [onClose]);
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-xs animate-fade-in">
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label="Confirm Reverse Image Scan"
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-xs animate-fade-in"
+    >
       <div className="bg-carbon-900 border border-carbon-800 rounded-xl w-full max-w-md shadow-2xl overflow-hidden text-carbon-100 text-xs animate-scale-up">
         {/* Header */}
         <div className="px-4 py-3 border-b border-carbon-800 flex items-center justify-between bg-carbon-950/60">

@@ -9,6 +9,8 @@ import {
   AlertOctagon,
   EyeOff,
   RotateCcw,
+  ChevronLeft,
+  ChevronRight,
 } from 'lucide-react';
 import { MatchItem, ClassificationType } from '../../types';
 import { ProjectBadge } from '../../components/blocks/ProjectBadge';
@@ -17,12 +19,20 @@ export interface MatchInspectModalProps {
   match: MatchItem | null;
   onClose: () => void;
   onClassify: (matchId: number, classification: ClassificationType) => void;
+  onPrev?: () => void;
+  onNext?: () => void;
+  hasPrev?: boolean;
+  hasNext?: boolean;
 }
 
 export const MatchInspectModal: React.FC<MatchInspectModalProps> = ({
   match: inspectingMatch,
   onClose,
   onClassify,
+  onPrev,
+  onNext,
+  hasPrev = false,
+  hasNext = false,
 }) => {
   const [inspectRemoteError, setInspectRemoteError] = useState(false);
   const [inspectRemoteRevealed, setInspectRemoteRevealed] = useState(false);
@@ -34,11 +44,31 @@ export const MatchInspectModal: React.FC<MatchInspectModalProps> = ({
     setOriginalError(false);
   }, [inspectingMatch?.id]);
 
+  useEffect(() => {
+    if (!inspectingMatch) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        onClose();
+      } else if (e.key === 'ArrowLeft' && hasPrev && onPrev) {
+        onPrev();
+      } else if (e.key === 'ArrowRight' && hasNext && onNext) {
+        onNext();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [inspectingMatch, onClose, hasPrev, hasNext, onPrev, onNext]);
+
   if (!inspectingMatch) return null;
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-xs flex items-center justify-center p-4">
-      <div className="bg-carbon-900 border border-carbon-700 rounded-xl max-w-5xl w-full max-h-[92vh] flex flex-col overflow-hidden shadow-2xl animate-in fade-in zoom-in-95 duration-150">
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label="Inspect Web Match"
+      className="fixed inset-0 z-50 bg-black/80 backdrop-blur-xs flex items-center justify-center p-4 animate-fade-in"
+    >
+      <div className="bg-carbon-900 border border-carbon-700 rounded-xl max-w-5xl w-full max-h-[92vh] flex flex-col overflow-hidden shadow-2xl animate-scale-up">
         {/* Modal Header */}
         <div className="px-5 py-3 border-b border-carbon-800 flex items-center justify-between bg-carbon-950/80">
           <div className="flex items-center gap-2 min-w-0">
@@ -242,12 +272,38 @@ export const MatchInspectModal: React.FC<MatchInspectModalProps> = ({
             </button>
           </div>
 
-          <button
-            onClick={onClose}
-            className="px-3.5 py-1 rounded bg-carbon-800 hover:bg-carbon-700 text-white text-xs font-medium transition-colors"
-          >
-            Back to Review Queue
-          </button>
+          <div className="flex items-center gap-2">
+            {(onPrev || onNext) && (
+              <div className="flex items-center gap-1 mr-1">
+                <button
+                  type="button"
+                  onClick={onPrev}
+                  disabled={!hasPrev}
+                  aria-label="Previous match"
+                  title="Previous match (Left Arrow)"
+                  className="p-1.5 rounded bg-carbon-900 border border-carbon-800 text-carbon-300 hover:text-white hover:bg-carbon-800 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                >
+                  <ChevronLeft className="w-3.5 h-3.5" />
+                </button>
+                <button
+                  type="button"
+                  onClick={onNext}
+                  disabled={!hasNext}
+                  aria-label="Next match"
+                  title="Next match (Right Arrow)"
+                  className="p-1.5 rounded bg-carbon-900 border border-carbon-800 text-carbon-300 hover:text-white hover:bg-carbon-800 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                >
+                  <ChevronRight className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            )}
+            <button
+              onClick={onClose}
+              className="px-3.5 py-1 rounded bg-carbon-800 hover:bg-carbon-700 text-white text-xs font-medium transition-colors"
+            >
+              Back to Review Queue
+            </button>
+          </div>
         </div>
       </div>
     </div>

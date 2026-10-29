@@ -85,3 +85,9 @@ def test_retroactive_domain_rule_application(repos, sample_images_dir: Path):
 
     matches_after, _ = match_repo.list_matches(domain="curated-exhibits.art")
     assert all(m.classification == CLASS_APPROVED for m in matches_after)
+
+    # Deleting the rule resets auto-classified matches back to UNREVIEWED instead of freezing them as manual overrides
+    deleted = rule_repo.delete_rule(rule.id)
+    assert deleted is True
+    matches_reset, _ = match_repo.list_matches(domain="curated-exhibits.art")
+    assert all(m.classification == "UNREVIEWED" and m.auto_classified_by_rule_id is None for m in matches_reset)

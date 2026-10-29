@@ -93,11 +93,13 @@ class LibraryRepository:
         norm_path = str(Path(path).resolve())
 
         # Forbid overlapping library roots with existing libraries (including archived)
+        norm_cmp = os.path.normcase(norm_path)
         for existing in self.list_libraries(include_archived=True):
             existing_root = str(Path(existing.path).resolve())
+            existing_cmp = os.path.normcase(existing_root)
             try:
-                common = os.path.commonpath([existing_root, norm_path])
-                if common in (existing_root, norm_path):
+                common = os.path.commonpath([existing_cmp, norm_cmp])
+                if common in (existing_cmp, norm_cmp):
                     raise ValueError(
                         f"Cannot register library: '{norm_path}' overlaps with existing library '{existing.name}' ({existing_root}). "
                         f"Overlapping library roots are forbidden to maintain deterministic photo containment."
@@ -168,13 +170,15 @@ class LibraryRepository:
             return False
         import os
         norm_path = str(Path(lib.path).resolve())
+        norm_cmp = os.path.normcase(norm_path)
         for existing in self.list_libraries(include_archived=False):
             if existing.id == library_id:
                 continue
             existing_root = str(Path(existing.path).resolve())
+            existing_cmp = os.path.normcase(existing_root)
             try:
-                common = os.path.commonpath([existing_root, norm_path])
-                if common in (existing_root, norm_path):
+                common = os.path.commonpath([existing_cmp, norm_cmp])
+                if common in (existing_cmp, norm_cmp):
                     raise ValueError(
                         f"Cannot unarchive library: '{norm_path}' overlaps with active library '{existing.name}' ({existing_root}). "
                         f"Overlapping library roots are forbidden."

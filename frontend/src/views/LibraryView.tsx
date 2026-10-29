@@ -31,6 +31,7 @@ interface LibraryViewProps {
   settings: AppSettings | null;
   onRefreshData: () => void;
   onNavigateToSettings: () => void;
+  onNavigateToReview?: () => void;
   onNavigateToReviewForPhoto: (photoId: number) => void;
 }
 
@@ -39,6 +40,7 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
   settings,
   onRefreshData,
   onNavigateToSettings,
+  onNavigateToReview,
   onNavigateToReviewForPhoto,
 }) => {
   const [photos, setPhotos] = useState<ImageItem[]>([]);
@@ -58,11 +60,23 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
   // Filters & pagination
   const [selectedLibraryId, setSelectedLibraryId] = useState<number | undefined>(undefined);
   const [searchQuery, setSearchQuery] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<StatusFilterType>('all');
   const [projects, setProjects] = useState<string[]>([]);
   const [selectedProject, setSelectedProject] = useState<string | undefined>(undefined);
   const [page, setPage] = useState(1);
   const pageSize = density === 'compact' ? 60 : 40;
+
+  useEffect(() => {
+    if (!searchQuery.trim()) {
+      setDebouncedSearch('');
+      return;
+    }
+    const timer = setTimeout(() => {
+      setDebouncedSearch(searchQuery.trim());
+    }, 250);
+    return () => clearTimeout(timer);
+  }, [searchQuery]);
 
   // Project modal state
   const [projectModalOpen, setProjectModalOpen] = useState(false);
@@ -113,7 +127,7 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
       const res = await fetchPhotos({
         library_id: selectedLibraryId,
         include_inactive: includeInactive,
-        search: searchQuery.trim() || undefined,
+        search: debouncedSearch || undefined,
         project: selectedProject,
         filter_status: statusFilter,
         page,
@@ -156,13 +170,13 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
   useEffect(() => {
     loadPhotos();
     return () => { photoRequest.current++; };
-  }, [selectedLibraryId, searchQuery, selectedProject, statusFilter, page, density, includeInactive, libraries]);
+  }, [selectedLibraryId, debouncedSearch, selectedProject, statusFilter, page, density, includeInactive, libraries]);
 
   // Clear hidden selection on context change (library, filter, search, project, page)
   useEffect(() => {
     setSelectedIds(new Set());
     setScanProjection(null);
-  }, [selectedLibraryId, searchQuery, selectedProject, statusFilter, page, density, includeInactive, libraries]);
+  }, [selectedLibraryId, debouncedSearch, selectedProject, statusFilter, page, density, includeInactive, libraries]);
 
   useEffect(() => {
     try { localStorage.setItem('pp-include-inactive', String(includeInactive)); } catch { /* Storage may be unavailable. */ }
@@ -452,6 +466,7 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
             onRefreshData();
             loadPhotos();
           }}
+          onViewDiscoveries={onNavigateToReview}
         />
       )}
 

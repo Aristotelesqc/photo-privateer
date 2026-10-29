@@ -16,6 +16,7 @@ import { ProjectBadge } from '../../components/blocks/ProjectBadge';
 export interface MatchCardProps {
   match: MatchItem;
   editingNote?: string;
+  noteSaveState?: 'saving' | 'saved' | 'error';
   onNoteChange: (text: string) => void;
   onSaveNotes: () => void;
   onClassify: (classification: ClassificationType) => void;
@@ -26,6 +27,7 @@ export interface MatchCardProps {
 export const MatchCard: React.FC<MatchCardProps> = ({
   match: m,
   editingNote,
+  noteSaveState,
   onNoteChange,
   onSaveNotes,
   onClassify,
@@ -162,15 +164,31 @@ export const MatchCard: React.FC<MatchCardProps> = ({
         </div>
 
         {/* Inline Note */}
-        <div className="pt-1">
+        <div className="pt-1 flex items-center gap-2">
           <input
             type="text"
             placeholder="Add an inline note..."
             value={editingNote !== undefined ? editingNote : m.notes || ''}
             onChange={(e) => onNoteChange(e.target.value)}
             onBlur={onSaveNotes}
-            className="w-full bg-carbon-950 border border-carbon-800 rounded px-2 py-1 text-xs text-carbon-200 placeholder-carbon-500 focus:outline-none focus:border-accent-500"
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.currentTarget.blur();
+              }
+            }}
+            className="flex-1 bg-carbon-950 border border-carbon-800 rounded px-2 py-1 text-xs text-carbon-200 placeholder-carbon-500 focus:outline-none focus:border-accent-500"
           />
+          {noteSaveState === 'saving' && (
+            <span className="text-[10px] font-mono text-carbon-400 shrink-0">Saving...</span>
+          )}
+          {noteSaveState === 'saved' && (
+            <span className="text-[10px] font-mono text-emerald-400 shrink-0" data-testid="note-saved-indicator">
+              Saved
+            </span>
+          )}
+          {noteSaveState === 'error' && (
+            <span className="text-[10px] font-mono text-rose-400 shrink-0">Save failed</span>
+          )}
         </div>
       </div>
 

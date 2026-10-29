@@ -12,8 +12,11 @@ import {
   ChevronDown,
   ChevronUp,
   ExternalLink,
+  Filter,
+  Trash2,
+  Plus,
 } from 'lucide-react';
-import { Library, AppSettings } from '../types';
+import { Library, AppSettings, DomainRule, ClassificationType } from '../types';
 import {
   createLibrary,
   updateLibrary,
@@ -24,9 +27,13 @@ import {
   detectLibraryProjects,
   updateSettings,
   testGoogleAuth,
+  fetchRules,
+  createRule,
+  deleteRule,
 } from '../api/client';
 import { MonitoredFolderCard } from '../engines/settings/MonitoredFolderCard';
 import { AddFolderSection } from '../engines/settings/AddFolderSection';
+import { DomainRuleModal } from '../components/DomainRuleModal';
 
 interface SettingsViewProps {
   libraries: Library[];
@@ -64,6 +71,23 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     service_account_email?: string | null;
   } | null>(null);
   const [showApiGuide, setShowApiGuide] = useState(false);
+
+  // Domain rules management state
+  const [domainRules, setDomainRules] = useState<DomainRule[]>([]);
+  const [ruleModalOpen, setRuleModalOpen] = useState(false);
+
+  const loadRules = async () => {
+    try {
+      const rules = await fetchRules();
+      setDomainRules(rules);
+    } catch (err) {
+      console.error('Failed loading domain rules', err);
+    }
+  };
+
+  React.useEffect(() => {
+    loadRules();
+  }, []);
 
   React.useEffect(() => {
     if (settings) {
@@ -427,10 +451,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               >
                 <span className="flex items-center gap-2">
                   <HelpCircle className="w-4 h-4 text-accent-400 shrink-0" />
-                  <span className="font-semibold text-white">Guide d'Aide : Configuration de l'API Google Cloud Vision</span>
+                  <span className="font-semibold text-white">Setup Guide: Configuring Google Cloud Vision API</span>
                 </span>
                 <span className="flex items-center gap-1 text-[11px] text-accent-400 font-mono">
-                  <span>{showApiGuide ? 'Masquer le guide' : 'Afficher le guide pas-à-pas'}</span>
+                  <span>{showApiGuide ? 'Hide guide' : 'Show step-by-step guide'}</span>
                   {showApiGuide ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
                 </span>
               </button>
@@ -438,73 +462,73 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               {showApiGuide && (
                 <div className="p-3.5 pt-1 space-y-3 border-t border-carbon-800 text-[11px] text-carbon-300">
                   <p className="text-carbon-300 leading-relaxed text-[11px]">
-                    Photo Privateer utilise l'API officielle <strong>Google Cloud Vision (Web Detection)</strong> pour identifier les réutilisations de vos photographies sur le web public. Suivez ces étapes simples pour configurer votre accès :
+                    Photo Privateer uses the official <strong>Google Cloud Vision (Web Detection)</strong> API to discover public web reuse of your photographs. Follow these steps to configure access:
                   </p>
 
                   <div className="space-y-2.5">
                     <div className="bg-carbon-950 p-2.5 rounded border border-carbon-800/80">
                       <div className="flex items-center gap-1.5 font-semibold text-white mb-1">
                         <span className="w-4 h-4 rounded-full bg-accent-500/20 text-accent-300 flex items-center justify-center text-[10px] font-mono">1</span>
-                        <span>Créer un compte et un projet Google Cloud</span>
+                        <span>Create a Google Cloud Project</span>
                       </div>
                       <p className="text-carbon-400 text-[10px] pl-5">
-                        Rendez-vous sur la <a href="https://console.cloud.google.com/" target="_blank" rel="noreferrer" className="text-accent-400 underline inline-flex items-center gap-0.5">Google Cloud Console <ExternalLink className="w-2.5 h-2.5" /></a> et connectez-vous avec votre compte Google. Créez ensuite un nouveau projet (par ex. <em>photo-privateer</em>).
+                        Open the <a href="https://console.cloud.google.com/" target="_blank" rel="noreferrer" className="text-accent-400 underline inline-flex items-center gap-0.5">Google Cloud Console <ExternalLink className="w-2.5 h-2.5" /></a>, sign in with your Google account, and create a project (e.g., <em>photo-privateer</em>).
                       </p>
                     </div>
 
                     <div className="bg-carbon-950 p-2.5 rounded border border-carbon-800/80">
                       <div className="flex items-center gap-1.5 font-semibold text-white mb-1">
                         <span className="w-4 h-4 rounded-full bg-accent-500/20 text-accent-300 flex items-center justify-center text-[10px] font-mono">2</span>
-                        <span>Activer l'API Cloud Vision</span>
+                        <span>Enable the Cloud Vision API</span>
                       </div>
                       <p className="text-carbon-400 text-[10px] pl-5">
-                        Dans le menu de gauche, naviguez vers <strong>APIs &amp; Services &gt; Library</strong>. Recherchez <code>Cloud Vision API</code>, cliquez dessus puis cliquez sur <strong>Enable</strong> (Activer).
+                        Navigate to <strong>APIs &amp; Services &gt; Library</strong>, search for <code>Cloud Vision API</code>, and click <strong>Enable</strong>.
                       </p>
                     </div>
 
                     <div className="bg-carbon-950 p-2.5 rounded border border-carbon-800/80">
                       <div className="flex items-center gap-1.5 font-semibold text-white mb-1">
                         <span className="w-4 h-4 rounded-full bg-accent-500/20 text-accent-300 flex items-center justify-center text-[10px] font-mono">3</span>
-                        <span>Créer un Compte de Service (Service Account)</span>
+                        <span>Create a Service Account</span>
                       </div>
                       <p className="text-carbon-400 text-[10px] pl-5">
-                        Allez dans <strong>IAM &amp; Admin &gt; Service Accounts</strong>. Cliquez sur <strong>Create Service Account</strong> (nommez-le par ex. <em>photo-privateer-app</em>). À l'étape des autorisations, attribuez-lui le rôle <strong>Cloud Vision User</strong>.
+                        Open <strong>IAM &amp; Admin &gt; Service Accounts</strong>, click <strong>Create Service Account</strong> (e.g., <em>photo-privateer-app</em>), and grant the <strong>Cloud Vision User</strong> role.
                       </p>
                     </div>
 
                     <div className="bg-carbon-950 p-2.5 rounded border border-carbon-800/80">
                       <div className="flex items-center gap-1.5 font-semibold text-white mb-1">
                         <span className="w-4 h-4 rounded-full bg-accent-500/20 text-accent-300 flex items-center justify-center text-[10px] font-mono">4</span>
-                        <span>Télécharger la clé privée JSON &amp; la stocker localement</span>
+                        <span>Download the Private JSON Key &amp; Store Locally</span>
                       </div>
                       <p className="text-carbon-400 text-[10px] pl-5 leading-relaxed">
-                        Cliquez sur le compte de service créé, ouvrez l'onglet <strong>Keys</strong> (Clés) &gt; <strong>Add Key</strong> &gt; <strong>Create new key</strong> &gt; choisissez le format <strong>JSON</strong>. Téléchargez le fichier et conservez-le dans un dossier privé et sécurisé sur votre machine (ex: <code>C:\Users\VotreNom\.secrets\vision-key.json</code>). Copiez ensuite son chemin absolu dans le champ ci-dessus.
+                        Open the service account, go to <strong>Keys &gt; Add Key &gt; Create new key</strong>, and choose <strong>JSON</strong>. Save the file in a private local folder (e.g., <code>C:\Users\YourName\.secrets\vision-key.json</code>) and paste its full path into the field above.
                       </p>
                     </div>
 
                     <div className="bg-carbon-950 p-2.5 rounded border border-carbon-800/80">
                       <div className="flex items-center gap-1.5 font-semibold text-white mb-1">
                         <span className="w-4 h-4 rounded-full bg-emerald-500/20 text-emerald-300 flex items-center justify-center text-[10px] font-mono">5</span>
-                        <span>Alternative sans fichier : Application Default Credentials (ADC)</span>
+                        <span>Keyless Alternative: Application Default Credentials (ADC)</span>
                       </div>
                       <p className="text-carbon-400 text-[10px] pl-5 leading-relaxed">
-                        Si vous avez installé le Google Cloud SDK (<code>gcloud</code>), exécutez simplement <code>gcloud auth application-default login</code> dans votre terminal. Photo Privateer détectera automatiquement votre session ADC sans nécessiter de fichier clé JSON.
+                        If you have the Google Cloud SDK (<code>gcloud</code>) installed, run <code>gcloud auth application-default login</code> in your terminal. Photo Privateer automatically detects your local ADC session without requiring a JSON key file.
                       </p>
                     </div>
 
                     <div className="bg-carbon-950 p-2.5 rounded border border-carbon-800/80">
                       <div className="flex items-center gap-1.5 font-semibold text-white mb-1">
                         <span className="w-4 h-4 rounded-full bg-accent-500/20 text-accent-300 flex items-center justify-center text-[10px] font-mono">6</span>
-                        <span>Tester la connexion sans frais (0 Quota)</span>
+                        <span>Verify Credentials at Zero Cost (0 Quota)</span>
                       </div>
                       <p className="text-carbon-400 text-[10px] pl-5 leading-relaxed">
-                        Cliquez sur le bouton <strong>Test Authentication (0 Units)</strong> ci-dessus. L'application vérifie instantanément la validité de la clé et l'obtention d'un jeton d'accès sans effectuer aucun appel Vision payant.
+                        Click <strong>Test Authentication (0 Units)</strong> above to verify OAuth2 token acquisition without consuming any paid Cloud Vision API quota.
                       </p>
                     </div>
 
                     <div className="p-2.5 rounded bg-accent-500/10 border border-accent-500/20 text-[10px] text-accent-200">
-                      <span className="font-semibold text-white block mb-0.5">💰 Tarifs et Quota Gratuit :</span>
-                      Google offre chaque mois civil <strong>1 000 requêtes gratuites ($0.00)</strong> sur l'API Web Detection. Au-delà, le tarif est de $3.50 par tranche de 1 000 requêtes (~0.0035 $ / photo). Le garde-fou local intégré de Photo Privateer bloque automatiquement tout scan qui dépasserait votre quota gratuit sans votre confirmation explicite.
+                      <span className="font-semibold text-white block mb-0.5">Pricing &amp; Free Tier:</span>
+                      Google provides <strong>1,000 free Web Detection units per calendar month ($0.00)</strong>. Beyond the free allowance, pricing is $3.50 per 1,000 units (~$0.0035 / photo). Photo Privateer&apos;s local safety guard blocks any scan that would exceed your monthly free tier unless you explicitly authorize it.
                     </div>
                   </div>
                 </div>
@@ -577,6 +601,94 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           </div>
         </form>
       </section>
+
+      {/* 3. Domain Auto-Classification Rules */}
+      <section
+        data-testid="domain-rules-section"
+        className="bg-carbon-900 border border-carbon-800 rounded-lg p-4 space-y-4"
+      >
+        <div className="flex items-center justify-between gap-2">
+          <div>
+            <h3 className="font-semibold text-white flex items-center gap-1.5 text-sm">
+              <Filter className="w-4 h-4 text-accent-500" />
+              <span>Domain Auto-Classification Rules</span>
+            </h3>
+            <p className="text-carbon-400 mt-0.5">
+              Automatically classify newly discovered matches on authorized client portfolios or known scraper domains.
+            </p>
+          </div>
+          <button
+            type="button"
+            data-testid="btn-add-domain-rule"
+            onClick={() => setRuleModalOpen(true)}
+            className="flex items-center gap-1 px-2.5 py-1.5 rounded bg-carbon-800 hover:bg-carbon-700 text-white text-xs font-medium transition-colors shrink-0"
+          >
+            <Plus className="w-3.5 h-3.5 text-accent-400" />
+            <span>Add Rule</span>
+          </button>
+        </div>
+
+        {domainRules.length === 0 ? (
+          <div className="bg-carbon-950/60 border border-carbon-800 rounded-md p-4 text-center text-carbon-400 text-xs">
+            No domain rules configured yet. Create a rule here or directly from any match card in the Review Queue.
+          </div>
+        ) : (
+          <div className="space-y-1.5">
+            {domainRules.map((rule) => (
+              <div
+                key={rule.id}
+                data-testid={`domain-rule-${rule.domain}`}
+                className="flex items-center justify-between gap-3 bg-carbon-950 border border-carbon-800 rounded-md px-3 py-2 text-xs"
+              >
+                <div className="flex flex-wrap items-center gap-2 min-w-0">
+                  <span className="font-mono font-semibold text-white truncate">{rule.domain}</span>
+                  <span
+                    className={`px-1.5 py-0.2 rounded text-[10px] font-mono uppercase border ${
+                      rule.classification === 'APPROVED'
+                        ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30'
+                        : rule.classification === 'UNAUTHORIZED'
+                        ? 'bg-rose-500/15 text-rose-300 border-rose-500/30'
+                        : 'bg-carbon-800 text-carbon-300 border-carbon-700'
+                    }`}
+                  >
+                    {rule.classification === 'UNAUTHORIZED' ? 'Infringing' : rule.classification}
+                  </span>
+                  {rule.notes && <span className="text-carbon-400 truncate text-[11px]">— {rule.notes}</span>}
+                </div>
+                <button
+                  type="button"
+                  data-testid={`btn-delete-rule-${rule.domain}`}
+                  onClick={async () => {
+                    try {
+                      await deleteRule(rule.id);
+                      await loadRules();
+                      onRefreshData();
+                    } catch (err) {
+                      console.error('Failed deleting domain rule', err);
+                    }
+                  }}
+                  title={`Remove rule for ${rule.domain}`}
+                  className="p-1 rounded text-carbon-400 hover:text-rose-400 hover:bg-rose-950/30 transition-colors shrink-0"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+
+      {ruleModalOpen && (
+        <DomainRuleModal
+          initialDomain=""
+          onSave={async (domain: string, classification: ClassificationType, notes?: string) => {
+            await createRule(domain, classification, notes);
+            await loadRules();
+            onRefreshData();
+          }}
+          onClose={() => setRuleModalOpen(false)}
+        />
+      )}
     </div>
   );
 };

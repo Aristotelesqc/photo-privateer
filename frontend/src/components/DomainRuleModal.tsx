@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Filter, X, Check } from 'lucide-react';
 import { ClassificationType } from '../types';
 
@@ -18,6 +18,16 @@ export const DomainRuleModal: React.FC<DomainRuleModalProps> = ({
   const [notes, setNotes] = useState('');
   const [saving, setSaving] = useState(false);
 
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && !saving) {
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [onClose, saving]);
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!domain.trim()) return;
@@ -31,7 +41,12 @@ export const DomainRuleModal: React.FC<DomainRuleModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-xs animate-fade-in">
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label="Create Domain Rule"
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-xs animate-fade-in"
+    >
       <div className="bg-carbon-900 border border-carbon-800 rounded-xl w-full max-w-sm shadow-2xl overflow-hidden text-carbon-100 text-xs animate-scale-up">
         <div className="px-4 py-3 border-b border-carbon-800 flex items-center justify-between bg-carbon-950/60">
           <div className="flex items-center gap-1.5">

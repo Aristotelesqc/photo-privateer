@@ -25,9 +25,22 @@ export const PhotoCard: React.FC<PhotoCardProps> = ({
 
   return (
     <div
-      onClick={() => { if (photo.scan_eligible) onToggleSelect(photo.id); }}
+      tabIndex={photo.scan_eligible ? 0 : -1}
+      role="button"
+      aria-pressed={isSelected}
+      aria-label={`Select photo ${photo.filename}`}
+      onClick={() => {
+        if (photo.scan_eligible) onToggleSelect(photo.id);
+      }}
+      onKeyDown={(e) => {
+        if (e.target !== e.currentTarget || !photo.scan_eligible) return;
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          onToggleSelect(photo.id);
+        }
+      }}
       data-testid={`photo-card-${photo.filename}`}
-      className={`group relative bg-carbon-900 border rounded-lg overflow-hidden ${photo.scan_eligible ? 'cursor-pointer' : 'cursor-default'} transition-all duration-100 select-none flex flex-col ${
+      className={`group relative bg-carbon-900 border rounded-lg overflow-hidden ${photo.scan_eligible ? 'cursor-pointer' : 'cursor-default'} transition-all duration-100 select-none flex flex-col focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-400 ${
         isSelected
           ? 'border-accent-500 ring-1 ring-accent-500 bg-carbon-850 shadow-xs'
           : 'border-carbon-800 hover:border-carbon-700 hover:bg-carbon-850'
@@ -48,7 +61,7 @@ export const PhotoCard: React.FC<PhotoCardProps> = ({
           className={`absolute top-1.5 left-1.5 rounded transition-all p-0.5 ${
             isSelected
               ? 'bg-accent-600 text-white shadow-xs'
-              : 'bg-black/60 text-white/60 disabled:opacity-30'
+              : 'bg-black/60 text-white/60 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 disabled:opacity-30'
           }`}
         >
           {isSelected ? <Check className="w-3.5 h-3.5 stroke-[2.5]" /> : <Square className="w-3.5 h-3.5" />}

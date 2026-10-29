@@ -19,17 +19,32 @@ def list_libraries(repo: LibraryRepository = Depends(get_library_repo)):
 @router.post("/browse-folder", response_model=FolderBrowseResponse)
 def browse_folder():
     """Attempt to open a local native folder picker on the desktop host."""
+    import subprocess
+    import sys
+
     selected_path = None
+    script = (
+        "import tkinter as tk\n"
+        "from tkinter import filedialog\n"
+        "root = tk.Tk()\n"
+        "root.withdraw()\n"
+        "root.attributes('-topmost', True)\n"
+        "selected = filedialog.askdirectory(title='Select Photograph Folder')\n"
+        "root.destroy()\n"
+        "if selected:\n"
+        "    print(selected, end='')\n"
+    )
     try:
-        import tkinter as tk
-        from tkinter import filedialog
-        root = tk.Tk()
-        root.withdraw()
-        root.attributes("-topmost", True)
-        selected = filedialog.askdirectory(title="Select Photograph Folder")
-        root.destroy()
-        if selected:
-            selected_path = str(Path(selected).resolve())
+        proc = subprocess.run(
+            [sys.executable, "-c", script],
+            capture_output=True,
+            text=True,
+            timeout=120,
+            check=False,
+        )
+        raw_selected = (proc.stdout or "").strip()
+        if proc.returncode == 0 and raw_selected:
+            selected_path = str(Path(raw_selected).resolve())
     except Exception:
         pass
     return {"path": selected_path}

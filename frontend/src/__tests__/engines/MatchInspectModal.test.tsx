@@ -57,5 +57,29 @@ describe('MatchInspectModal original preview', () => {
     fireEvent.error(original!);
     expect(screen.getByTestId('original-unavailable')).toBeInTheDocument();
   });
+
+  it('supports keyboard Escape dismissal and Prev/Next navigation', () => {
+    const onClose = vi.fn();
+    const onPrev = vi.fn();
+    const onNext = vi.fn();
+    render(
+      <MatchInspectModal
+        match={baseMatch}
+        onClose={onClose}
+        onClassify={vi.fn()}
+        hasPrev={true}
+        hasNext={true}
+        onPrev={onPrev}
+        onNext={onNext}
+      />
+    );
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+    fireEvent.keyDown(window, { key: 'ArrowLeft' });
+    expect(onPrev).toHaveBeenCalledTimes(1);
+    fireEvent.keyDown(window, { key: 'ArrowRight' });
+    expect(onNext).toHaveBeenCalledTimes(1);
+    fireEvent.keyDown(window, { key: 'Escape' });
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
 });
 

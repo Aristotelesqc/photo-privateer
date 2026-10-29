@@ -8,6 +8,7 @@ interface ScanProgressModalProps {
   loading?: boolean;
   onClose: () => void;
   onScanFinished?: (session: ScanSession) => void;
+  onViewDiscoveries?: () => void;
 }
 
 export const ScanProgressModal: React.FC<ScanProgressModalProps> = ({
@@ -15,6 +16,7 @@ export const ScanProgressModal: React.FC<ScanProgressModalProps> = ({
   loading = false,
   onClose,
   onScanFinished,
+  onViewDiscoveries,
 }) => {
   const [session, setSession] = useState<ScanSession | null>(initialSession);
   const [cancelling, setCancelling] = useState(false);
@@ -71,8 +73,24 @@ export const ScanProgressModal: React.FC<ScanProgressModalProps> = ({
   const isFailed = session?.status === 'FAILED';
   const isCompleted = session?.status === 'COMPLETED';
 
+  useEffect(() => {
+    if (isRunning) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isRunning, onClose]);
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-xs animate-fade-in">
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label="Scan Progress"
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-xs animate-fade-in"
+    >
       <div className="bg-carbon-900 border border-carbon-800 rounded-xl w-full max-w-sm shadow-2xl p-5 text-carbon-100 text-center text-xs animate-scale-up">
         {/* Status Icon */}
         <div className="mx-auto w-10 h-10 rounded-full flex items-center justify-center mb-3">
@@ -183,7 +201,12 @@ export const ScanProgressModal: React.FC<ScanProgressModalProps> = ({
           </div>
         ) : (
           <button
-            onClick={onClose}
+            onClick={() => {
+              onClose();
+              if (isCompleted) {
+                onViewDiscoveries?.();
+              }
+            }}
             className="w-full py-2 rounded-md text-xs font-semibold transition-all bg-carbon-800 hover:bg-carbon-700 text-white active:scale-98"
           >
             {isCompleted ? 'View Discoveries' : 'Done'}
