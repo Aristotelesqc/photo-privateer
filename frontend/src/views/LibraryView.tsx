@@ -46,6 +46,7 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
   const [photos, setPhotos] = useState<ImageItem[]>([]);
   const [totalPhotos, setTotalPhotos] = useState(0);
   const [loading, setLoading] = useState(true);
+  const [hasLoadedOnce, setHasLoadedOnce] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [includeInactive, setIncludeInactive] = useState(() => {
     try { return localStorage.getItem('pp-include-inactive') === 'true'; } catch { return false; }
@@ -53,6 +54,9 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
   const photoRequest = useRef(0);
   const projectRequest = useRef(0);
   const eligiblePhotos = photos.filter((photo) => photo.scan_eligible === true);
+  const librariesKey = libraries
+    .map((lib) => `${lib.id}:${lib.enabled}:${lib.is_archived}:${lib.image_count}:${lib.last_indexed_at ?? ''}`)
+    .join('|');
 
   // Density toggle: 'standard' (200px) vs 'compact' (145px)
   const [density, setDensity] = useState<'standard' | 'compact'>('standard');
@@ -137,6 +141,7 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
       setPhotos(res.images);
       setSelectedIds((previous) => new Set(res.images.filter((image) => image.scan_eligible && previous.has(image.id)).map((image) => image.id)));
       setTotalPhotos(res.total);
+      setHasLoadedOnce(true);
     } catch (err) {
       console.error('Failed loading photos', err);
     } finally {
@@ -165,18 +170,18 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
     loadProjects();
     loadCandidates();
     return () => { projectRequest.current++; };
-  }, [selectedLibraryId, includeInactive, libraries]);
+  }, [selectedLibraryId, includeInactive, librariesKey]);
 
   useEffect(() => {
     loadPhotos();
     return () => { photoRequest.current++; };
-  }, [selectedLibraryId, debouncedSearch, selectedProject, statusFilter, page, density, includeInactive, libraries]);
+  }, [selectedLibraryId, debouncedSearch, selectedProject, statusFilter, page, density, includeInactive, librariesKey]);
 
   // Clear hidden selection on context change (library, filter, search, project, page)
   useEffect(() => {
     setSelectedIds(new Set());
     setScanProjection(null);
-  }, [selectedLibraryId, debouncedSearch, selectedProject, statusFilter, page, density, includeInactive, libraries]);
+  }, [selectedLibraryId, debouncedSearch, selectedProject, statusFilter, page, includeInactive]);
 
   useEffect(() => {
     try { localStorage.setItem('pp-include-inactive', String(includeInactive)); } catch { /* Storage may be unavailable. */ }
@@ -333,7 +338,7 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
       />
 
       {/* Fluid Responsive Photo Grid */}
-      {loading ? (
+      {!hasLoadedOnce && loading ? (
         <div
           className={`grid gap-2.5 ${
             density === 'compact'
@@ -346,14 +351,16 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
           ))}
         </div>
       ) : photos.length === 0 ? (
-        <div className="bg-carbon-900/60 border border-carbon-800 rounded-lg py-16 text-center">
+        <div className="bg-carbon-900/60 border border-carbon-800 rounded-lg py-16 text-center animate-fade-in">
           <AlertCircle className="w-7 h-7 mx-auto mb-2 text-carbon-500" />
           <p className="text-xs font-medium text-carbon-200">No photographs match current filter</p>
           <p className="text-[11px] text-carbon-500 mt-0.5">Adjust filter chip or clear filename search.</p>
         </div>
       ) : (
         <div
-          className={`grid gap-2.5 ${
+          className={`grid gap-2.5 transition-opacity duration-200 ${
+            loading ? 'opacity-65' : 'opacity-100'
+          } ${
             density === 'compact'
               ? 'grid-cols-[repeat(auto-fill,minmax(140px,1fr))]'
               : 'grid-cols-[repeat(auto-fill,minmax(190px,1fr))]'

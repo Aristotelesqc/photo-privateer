@@ -1,3 +1,7 @@
+html {
+  scrollbar-gutter: stable;
+}
+
 body {
   background-color: var(--color-carbon-950);
   color: var(--color-carbon-100);
@@ -6,6 +10,22 @@ body {
   -moz-osx-font-smoothing: grayscale;
   min-height: 100vh;
   font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+}
+
+button,
+input,
+select {
+  transition-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }
 
 ::selection {

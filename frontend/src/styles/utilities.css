@@ -1,5 +1,9 @@
 @utility scale-98 {
-  scale: 0.98;
+  scale: 0.99;
+}
+
+@utility animate-view-enter {
+  animation: var(--animate-view-enter);
 }
 
 @utility backdrop-blur-xs {

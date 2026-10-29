@@ -224,47 +224,47 @@ export const MatchInspectModal: React.FC<MatchInspectModalProps> = ({
               onClick={() => {
                 onClassify(inspectingMatch.id, 'APPROVED');
               }}
-              className={`px-3 py-1 rounded text-xs font-medium flex items-center gap-1.5 transition-colors ${
+              className={`px-3 py-1 rounded text-xs font-medium border flex items-center gap-1.5 transition-colors duration-200 ${
                 inspectingMatch.classification === 'APPROVED'
-                  ? 'bg-emerald-500 text-carbon-950 font-bold'
-                  : 'bg-carbon-900 border border-carbon-700 text-carbon-200 hover:border-emerald-500/50'
+                  ? 'bg-emerald-500 border-emerald-400 text-carbon-950'
+                  : 'bg-carbon-900 border-carbon-700 text-carbon-200 hover:border-emerald-500/50'
               }`}
             >
-              <CheckCircle className="w-3.5 h-3.5 text-emerald-400" />
+              <CheckCircle className={`w-3.5 h-3.5 ${inspectingMatch.classification === 'APPROVED' ? 'text-carbon-950' : 'text-emerald-400'}`} />
               <span>Approved</span>
             </button>
             <button
               onClick={() => {
                 onClassify(inspectingMatch.id, 'UNAUTHORIZED');
               }}
-              className={`px-3 py-1 rounded text-xs font-medium flex items-center gap-1.5 transition-colors ${
+              className={`px-3 py-1 rounded text-xs font-medium border flex items-center gap-1.5 transition-colors duration-200 ${
                 inspectingMatch.classification === 'UNAUTHORIZED'
-                  ? 'bg-rose-500 text-white font-bold'
-                  : 'bg-carbon-900 border border-carbon-700 text-carbon-200 hover:border-rose-500/50'
+                  ? 'bg-rose-500 border-rose-400 text-white'
+                  : 'bg-carbon-900 border-carbon-700 text-carbon-200 hover:border-rose-500/50'
               }`}
             >
-              <AlertOctagon className="w-3.5 h-3.5 text-rose-400" />
+              <AlertOctagon className={`w-3.5 h-3.5 ${inspectingMatch.classification === 'UNAUTHORIZED' ? 'text-white' : 'text-rose-400'}`} />
               <span>Infringing</span>
             </button>
             <button
               onClick={() => {
                 onClassify(inspectingMatch.id, 'IRRELEVANT');
               }}
-              className={`px-3 py-1 rounded text-xs font-medium flex items-center gap-1.5 transition-colors ${
+              className={`px-3 py-1 rounded text-xs font-medium border flex items-center gap-1.5 transition-colors duration-200 ${
                 inspectingMatch.classification === 'IRRELEVANT'
-                  ? 'bg-carbon-700 text-white font-bold'
-                  : 'bg-carbon-900 border border-carbon-700 text-carbon-200 hover:border-carbon-600'
+                  ? 'bg-carbon-700 border-carbon-600 text-white'
+                  : 'bg-carbon-900 border-carbon-700 text-carbon-200 hover:border-carbon-600'
               }`}
             >
-              <EyeOff className="w-3.5 h-3.5 text-carbon-400" />
+              <EyeOff className={`w-3.5 h-3.5 ${inspectingMatch.classification === 'IRRELEVANT' ? 'text-white' : 'text-carbon-400'}`} />
               <span>Irrelevant</span>
             </button>
             <button
               onClick={() => {
                 onClassify(inspectingMatch.id, 'UNREVIEWED');
               }}
-              className={`px-2 py-1 rounded text-xs transition-colors text-carbon-400 hover:text-carbon-200 ${
-                inspectingMatch.classification === 'UNREVIEWED' ? 'font-mono text-amber-400' : ''
+              className={`px-2 py-1 rounded text-xs font-medium transition-colors duration-200 text-carbon-400 hover:text-carbon-200 ${
+                inspectingMatch.classification === 'UNREVIEWED' ? 'text-amber-400 bg-amber-500/10' : ''
               }`}
             >
               <RotateCcw className="w-3 h-3 inline mr-1" />
