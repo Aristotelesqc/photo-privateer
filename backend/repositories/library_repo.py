@@ -2,10 +2,13 @@
 from __future__ import annotations
 
 import sqlite3
+import logging
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 from backend.models import LibraryOut
+
+logger = logging.getLogger("photo_privateer.libraries")
 
 class LibraryRepository:
     def __init__(self, conn: sqlite3.Connection):
@@ -192,7 +195,6 @@ class LibraryRepository:
         ORIGINAL SOURCE FILES ON DISK ARE NEVER MODIFIED, RENAMED, OR DELETED.
         """
         from backend.utils import chunked
-        from backend.config import get_thumbnails_dir
         cur = self.conn.cursor()
         # Concurrency safety: block permanent purge if any scan is actively running
         cur.execute("SELECT 1 FROM scan_sessions WHERE status = 'RUNNING' LIMIT 1")
@@ -246,20 +248,38 @@ class LibraryRepository:
 
             self.conn.commit()
 
-            # Evict associated cached thumbnails from disk
-            thumb_dir = get_thumbnails_dir()
-            for sha in sha_hashes:
-                thumb_file = thumb_dir / f"{sha}.webp"
-                try:
-                    if thumb_file.exists():
-                        thumb_file.unlink()
-                except Exception:
-                    pass
-
-            return lib_deleted
         except Exception:
             self.conn.rollback()
             raise
+
+        # The purge has committed. Cache cleanup failure cannot undo that commit.
+        self._evict_unreferenced_thumbnails(set(sha_hashes))
+        return lib_deleted
+
+    def _evict_unreferenced_thumbnails(self, sha_hashes: set[str]) -> None:
+        """Check all surviving references while reserving SQLite's writer slot.
+
+        BEGIN IMMEDIATE closes the check/unlink race with every catalog writer,
+        including an indexer on another connection. Archived, disabled and
+        offline sources count equally. Cleanup is best effort after purge commit.
+        """
+        from backend.config import get_thumbnails_dir
+        from backend.services.thumbnail_cache import ThumbnailCache
+
+        try:
+            cache = ThumbnailCache(get_thumbnails_dir())
+            self.conn.execute("BEGIN IMMEDIATE")
+            for sha in sha_hashes:
+                if self.conn.execute("SELECT 1 FROM images WHERE sha256 = ? LIMIT 1", (sha,)).fetchone():
+                    continue
+                try:
+                    cache.remove_thumbnail(sha)
+                except (OSError, ValueError):
+                    logger.warning("A purged library's unreferenced thumbnail could not be removed.")
+            self.conn.commit()
+        except Exception:
+            self.conn.rollback()  # Only the cleanup reservation, never the completed purge.
+            logger.warning("Library purge completed; thumbnail cleanup was deferred.")
 
     def delete(self, library_id: int, purge_permanently: bool = False) -> bool:
         """Removes folder from monitoring. Defaults to non-destructive archive unless purge_permanently is explicitly True."""

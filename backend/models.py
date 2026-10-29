@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from typing import Optional, List, Literal
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 from backend.config import (
     DEFAULT_UNIT_PRICE_USD,
     DEFAULT_FREE_TIER_MONTHLY_UNITS,
@@ -11,6 +11,43 @@ from backend.config import (
 
 # --- Providers ---
 ProviderKind = Literal["mock", "google_vision"]
+
+class APIResponse(BaseModel):
+    # The response serializer includes defaults; OpenAPI must describe those
+    # fields as present rather than making the generated client guess.
+    model_config = ConfigDict(json_schema_serialization_defaults_required=True)
+
+class ActionResponse(APIResponse):
+    status: str
+
+class ActionMessageResponse(ActionResponse):
+    message: str
+
+class FolderBrowseResponse(APIResponse):
+    path: Optional[str]
+
+class IndexResults(APIResponse):
+    scanned: int
+    added_or_updated: int
+    unchanged: int
+    missing: int
+
+class IndexResponse(ActionResponse):
+    results: IndexResults
+
+class ProjectDetectionResponse(ActionResponse):
+    updated_count: int
+
+class BatchProjectResponse(APIResponse):
+    updated: int
+    project: Optional[str]
+
+class GroupDeleteResponse(ActionResponse):
+    group_id: int
+
+class CandidateDismissResponse(ActionResponse):
+    image_a_id: int
+    image_b_id: int
 
 # --- Libraries ---
 class LibraryCreate(BaseModel):
@@ -25,7 +62,7 @@ class LibraryUpdate(BaseModel):
     recursive: Optional[bool] = None
     subfolders_as_projects: Optional[bool] = None
 
-class LibraryOut(BaseModel):
+class LibraryOut(APIResponse):
     id: int
     path: str
     name: str
@@ -38,7 +75,7 @@ class LibraryOut(BaseModel):
     image_count: int = 0
 
 # --- Images ---
-class ImageOut(BaseModel):
+class ImageOut(APIResponse):
     id: int
     library_id: int
     sha256: str
@@ -56,8 +93,13 @@ class ImageOut(BaseModel):
     indexed_at: str
     last_seen_on_disk: str
     is_present_on_disk: bool = True
+    # Computed by photo browse/detail routes; other catalog outputs leave them unknown.
+    library_enabled: Optional[bool] = None
+    library_archived: Optional[bool] = None
+    source_available: Optional[bool] = None
+    scan_eligible: Optional[bool] = None
     project: Optional[str] = None
-    project_source: str = "auto"
+    project_source: Literal["auto", "manual"] = "auto"
     last_scanned_at: Optional[str] = None
     scan_count: int = 0
     match_count: int = 0
@@ -73,14 +115,14 @@ class BatchProjectUpdate(BaseModel):
     photo_ids: List[int] = Field(..., description="List of image IDs to assign or clear project")
     project: Optional[str] = Field(None, description="Project name, or null/empty to clear")
 
-class ImageListResponse(BaseModel):
+class ImageListResponse(APIResponse):
     images: List[ImageOut]
     total: int
     page: int
     page_size: int
 
 # --- Photo Groups ---
-class PhotoGroupOut(BaseModel):
+class PhotoGroupOut(APIResponse):
     id: int
     name: Optional[str] = None
     created_at: str
@@ -95,7 +137,7 @@ class PhotoGroupCreate(BaseModel):
     preferred_image_id: Optional[int] = None
     notes: Optional[str] = None
 
-class GroupCandidatePairOut(BaseModel):
+class GroupCandidatePairOut(APIResponse):
     image_a: ImageOut
     image_b: ImageOut
     hamming_distance: int
@@ -114,7 +156,7 @@ class AddImageToGroupRequest(BaseModel):
     # Optional explicit primary representation: the added image or any existing member
     preferred_image_id: Optional[int] = None
 
-class GroupCandidateListOut(BaseModel):
+class GroupCandidateListOut(APIResponse):
     total: int
     pairs: List[GroupCandidatePairOut]
     # True when the list is not exhaustive (per-photo candidate cap or comparison budget reached)
@@ -125,7 +167,7 @@ ClassificationLiteral = Literal["UNREVIEWED", "APPROVED", "UNAUTHORIZED", "IRREL
 SourceKindLiteral = Literal["PAGE", "ASSET_ONLY"]
 MatchTypeLiteral = Literal["FULL", "PARTIAL", "PAGE", "OTHER"]
 
-class MatchOut(BaseModel):
+class MatchOut(APIResponse):
     id: int
     image_id: int
     scan_session_id: Optional[int] = None
@@ -141,7 +183,7 @@ class MatchOut(BaseModel):
     last_seen_at: str
     is_new: bool
     acknowledged_at: Optional[str] = None
-    classification: str = "UNREVIEWED"
+    classification: ClassificationLiteral = "UNREVIEWED"
     classified_at: Optional[str] = None
     auto_classified_by_rule_id: Optional[int] = None
     notes: Optional[str] = None
@@ -173,7 +215,7 @@ class MatchUpdate(BaseModel):
     notes: Optional[str] = None
     acknowledged: Optional[bool] = None
 
-class MatchListResponse(BaseModel):
+class MatchListResponse(APIResponse):
     matches: List[MatchOut]
     total: int
     page: int
@@ -185,10 +227,10 @@ class DomainRuleCreate(BaseModel):
     classification: ClassificationLiteral
     notes: Optional[str] = None
 
-class DomainRuleOut(BaseModel):
+class DomainRuleOut(APIResponse):
     id: int
     domain: str
-    classification: str
+    classification: ClassificationLiteral
     created_at: str
     updated_at: str
     notes: Optional[str] = None
@@ -198,7 +240,7 @@ class ScanPrepareRequest(BaseModel):
     image_ids: List[int] = Field(..., min_length=1)
     provider: Optional[ProviderKind] = None
 
-class ScanPrepareResponse(BaseModel):
+class ScanPrepareResponse(APIResponse):
     selected_count: int
     usable_count: int
     missing_count: int
@@ -223,7 +265,7 @@ class ScanStartRequest(BaseModel):
 
 ScanStatusLiteral = Literal["RUNNING", "COMPLETED", "FAILED", "CANCELLED", "INTERRUPTED"]
 
-class ScanSessionOut(BaseModel):
+class ScanSessionOut(APIResponse):
     id: int
     started_at: str
     completed_at: Optional[str] = None
@@ -232,12 +274,12 @@ class ScanSessionOut(BaseModel):
     processed_images: int
     successful_images: int
     failed_images: int
-    status: str
+    status: ScanStatusLiteral
     cancel_requested: bool = False
     notes: Optional[str] = None
 
 # --- Usage & Accounting ---
-class UsageSummaryOut(BaseModel):
+class UsageSummaryOut(APIResponse):
     billing_period: str
     units_used_this_month: int
     free_tier_allowance: int
@@ -248,7 +290,7 @@ class UsageSummaryOut(BaseModel):
     total_lifetime_calls: int
     total_lifetime_units: int
 
-class ProviderCallOut(BaseModel):
+class ProviderCallOut(APIResponse):
     id: int
     provider: str
     timestamp: str
@@ -263,8 +305,8 @@ class ProviderCallOut(BaseModel):
     error_message: Optional[str] = None
 
 # --- Settings ---
-class AppSettings(BaseModel):
-    active_provider: str = "mock"  # "mock" or "google_vision"
+class AppSettings(APIResponse):
+    active_provider: ProviderKind = "mock"
     google_credentials_path: Optional[str] = None
     free_tier_monthly_units: int = Field(default=DEFAULT_FREE_TIER_MONTHLY_UNITS, ge=0)
     block_on_free_tier_exceeded: bool = DEFAULT_BLOCK_ON_FREE_TIER_EXCEEDED
@@ -273,7 +315,7 @@ class AppSettings(BaseModel):
     google_credentials_error: Optional[str] = None
     adc_available: bool = False
     adc_project_id: Optional[str] = None
-    auth_mode: str = "none"  # "adc", "service_account", "none"
+    auth_mode: Literal["adc", "service_account", "none"] = "none"
 
 class SettingsUpdate(BaseModel):
     active_provider: Optional[Literal["mock", "google_vision"]] = None

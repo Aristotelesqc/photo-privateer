@@ -16,8 +16,8 @@ import {
   GroupCandidateList,
   AddImageToGroupPayload,
   PhotoGroupCreatePayload,
-  StatusFilterType,
 } from '../types';
+import type { ApiSchemas, ApiOperations } from './generated';
 
 const API_BASE = '/api';
 
@@ -33,8 +33,8 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
   if (!res.ok) {
     let errorDetail = `Request failed: ${res.status}`;
     try {
-      const errorJson = await res.json();
-      if (errorJson.detail) {
+      const errorJson: unknown = await res.json();
+      if (errorJson && typeof errorJson === 'object' && 'detail' in errorJson && errorJson.detail) {
         errorDetail = typeof errorJson.detail === 'string' ? errorJson.detail : JSON.stringify(errorJson.detail);
       }
     } catch {
@@ -47,6 +47,13 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
   return res.json();
 }
 
+function jsonBody<K extends keyof ApiOperations>(_operation: K, payload: ApiOperations[K]['body']): string {
+  return JSON.stringify(payload);
+}
+
+// URL query strings omit null; JSON bodies retain null as an explicit value.
+type QueryInput<T> = { [K in keyof T]: Exclude<T[K], null> };
+
 // --- Libraries ---
 export const fetchLibraries = () => request<Library[]>('/libraries');
 
@@ -58,20 +65,20 @@ export const createLibrary = (
 ) =>
   request<Library>('/libraries', {
     method: 'POST',
-    body: JSON.stringify({ path, name, recursive, subfolders_as_projects }),
+    body: jsonBody('POST /api/libraries', { path, name, recursive, subfolders_as_projects }),
   });
 
 export const updateLibrary = (
   id: number,
-  updates: { name?: string; enabled?: boolean; recursive?: boolean; subfolders_as_projects?: boolean }
+  updates: ApiSchemas['LibraryUpdate']
 ) =>
   request<Library>(`/libraries/${id}`, {
     method: 'PATCH',
-    body: JSON.stringify(updates),
+    body: jsonBody('PATCH /api/libraries/{library_id}', updates),
   });
 
 export const deleteLibrary = (id: number, purgePermanently: boolean = false) =>
-  request<{ status: string; message: string }>(
+  request<ApiOperations['DELETE /api/libraries/{library_id}']['response']>(
     purgePermanently ? `/libraries/${id}?purge_permanently=true` : `/libraries/${id}`,
     {
       method: 'DELETE',
@@ -89,47 +96,39 @@ export const unarchiveLibrary = (id: number) =>
   });
 
 export const browseFolder = () =>
-  request<{ path: string | null }>('/libraries/browse-folder', {
+  request<ApiOperations['POST /api/libraries/browse-folder']['response']>('/libraries/browse-folder', {
     method: 'POST',
   });
 
 export const indexLibrary = (id: number) =>
-  request<{ status: string; results: { scanned: number; added_or_updated: number; unchanged: number } }>(
+  request<ApiOperations['POST /api/libraries/{library_id}/index']['response']>(
     `/libraries/${id}/index`,
     { method: 'POST' }
   );
 
 export const detectLibraryProjects = (id: number) =>
-  request<{ status: string; updated_count: number }>(
+  request<ApiOperations['POST /api/libraries/{library_id}/detect-projects']['response']>(
     `/libraries/${id}/detect-projects`,
     { method: 'POST' }
   );
 
 // --- Photos ---
-export const fetchProjects = (library_id?: number) => {
-  const query = library_id !== undefined ? `?library_id=${library_id}` : '';
-  return request<string[]>(`/photos/projects${query}`);
+export const fetchProjects = (library_id?: number, include_inactive = false) => {
+  const query = new URLSearchParams({ include_inactive: String(include_inactive) });
+  if (library_id !== undefined) query.set('library_id', String(library_id));
+  return request<ApiOperations['GET /api/photos/projects']['response']>(`/photos/projects?${query}`);
 };
 
 export const batchAssignProject = (photo_ids: number[], project: string | null) =>
-  request<{ updated: number; project: string | null }>('/photos/batch-project', {
+  request<ApiOperations['POST /api/photos/batch-project']['response']>('/photos/batch-project', {
     method: 'POST',
-    body: JSON.stringify({ photo_ids, project }),
+    body: jsonBody('POST /api/photos/batch-project', { photo_ids, project }),
   });
 
-export const fetchPhotos = (params: {
-  library_id?: number;
-  search?: string;
-  project?: string;
-  group_id?: number;
-  filter_status?: StatusFilterType;
-  sort_by?: string;
-  sort_dir?: 'asc' | 'desc';
-  page?: number;
-  page_size?: number;
-}) => {
+export const fetchPhotos = (params: QueryInput<ApiOperations['GET /api/photos']['query']>) => {
   const query = new URLSearchParams();
   if (params.library_id !== undefined) query.set('library_id', String(params.library_id));
+  if (params.include_inactive !== undefined) query.set('include_inactive', String(params.include_inactive));
   if (params.search) query.set('search', params.search);
   if (params.project) query.set('project', params.project);
   if (params.group_id !== undefined) query.set('group_id', String(params.group_id));
@@ -145,16 +144,16 @@ export const fetchPhotos = (params: {
 export const fetchPhoto = (id: number) => request<ImageItem>(`/photos/${id}`);
 
 // --- Scans ---
-export const prepareScan = (image_ids: number[], provider?: string) =>
+export const prepareScan = (image_ids: number[], provider?: AppSettings['active_provider']) =>
   request<ScanPrepareResponse>('/scans/prepare', {
     method: 'POST',
-    body: JSON.stringify({ image_ids, provider }),
+    body: jsonBody('POST /api/scans/prepare', { image_ids, provider }),
   });
 
-export const startScan = (image_ids: number[], provider?: string, force_override_guard: boolean = false) =>
+export const startScan = (image_ids: number[], provider?: AppSettings['active_provider'], force_override_guard: boolean = false) =>
   request<ScanSession>('/scans/start', {
     method: 'POST',
-    body: JSON.stringify({ image_ids, provider, force_override_guard }),
+    body: jsonBody('POST /api/scans/start', { image_ids, provider, force_override_guard }),
   });
 
 export const fetchScanHistory = (limit: number = 20) =>
@@ -169,18 +168,7 @@ export const cancelScan = (id: number) =>
   });
 
 // --- Matches ---
-export const fetchMatches = (params: {
-  image_id?: number;
-  project?: string;
-  classification?: ClassificationType;
-  is_new_only?: boolean;
-  domain?: string;
-  search?: string;
-  sort_by?: string;
-  sort_dir?: 'asc' | 'desc';
-  page?: number;
-  page_size?: number;
-}) => {
+export const fetchMatches = (params: QueryInput<ApiOperations['GET /api/matches']['query']>) => {
   const query = new URLSearchParams();
   if (params.image_id !== undefined) query.set('image_id', String(params.image_id));
   if (params.project) query.set('project', params.project);
@@ -196,10 +184,10 @@ export const fetchMatches = (params: {
   return request<MatchListResponse>(`/matches?${query.toString()}`);
 };
 
-export const updateMatch = (id: number, updates: { classification?: ClassificationType; notes?: string | null }) =>
+export const updateMatch = (id: number, updates: ApiSchemas['MatchUpdate']) =>
   request<MatchItem>(`/matches/${id}`, {
     method: 'PATCH',
-    body: JSON.stringify(updates),
+    body: jsonBody('PATCH /api/matches/{match_id}', updates),
   });
 
 
@@ -209,11 +197,11 @@ export const fetchRules = () => request<DomainRule[]>('/rules');
 export const createRule = (domain: string, classification: ClassificationType, notes?: string) =>
   request<DomainRule>('/rules', {
     method: 'POST',
-    body: JSON.stringify({ domain, classification, notes }),
+    body: jsonBody('POST /api/rules', { domain, classification, notes }),
   });
 
 export const deleteRule = (id: number) =>
-  request<{ status: string; message: string }>(`/rules/${id}`, {
+  request<ApiOperations['DELETE /api/rules/{rule_id}']['response']>(`/rules/${id}`, {
     method: 'DELETE',
   });
 
@@ -229,35 +217,36 @@ export const fetchProviderCalls = (limit: number = 50, offset: number = 0) =>
 // --- Settings ---
 export const fetchSettings = () => request<AppSettings>('/settings');
 
-export const updateSettings = (updates: Partial<AppSettings>) =>
+export const updateSettings = (updates: ApiSchemas['SettingsUpdate']) =>
   request<AppSettings>('/settings', {
     method: 'PATCH',
-    body: JSON.stringify(updates),
+    body: jsonBody('PATCH /api/settings', updates),
   });
 
 export const validateFolder = (path: string) =>
-  request<{ valid: boolean; resolved_path: string; is_dir: boolean; error: string | null }>(
+  request<ApiOperations['POST /api/settings/validate-folder']['response']>(
     '/settings/validate-folder',
     {
       method: 'POST',
-      body: JSON.stringify({ path }),
+      body: jsonBody('POST /api/settings/validate-folder', { path }),
     }
   );
 
 export const testGoogleAuth = (credentials_path?: string) =>
   request<TestGoogleAuthResponse>('/settings/test-google-auth', {
     method: 'POST',
-    body: JSON.stringify({ credentials_path: credentials_path || null }),
+    body: jsonBody('POST /api/settings/test-google-auth', { credentials_path: credentials_path || null }),
   });
 
 // --- Photo Groups & Deduplication ---
 export const fetchGroupCandidates = (
-  params?: { threshold?: number; limit?: number; library_id?: number } | number,
+  params?: QueryInput<ApiOperations['GET /api/groups/candidates']['query']> | number,
   limitParam: number = 50
 ) => {
   let threshold = 10;
   let limit = 50;
   let libraryId: number | undefined = undefined;
+  let offset = 0;
 
   if (typeof params === 'number') {
     threshold = params;
@@ -266,11 +255,13 @@ export const fetchGroupCandidates = (
     if (params.threshold !== undefined) threshold = params.threshold;
     if (params.limit !== undefined) limit = params.limit;
     if (params.library_id !== undefined) libraryId = params.library_id;
+    if (params.offset !== undefined) offset = params.offset;
   }
 
   const query = new URLSearchParams({
     threshold: String(threshold),
     limit: String(limit),
+    offset: String(offset),
   });
   if (libraryId !== undefined) {
     query.set('library_id', String(libraryId));
@@ -284,20 +275,20 @@ export const addImageToGroup = (groupId: number, imageId: number, preferredImage
   if (preferredImageId !== undefined) payload.preferred_image_id = preferredImageId;
   return request<PhotoGroup>(`/groups/${groupId}/images`, {
     method: 'POST',
-    body: JSON.stringify(payload),
+    body: jsonBody('POST /api/groups/{group_id}/images', payload),
   });
 };
 
 export const dismissGroupCandidate = (imageAId: number, imageBId: number) =>
-  request<{ status: string }>('/groups/candidates/dismiss', {
+  request<ApiOperations['POST /api/groups/candidates/dismiss']['response']>('/groups/candidates/dismiss', {
     method: 'POST',
-    body: JSON.stringify({ image_a_id: imageAId, image_b_id: imageBId }),
+    body: jsonBody('POST /api/groups/candidates/dismiss', { image_a_id: imageAId, image_b_id: imageBId }),
   });
 
 export const createPhotoGroup = (payload: PhotoGroupCreatePayload) =>
   request<PhotoGroup>('/groups', {
     method: 'POST',
-    body: JSON.stringify(payload),
+    body: jsonBody('POST /api/groups', payload),
   });
 
 export const fetchPhotoGroups = () => request<PhotoGroup[]>('/groups');
@@ -307,11 +298,11 @@ export const fetchPhotoGroup = (groupId: number) => request<PhotoGroup>(`/groups
 export const setPreferredImage = (groupId: number, imageId: number) =>
   request<PhotoGroup>(`/groups/${groupId}/preferred`, {
     method: 'PUT',
-    body: JSON.stringify({ preferred_image_id: imageId }),
+    body: jsonBody('PUT /api/groups/{group_id}/preferred', { preferred_image_id: imageId }),
   });
 
 export const deletePhotoGroup = (groupId: number) =>
-  request<{ status: string; group_id: number }>(`/groups/${groupId}`, {
+  request<ApiOperations['DELETE /api/groups/{group_id}']['response']>(`/groups/${groupId}`, {
     method: 'DELETE',
   });
 

@@ -19,6 +19,10 @@ describe('PhotoCard Component', () => {
     indexed_at: '2026-01-01',
     last_seen_on_disk: '2026-01-01',
     is_present_on_disk: true,
+    library_enabled: true,
+    library_archived: false,
+    source_available: true,
+    scan_eligible: true,
     project: 'Holiday 2026',
     last_scanned_at: null,
     scan_count: 0,
@@ -106,6 +110,26 @@ describe('PhotoCard Component', () => {
     );
     expect(screen.getByText('Clean')).toBeInTheDocument();
     expect(screen.queryByText('Unscanned')).not.toBeInTheDocument();
+  });
+
+  it.each(['archived', 'disabled', 'missing'])('prevents %s selection and preserves historical review', (state) => {
+    const toggle = vi.fn();
+    const review = vi.fn();
+    const photo = { ...mockPhoto, scan_eligible: false, library_archived: state === 'archived', library_enabled: state !== 'disabled', source_available: state !== 'missing', match_count: 2 };
+    render(<PhotoCard photo={photo} isSelected={false} onToggleSelect={toggle} onNavigateToReview={review} />);
+    expect(screen.getByRole('button', { name: 'Select sunset.jpg' })).toBeDisabled();
+    fireEvent.click(screen.getByTestId('photo-card-sunset.jpg'));
+    expect(toggle).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByText('2 matches'));
+    expect(review).toHaveBeenCalledWith(101);
+  });
+
+  it('allows a missing active selection served by an eligible group sibling', () => {
+    const toggle = vi.fn();
+    render(<PhotoCard photo={{ ...mockPhoto, source_available: false, scan_eligible: true }} isSelected={false} onToggleSelect={toggle} onNavigateToReview={vi.fn()} />);
+    expect(screen.getByText('Search via group')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Select sunset.jpg' }));
+    expect(toggle).toHaveBeenCalledTimes(1);
   });
 });
 

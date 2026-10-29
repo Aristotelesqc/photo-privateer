@@ -203,6 +203,7 @@ If you prefer to isolate access with a dedicated Service Account:
 
 - **Never Committed**: `.gitignore` strictly ignores `*credential*.json`, `*secret*.json`, `.env`, and private key formats.
 - **Backend-Owned**: Google credentials are read exclusively by the local Python process. The frontend JavaScript client never receives private keys.
+- **Local HTTP boundary**: Every route (API, original photographs, thumbnails, static assets and SPA) requires one valid `Host`: `localhost`, an IPv4 address in `127.0.0.0/8`, or bracketed IPv6 loopback (`[::1]`), optionally followed by a port from 1 to 65535. Arbitrary domains, malformed/missing/duplicate Host headers and forwarded-host bypasses are rejected before routing or file access. Mutation requests additionally retain Origin/Referer and cross-site checks. Development uses `http://localhost:5173` or `http://127.0.0.1:5173`; the application uses port 8765 by default. CORS allows these documented origins; it does not replace Host validation.
 - **No Path Traversal**: Photos and thumbnails are served through controlled application endpoints that verify file paths reside within registered library folders.
 - **SSRF Mitigation**: Remote candidate preview thumbnails are rendered directly by the browser using `referrerpolicy="no-referrer"` with graceful fallback states.
 
@@ -227,9 +228,15 @@ All application state is stored locally in SQLite:
 - **Cached thumbnails**: `~/.photo_privateer/thumbnails/*.webp`.
 
 ### How to Back Up Your History:
-1. Close Photo Privateer (or stop the terminal process).
-2. Copy `~/.photo_privateer/photo_privateer.sqlite` to your backup drive or cloud archive.
-3. Because SQLite uses Write-Ahead Logging (`WAL`), ensure Photo Privateer is not actively scanning while copying.
+
+Create a verified local bundle using the maintenance command from the repository root:
+
+```powershell
+python -m backend.maintenance backup --profile "$HOME\.photo_privateer" --output "D:\PhotoPrivateerBackups\catalog-backup"
+python -m backend.maintenance verify "D:\PhotoPrivateerBackups\catalog-backup"
+```
+
+Choose an output directory that does not exist. The bundle includes committed SQLite/WAL history and registered managed artifacts, with hashes and a versioned manifest. Originals, preview caches and credentials are excluded; back up your source photos separately. Prefer an idle catalog, since writes wait during backup. Restore into a fresh profile to preserve your previous catalog. See [Backup and recovery](docs/BACKUP_RECOVERY.md) for restoration, library relinking and pre-migration recovery instructions.
 
 ---
 

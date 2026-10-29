@@ -598,6 +598,28 @@ def migration_020_legacy_conflict_recheck(conn: sqlite3.Connection) -> None:
         (row[0],),
     )
 
+def migration_021_managed_catalog_artifacts(conn: sqlite3.Connection) -> None:
+    """Owned immutable blobs for future evidence/case records and consistent backup.
+
+    Future owner tables must reference these IDs with ON DELETE RESTRICT. Publish
+    a new blob before committing its reference; never replace a registered blob.
+    """
+    conn.execute("""
+        CREATE TABLE catalog_artifacts (
+            id TEXT PRIMARY KEY NOT NULL,
+            relative_path TEXT UNIQUE NOT NULL CHECK(relative_path LIKE 'artifacts/%'),
+            sha256 TEXT NOT NULL CHECK(length(sha256) = 64),
+            byte_size INTEGER NOT NULL CHECK(byte_size >= 0),
+            kind TEXT NOT NULL CHECK(kind IN ('evidence', 'case_attachment')),
+            created_at TEXT NOT NULL
+        )
+    """)
+    conn.execute("""
+        CREATE TRIGGER catalog_artifacts_immutable BEFORE UPDATE ON catalog_artifacts
+        BEGIN SELECT RAISE(ABORT, 'Registered artifact metadata is immutable'); END
+    """)
+
+
 MIGRATIONS: list[Migration] = [
     Migration(1, "001_initial_schema", migration_001_initial_schema),
     Migration(2, "002_library_archiving_and_disk_presence", migration_002_library_archiving_and_disk_presence),
@@ -619,6 +641,7 @@ MIGRATIONS: list[Migration] = [
     Migration(18, "018_close_completed_cycles", migration_018_close_completed_cycles),
     Migration(19, "019_open_cycle_conflict_backfill", migration_019_open_cycle_conflict_backfill),
     Migration(20, "020_legacy_conflict_recheck", migration_020_legacy_conflict_recheck),
+    Migration(21, "021_managed_catalog_artifacts", migration_021_managed_catalog_artifacts),
 ]
 
 def run_migrations(conn: sqlite3.Connection) -> list[int]:

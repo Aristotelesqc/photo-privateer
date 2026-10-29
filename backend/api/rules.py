@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException
-from backend.models import DomainRuleCreate, DomainRuleOut
+from backend.models import DomainRuleCreate, DomainRuleOut, ActionMessageResponse
 from backend.repositories.domain_rule_repo import DomainRuleRepository, normalize_domain
 from backend.repositories.match_repo import MatchRepository
 from backend.config import VALID_CLASSIFICATIONS
@@ -49,7 +49,7 @@ def create_or_update_rule(
     return rule
 
 
-@router.delete("/{rule_id}")
+@router.delete("/{rule_id}", response_model=ActionMessageResponse)
 def delete_rule(rule_id: int, repo: DomainRuleRepository = Depends(get_domain_rule_repo)):
     success = repo.delete_rule(rule_id)
     if not success:

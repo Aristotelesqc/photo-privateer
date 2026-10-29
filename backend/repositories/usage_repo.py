@@ -166,8 +166,13 @@ class UsageRepository:
             ) VALUES (?, ?, ?, 0, 0, 0, 'RUNNING', 0)
         """, (now, provider, total_images))
         session_id = cur.lastrowid
+        session = ScanSessionOut(
+            id=session_id, started_at=now, provider=provider, total_images=total_images,
+            processed_images=0, successful_images=0, failed_images=0, status="RUNNING",
+        )
         self.conn.commit()
-        return self.get_scan_session(session_id)  # type: ignore
+        # No fallible read after committing RUNNING but before returning its ID.
+        return session
 
     def get_active_running_session(self) -> Optional[ScanSessionOut]:
         """Returns currently active RUNNING session if one exists."""

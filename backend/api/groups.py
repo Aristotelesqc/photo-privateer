@@ -12,6 +12,8 @@ from backend.models import (
     DismissCandidateRequest,
     SetPreferredRequest,
     AddImageToGroupRequest,
+    CandidateDismissResponse,
+    GroupDeleteResponse,
 )
 from backend.repositories.group_repo import PhotoGroupRepository, PhotoGroupNotFoundError
 from backend.api.deps import get_group_repo
@@ -41,7 +43,7 @@ def get_group_candidates(
     return GroupCandidateListOut(total=total, pairs=pairs, truncated=repo.last_candidates_truncated)
 
 
-@router.post("/candidates/dismiss")
+@router.post("/candidates/dismiss", response_model=CandidateDismissResponse)
 def dismiss_candidate_pair(
     payload: DismissCandidateRequest,
     repo: PhotoGroupRepository = Depends(get_group_repo),
@@ -128,7 +130,7 @@ def add_image_to_group(
         raise HTTPException(status_code=400, detail=str(e))
 
 
-@router.delete("/{group_id}")
+@router.delete("/{group_id}", response_model=GroupDeleteResponse)
 def delete_group(
     group_id: int,
     repo: PhotoGroupRepository = Depends(get_group_repo),

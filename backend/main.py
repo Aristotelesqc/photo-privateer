@@ -3,9 +3,8 @@ from __future__ import annotations
 
 import os
 import logging
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, closing
 from pathlib import Path
-import ipaddress
 from urllib.parse import urlparse
 from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
@@ -14,6 +13,7 @@ from fastapi.responses import FileResponse, JSONResponse
 
 from backend.config import FRONTEND_DIST_DIR, HOST, PORT, APP_VERSION
 from backend.database import init_db
+from backend.http_security import LoopbackHostMiddleware, is_loopback_authority
 from backend.api import (
     libraries,
     photos,
@@ -37,15 +37,25 @@ async def lifespan(app: FastAPI):
     # Dynamic DB path resolution: allows test suites and isolated environments to inject target database
     from backend.database import get_db_path, get_connection, init_db
     target_db_path = getattr(app.state, "db_path", None) or get_db_path()
+    from backend.services.profile_lock import profile_lease
+    with profile_lease(Path(target_db_path).parent):
+        async with _owned_lifespan(target_db_path):
+            yield
+
+
+@asynccontextmanager
+async def _owned_lifespan(target_db_path):
+    from backend.database import get_connection, init_db
+    from backend.services.catalog_coordinator import coordinator_for
 
     logger.info(f"Initializing Photo Privateer SQLite database at: {target_db_path}")
-    init_db(target_db_path)
+    init_db(target_db_path, _profile_locked=True)
     logger.info("Database initialized successfully.")
     
     # Startup crash recovery: mark dangling RUNNING sessions as INTERRUPTED
     try:
         from backend.repositories.usage_repo import UsageRepository
-        with get_connection(target_db_path) as conn:
+        with closing(get_connection(target_db_path)) as conn:
             repo = UsageRepository(conn)
             recovered = repo.recover_interrupted_sessions()
             if recovered > 0:
@@ -57,14 +67,40 @@ async def lifespan(app: FastAPI):
     # and its final group repair can leave a group with < 2 members or a dangling primary
     try:
         from backend.repositories.group_repo import PhotoGroupRepository
-        with get_connection(target_db_path) as conn:
+        with closing(get_connection(target_db_path)) as conn:
             PhotoGroupRepository(conn).repair_groups()
             conn.commit()
     except Exception as e:
         logger.error(f"Failed to repair photo group integrity: {e}")
 
-    yield
-    logger.info("Photo Privateer shutting down.")
+    # Hold a strong reference while the app is alive and until workers release
+    # their reservations. A shutdown must not unlock a still-writing profile.
+    with closing(get_connection(target_db_path)) as conn:
+        coordinator = coordinator_for(conn)
+    try:
+        yield
+    finally:
+        import asyncio
+        try:
+            with closing(get_connection(target_db_path)) as conn:
+                conn.execute("UPDATE scan_sessions SET cancel_requested = 1 WHERE status = 'RUNNING'")
+                conn.commit()
+        except Exception as exc:
+            logger.error("Shutdown cancellation could not be persisted: %s", exc)
+        finally:
+            # Cancellation of the lifespan itself must not unlock a profile
+            # while the non-cancellable provider/worker thread can still write.
+            waiting = asyncio.create_task(asyncio.to_thread(coordinator.wait_for_idle))
+            cancelled = False
+            while not waiting.done():
+                try:
+                    await asyncio.shield(waiting)
+                except asyncio.CancelledError:
+                    cancelled = True
+            waiting.result()
+            if cancelled:
+                raise asyncio.CancelledError
+        logger.info("Photo Privateer shutting down.")
 
 app = FastAPI(
     title="Photo Privateer",
@@ -86,17 +122,9 @@ def is_allowed_origin(origin_str: str) -> bool:
     """Validate that an origin or referer URL belongs strictly to a local loopback interface."""
     if not origin_str:
         return False
-    if origin_str == "http://testserver":
-        return True
     try:
         parsed = urlparse(origin_str)
-        hostname = parsed.hostname
-        if not hostname:
-            return False
-        if hostname.lower() == "localhost":
-            return True
-        ip = ipaddress.ip_address(hostname)
-        return ip.is_loopback
+        return parsed.scheme in {"http", "https"} and is_loopback_authority(parsed.netloc)
     except Exception:
         return False
 
@@ -139,6 +167,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+# Added last so the Host boundary also runs before CORS preflight handling.
+app.add_middleware(LoopbackHostMiddleware)
 
 # Include API routers
 app.include_router(libraries.router)

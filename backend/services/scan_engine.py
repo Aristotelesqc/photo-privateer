@@ -21,14 +21,14 @@ from backend.repositories.group_repo import PhotoGroupRepository
 from backend.providers import get_provider
 from backend.models import ScanSessionOut, ImageOut
 from backend.config import CLASS_UNREVIEWED
+from backend.services.catalog_coordinator import CatalogOperationConflict, coordinator_for
+from backend.services.scan_eligibility import is_available
 
 logger = logging.getLogger(__name__)
 
 _scan_start_lock = threading.Lock()
 
-class ScanConflictError(ValueError):
-    """Raised when an attempt is made to start a scan while another is already running."""
-    pass
+ScanConflictError = CatalogOperationConflict  # Backwards-compatible public exception.
 
 @dataclass
 class ScanPlan:
@@ -62,6 +62,7 @@ class ScanEngine:
         self.settings_repo = settings_repo
         self.library_repo = library_repo or LibraryRepository(self.image_repo.conn)
         self.group_repo = group_repo or PhotoGroupRepository(self.image_repo.conn)
+        self.coordinator = coordinator_for(self.image_repo.conn)
         self.db_path: Optional[str] = None
         try:
             cur = self.image_repo.conn.cursor()
@@ -100,6 +101,7 @@ class ScanEngine:
         photos to one provider search per group.
         """
         # 1. Enforce single active scan invariant with worker thread liveness check
+        self.coordinator.check_scan_preparation()
         active = self.usage_repo.get_active_running_session()
         if active:
             worker_name = f"scan-worker-{active.id}"
@@ -162,15 +164,12 @@ class ScanEngine:
         ]
         if archived_or_disabled_ids:
             raise ValueError(
-                f"Cannot scan images belonging to archived or disabled libraries: {archived_or_disabled_ids}"
+                f"Cannot scan images belonging to archived or disabled libraries: {archived_or_disabled_ids}. "
+                "Refresh your selection, or enable/unarchive their library in Settings before scanning."
             )
         
-        def is_available(candidate: ImageOut) -> bool:
-            return (
-                candidate.library_id in active_libs
-                and candidate.is_present_on_disk
-                and Path(candidate.file_path).exists()
-            )
+        def available(candidate: ImageOut) -> bool:
+            return is_available(candidate, active_libs)
 
         # 4. Resolve availability per photo group and collapse each group to 1 search call.
         # A grouped photo is searched through the group's preferred representation when it is
@@ -186,13 +185,13 @@ class ScanEngine:
                 pref_id = self.group_repo.get_preferred_image_id(gid)
                 members = self.image_repo.get_images_for_group(gid)
                 ordered = sorted(members, key=lambda m: (m.id != pref_id, m.id != selected.id, m.id))
-                rep = next((m for m in ordered if is_available(m)), None)
+                rep = next((m for m in ordered if available(m)), None)
             except Exception as exc:
                 logger.warning(
                     f"Could not resolve the representations of photo group #{gid}; "
                     f"scanning selected photo #{selected.id} instead: {exc}"
                 )
-                rep = selected if is_available(selected) else None
+                rep = selected if available(selected) else None
             group_reps[gid] = rep
             return rep
 
@@ -207,7 +206,7 @@ class ScanEngine:
                 missing_ids.append(iid)
                 continue
             if img.photo_group_id is None:
-                target = img if is_available(img) else None
+                target = img if available(img) else None
             else:
                 target = resolve_group(img.photo_group_id, img)
             if target is None:
@@ -253,6 +252,17 @@ class ScanEngine:
         provider_override: Optional[str] = None,
         force_override_guard: bool = False,
     ) -> ScanSessionOut:
+        token = self.coordinator.acquire("scanning")
+        try:
+            return self._start_background_scan(image_ids, provider_override, force_override_guard, token)
+        except Exception:
+            self.coordinator.release(token)
+            raise
+
+    def _start_background_scan(
+        self, image_ids: list[int], provider_override: Optional[str],
+        force_override_guard: bool, reservation_token: object,
+    ) -> ScanSessionOut:
         """Validates request, commits ScanSession to SQLite immediately, and spawns the local background worker."""
         with _scan_start_lock:
             plan = self.plan_scan(
@@ -291,33 +301,59 @@ class ScanEngine:
                     "Another scan session is currently running. Single active scan enforced."
                 ) from e
 
-            if note_str:
-                self.usage_repo.update_scan_session_progress(
-                    session_id=session.id,
-                    processed=0,
-                    successful=0,
-                    failed=0,
-                    notes=note_str,
+            created_session_id = session.id
+            try:
+                if note_str:
+                    self.usage_repo.update_scan_session_progress(
+                        session_id=session.id, processed=0, successful=0, failed=0, notes=note_str,
+                    )
+                worker_thread = threading.Thread(
+                    target=self._run_reserved_scan_worker,
+                    kwargs={
+                        "reservation_token": reservation_token,
+                        "session_id": session.id,
+                        "ordered_image_ids": [img.id for img in usable_images],
+                        "provider_id": provider_id,
+                        "credentials_path": settings.google_credentials_path,
+                        "free_tier_allowance": settings.free_tier_monthly_units,
+                        "unit_price_usd": settings.unit_price_usd,
+                        "db_path": self.db_path,
+                    },
+                    daemon=True,
+                    name=f"scan-worker-{session.id}",
                 )
+                # Read before transferring ownership: no fallible DB query after
+                # launch may release a reservation while its worker is alive.
+                session = self.usage_repo.get_scan_session(created_session_id)
+                worker_thread.start()
+            except Exception:
+                try:
+                    self.usage_repo.update_scan_session_progress(
+                        session_id=created_session_id, processed=0, successful=0, failed=0,
+                        status="FAILED", notes="Scan worker could not start; retry the scan.",
+                    )
+                except Exception:
+                    logger.exception("Could not persist launch failure; startup recovery will retry.")
+                raise
 
-            # Spawn local daemon thread worker with isolated DB connection
-            worker_thread = threading.Thread(
-                target=self._run_scan_worker,
-                kwargs={
-                    "session_id": session.id,
-                    "ordered_image_ids": [img.id for img in usable_images],
-                    "provider_id": provider_id,
-                    "credentials_path": settings.google_credentials_path,
-                    "free_tier_allowance": settings.free_tier_monthly_units,
-                    "unit_price_usd": settings.unit_price_usd,
-                    "db_path": self.db_path,
-                },
-                daemon=True,
-                name=f"scan-worker-{session.id}",
-            )
-            worker_thread.start()
+            return session  # type: ignore
 
-            return self.usage_repo.get_scan_session(session.id)  # type: ignore
+    def _run_reserved_scan_worker(self, reservation_token: object, **kwargs) -> None:
+        try:
+            self._run_scan_worker(**kwargs)
+        except Exception:
+            # This also covers failures before the worker opens its DB connection.
+            logger.exception("Scan worker failed before its normal recovery boundary.")
+            try:
+                with get_connection(kwargs.get("db_path") or self.db_path) as conn:
+                    UsageRepository(conn).update_scan_session_progress(
+                        session_id=kwargs["session_id"], processed=0, successful=0, failed=0,
+                        status="FAILED", notes="Scan worker failed; retry the scan.",
+                    )
+            except Exception:
+                logger.exception("Could not persist scan worker failure; startup recovery will retry.")
+        finally:
+            self.coordinator.release(reservation_token)
 
     def cancel_scan(self, session_id: int) -> ScanSessionOut:
         """Signals cooperative cancellation for a running scan session."""
@@ -666,6 +702,16 @@ class ScanEngine:
         force_override_guard: bool = False,
         progress_callback: Optional[Callable[[int, int, str], None]] = None,
     ) -> ScanSessionOut:
+        token = self.coordinator.acquire("scanning")
+        try:
+            return self._execute_scan(image_ids, provider_override, force_override_guard, progress_callback, token)
+        finally:
+            self.coordinator.release(token)
+
+    def _execute_scan(
+        self, image_ids: list[int], provider_override: Optional[str],
+        force_override_guard: bool, progress_callback, reservation_token: object,
+    ) -> ScanSessionOut:
         """Synchronous scan execution wrapper for direct programmatic use and backend unit tests."""
         usable_images, _ = self.validate_scan_request(
             image_ids=image_ids,
@@ -686,7 +732,8 @@ class ScanEngine:
         )
 
         # Run worker synchronously on this thread
-        self._run_scan_worker(
+        self._run_reserved_scan_worker(
+            reservation_token=reservation_token,
             session_id=session.id,
             ordered_image_ids=[img.id for img in usable_images],
             provider_id=provider_id,

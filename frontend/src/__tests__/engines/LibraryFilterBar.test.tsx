@@ -50,7 +50,7 @@ describe('LibraryFilterBar Component', () => {
       />
     );
 
-    expect(screen.getByText('All Libraries (42)')).toBeInTheDocument();
+    expect(screen.getByText('Active Libraries (42)')).toBeInTheDocument();
     expect(screen.getByText('📁 Campaign 2026')).toBeInTheDocument();
 
     const searchInput = screen.getByPlaceholderText(/Filter by filename/);
